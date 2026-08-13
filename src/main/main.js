@@ -181,7 +181,10 @@ function main() {
     });
     session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
       const trusted = isTrustedOrigin(requestingOrigin);
-      if (!trusted) console.warn(`[app] 拒绝权限检查 ${permission} (${requestingOrigin})`);
+      // 空来源是 Chromium 页面加载时的内部检查,不构成风险,不打印
+      if (!trusted && requestingOrigin) {
+        console.warn(`[app] 拒绝权限检查 ${permission} (${requestingOrigin})`);
+      }
       return trusted;
     });
   }
