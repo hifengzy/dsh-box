@@ -1,8 +1,8 @@
 {
-  "name": "dsh-macos",
+  "name": "dshfordesktop",
   "version": "0.1.0",
   "private": true,
-  "description": "DeepSeek Harness 的 macOS 原生桌面壳 — 基于 Electron,让 dsh 以原生 App 的权限运行在本机文件系统上",
+  "description": "DSH Desktop — DeepSeek Harness 的 macOS 原生桌面 App。基于 Electron,让 dsh 以原生 App 的权限运行在本机文件系统上",
   "main": "src/main/main.js",
   "author": "fengzy",
   "license": "MIT",
@@ -24,8 +24,8 @@
     "electron-builder": "^26.15.3"
   },
   "build": {
-    "appId": "com.deepseek-ai.dsh-macos",
-    "productName": "DeepSeek Harness",
+    "appId": "com.deepseek-ai.dshfordesktop",
+    "productName": "DSH Desktop",
     "directories": {
       "output": "dist",
       "buildResources": "assets"

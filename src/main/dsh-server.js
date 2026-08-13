@@ -166,7 +166,7 @@ class DshServer extends EventEmitter {
     this.stopping = false;
     this.ready = false;
 
-    const logDirResolved = logDir ?? path.join(os.tmpdir(), "dsh-macos");
+    const logDirResolved = logDir ?? path.join(os.tmpdir(), "dshfordesktop");
     fs.mkdirSync(logDirResolved, { recursive: true });
     this.logFile = path.join(logDirResolved, `dsh-server-${Date.now()}.log`);
     const logStream = fs.createWriteStream(this.logFile, { flags: "a" });

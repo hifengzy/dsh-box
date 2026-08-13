@@ -1,4 +1,4 @@
-# DeepSeek Harness for macOS (dsh-macos)
+# DSH Desktop for macOS (dshfordesktop)
 
 把 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 封装成**原生 macOS 桌面 App**(基于 Electron)。
 
@@ -29,7 +29,7 @@ npm start
 
 ```
 ┌────────────────────────────────────────────────────┐
-│  DeepSeek Harness.app (Electron)                   │
+│  DSH Desktop.app (Electron)                     │
 │                                                    │
 │  主进程 src/main/main.js                           │
 │    ├─ spawn ──→ dsh web 子进程 (Node)              │  ← 同一原生进程树
@@ -117,7 +117,7 @@ npm run dist:dmg    # 只生成 .dmg
 运行 `npm run doctor` 看提示。打包后的 App 自带 dsh;开发模式下先确认 `npm install` 装过 `@deepseek-ai/dsh`。也可用 `DSH_BIN` 强制指定。
 
 **启动后一直停在加载页**
-看日志:主进程终端会打印 `[dsh:err] ...`,完整日志在 `~/Library/Application Support/DeepSeek Harness/logs/`。最常见原因:端口被占用(换 `DSH_APP_PORT`)或 `~/.dsh` 里的 profile 配置损坏。
+看日志:主进程终端会打印 `[dsh:err] ...`,完整日志在 `~/Library/Application Support/DSH Desktop/logs/`。最常见原因:端口被占用(换 `DSH_APP_PORT`)或 `~/.dsh` 里的 profile 配置损坏。
 
 **WebUI 里执行 shell 命令没有权限(比如访问桌面/文档/下载)**
 这是 macOS 的 TCC 限制,与 Harness 无关。按 [docs/PERMISSIONS.md](docs/PERMISSIONS.md) 给 App 授予「完全磁盘访问权限」即可——这是本方案相对浏览器的核心优势。

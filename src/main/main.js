@@ -22,7 +22,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { DshServer, DEFAULT_PORT } = require("./dsh-server");
 
-const APP_NAME = "DeepSeek Harness";
+const APP_NAME = "DSH Desktop";
 const isMac = process.platform === "darwin";
 
 // 测试钩子:重定向用户数据目录(冒烟测试/CI 用,避免写 ~/Library)
