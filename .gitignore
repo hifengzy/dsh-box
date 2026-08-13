@@ -1,0 +1,22 @@
+# 依赖
+node_modules/
+.npm-cache/
+.electron-cache/
+
+# 构建产物
+dist/
+out/
+
+# 运行时数据(冒烟测试的临时 DSH_HOME 等)
+.runtime/
+
+# 日志
+*.log
+logs/
+
+# macOS
+.DS_Store
+
+# 编辑器
+.vscode/
+.idea/

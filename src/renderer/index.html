@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'none'; img-src 'self' data:"
+    />
+    <title>DeepSeek Harness</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="stage">
+      <div class="logo" aria-hidden="true">
+        <div class="logo-dot"></div>
+      </div>
+      <h1 class="title">DeepSeek Harness</h1>
+      <p id="status" class="status">正在启动…</p>
+
+      <div class="spinner" id="spinner" aria-label="加载中"></div>
+
+      <div class="error-panel" id="errorPanel" hidden>
+        <p class="error-title">启动失败</p>
+        <pre id="errorMessage" class="error-message"></pre>
+        <div class="error-actions">
+          <button id="retryBtn" class="btn">重试</button>
+        </div>
+      </div>
+
+      <p class="hint">
+        首次启动时,如果系统提示「DeepSeek Harness 想要访问…」,
+        请点击「允许」— 这是 App 获得本地文件权限的方式。
+      </p>
+    </main>
+
+    <script src="./renderer.js"></script>
+  </body>
+</html>

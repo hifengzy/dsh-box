@@ -1,0 +1,161 @@
+/* style.css — 启动页样式(深色,贴近 Harness 的视觉) */
+:root {
+  --bg: #0d1117;
+  --panel: #161b22;
+  --border: #30363d;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --accent: #4d6bfe;
+  --danger: #f85149;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
+    "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+.stage {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 24px;
+}
+
+/* 占位 Logo:圆环 + 圆点,后续可换成正式图标 */
+.logo {
+  width: 96px;
+  height: 96px;
+  border-radius: 24px;
+  background: linear-gradient(135deg, #1f2937, #111827);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.logo::before {
+  content: "";
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 4px solid var(--accent);
+}
+
+.logo-dot {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  right: 22px;
+  bottom: 22px;
+}
+
+.title {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.status {
+  color: var(--muted);
+  font-size: 14px;
+  min-height: 20px;
+}
+
+/* 旋转指示器 */
+.spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 错误面板 */
+.error-panel {
+  width: min(560px, 90vw);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.error-title {
+  color: var(--danger);
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.error-message {
+  color: var(--muted);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 180px;
+  overflow-y: auto;
+  user-select: text;
+}
+
+.error-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: #21262d;
+  color: var(--text);
+  padding: 8px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.btn:hover {
+  background: #30363d;
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 12px;
+  max-width: 480px;
+  text-align: center;
+  line-height: 1.7;
+}
