@@ -45,12 +45,26 @@ check("Node.js", nodeMajor >= 20, `v${nodeV}`, "需要 Node ≥ 20(推荐用 nvm
 
 // 2. dsh
 console.log(chalk.dim("[2/4] dsh CLI"));
-const dshBin = process.env.DSH_BIN || run("which", ["dsh"]).out;
-if (dshBin) {
-  const v = run(dshBin, ["--version"]);
-  check("dsh 可执行文件", v.status === 0, v.out || dshBin, "确认 dsh 能正常执行");
+const { resolveDsh } = require("../src/main/dsh-server");
+const resolved = resolveDsh();
+if (resolved) {
+  let version = "?";
+  if (resolved.type === "script") {
+    // 用当前 Node 跑 dsh --version(打包后 App 用内置 Node,效果等同)
+    const v = run(process.execPath, [resolved.path, "--version"]);
+    version = v.status === 0 ? v.out : `执行失败: ${v.err}`;
+  } else {
+    const v = run(resolved.path, ["--version"]);
+    version = v.status === 0 ? v.out : `执行失败: ${v.err}`;
+  }
+  check(
+    "dsh",
+    version !== "执行失败",
+    `${version} (${resolved.path})`,
+    "确认 dsh 能正常执行"
+  );
 } else {
-  check("dsh 可执行文件", false, "PATH 里没有 dsh", "npm install -g @deepseek-ai/dsh@^0.1.0-rc.6");
+  check("dsh", false, "项目 node_modules 里没有 dsh", "运行 npm install");
 }
 
 // 3. Electron

@@ -12,7 +12,7 @@
 
 const path = require("node:path");
 const fs = require("node:fs");
-const { DshServer, resolveDshBin, DEFAULT_PORT } = require("../src/main/dsh-server");
+const { DshServer, resolveDsh, DEFAULT_PORT } = require("../src/main/dsh-server");
 
 const ROOT = path.join(__dirname, "..");
 const RUNTIME = path.join(ROOT, ".runtime", "smoke");
@@ -22,18 +22,17 @@ async function main() {
   console.log(`[smoke] 冒烟测试开始 (port=${PORT})`);
   fs.mkdirSync(path.join(RUNTIME, "logs"), { recursive: true });
 
-  const dshBin = resolveDshBin();
-  if (!dshBin) {
-    console.error("[smoke] FAIL: 找不到 dsh,请先 npm install -g @deepseek-ai/dsh");
+  const resolved = resolveDsh();
+  if (!resolved) {
+    console.error("[smoke] FAIL: 找不到 dsh(项目内 node_modules 没有,请 npm install)");
     process.exit(1);
   }
-  console.log(`[smoke] dsh = ${dshBin}`);
+  console.log(`[smoke] dsh = ${resolved.path} (${resolved.type})`);
 
   const server = new DshServer({ port: PORT });
 
   // 1. 启动
   const url = await server.start({
-    dshBin,
     dshHome: path.join(RUNTIME, "dsh-home"),
     logDir: path.join(RUNTIME, "logs"),
   });

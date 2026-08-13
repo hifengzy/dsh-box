@@ -33,8 +33,14 @@
     "files": [
       "src/**/*",
       "assets/**/*",
-      "package.json"
+      "package.json",
+      "node_modules/**/*"
     ],
+    "asar": false,
+    "npmRebuild": false,
+    "electronDownload": {
+      "cache": ".electron-cache"
+    },
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "assets/icon.png",
@@ -44,5 +50,11 @@
       ],
       "hardenedRuntime": false
     }
+  },
+  "allowScripts": {
+    "electron-winstaller@5.4.0": true
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh": "^0.1.0-rc.6"
   }
 }

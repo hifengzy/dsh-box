@@ -11,6 +11,12 @@
  *      macOS 的 TCC 权限(全磁盘访问 / 文件夹访问)会沿进程树继承。
  *   3. 崩溃隔离:dsh 出问题时不会拖垮 Electron 主进程,可以干净地重启。
  *
+ * 运行方式(关键):dsh 作为「依赖」被打进 App(node_modules 里),
+ * 这里用 ELECTRON_RUN_AS_NODE=1 + 当前可执行文件(process.execPath)
+ * 来运行它——App 自带的 Electron 就是 Node 运行时,用户不需要装
+ * Node 也不需要全局装 dsh。打包后的 dsh 服务、以及它派生的 shell,
+ * 都是同一个原生 App 进程树的一部分。
+ *
  * 就绪检测:dsh web 没有 stdout 就绪标记(webserver 只在启动完成后
  * 接受请求,之前一律 404),所以这里轮询 HTTP 直到返回 2xx/3xx。
  */
@@ -30,18 +36,67 @@ const HEALTH_INTERVAL_MS = 500;
 /** 停止子进程时的宽限期,超时后 SIGKILL */
 const STOP_GRACE_MS = 5_000;
 
+/** dsh 的入口脚本,相对其包目录 */
+const DSH_BIN_JS = path.join("lib", "bin.js");
+
 /**
- * 解析 dsh 可执行文件路径,优先级:
- *   1. 环境变量 DSH_BIN(显式指定,最可靠)
- *   2. PATH 里的 `dsh`(npm i -g @deepseek-ai/dsh 之后就有)
- * @returns {string|null}
+ * 打包后的 dsh 脚本路径候选:
+ * 本项目用 asar:false 打包(ELECTRON_RUN_AS_NODE 模式读不了 asar 归档,
+ * 且 dsh 依赖树需要真实路径),所以打包后是 Resources/app/node_modules/…;
+ * 这里同时保留 app.asar.unpacked 的候选,兼容以后开回 asar 的情况。
+ * 开发模式:本项目自己的 node_modules。
+ * @returns {string[]}
  */
-function resolveDshBin() {
-  if (process.env.DSH_BIN) return process.env.DSH_BIN;
+function bundledDshPath() {
+  const rel = path.join("node_modules", "@deepseek-ai", "dsh", DSH_BIN_JS);
+  if (process.resourcesPath && !process.defaultApp) {
+    return [
+      path.join(process.resourcesPath, "app", rel),
+      path.join(process.resourcesPath, "app.asar.unpacked", rel),
+    ];
+  }
+  return [path.join(__dirname, "..", "..", rel)];
+}
+
+/**
+ * 解析 dsh 入口,返回 { type, path }:
+ *   - type "script":dsh 的 bin.js,需要用 Node 运行(推荐)
+ *   - type "binary":独立可执行文件,直接运行
+ * 优先级:
+ *   1. 环境变量 DSH_BIN(显式指定,测试/调试用)
+ *   2. 打进 App 的 dsh(打包后 / 本项目 node_modules)
+ *   3. PATH 里的 `dsh`(兜底,比如用户全局装过)
+ * @returns {{type: "script"|"binary", path: string}|null}
+ */
+function resolveDsh() {
+  const candidates = [];
+  if (process.env.DSH_BIN) candidates.push(process.env.DSH_BIN);
+  candidates.push(...bundledDshPath());
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      const real = fs.realpathSync(candidate); // 解开软链(如全局 bin/dsh)
+      if (real.endsWith("bin.js")) {
+        return { type: "script", path: real };
+      }
+      // 指向编译好的可执行文件,直接运行
+      return { type: "binary", path: real };
+    } catch {
+      /* 该候选不存在,试下一个 */
+    }
+  }
+
+  // 兜底:PATH 上的 dsh(npm -g 装的,bin/dsh 是指向 bin.js 的软链)
   try {
     const probe = spawnSync("which", ["dsh"], { encoding: "utf8" });
     if (probe.status === 0 && probe.stdout.trim()) {
-      return probe.stdout.trim().split("\n")[0];
+      const real = fs.realpathSync(probe.stdout.trim().split("\n")[0]);
+      if (fs.existsSync(real)) {
+        return real.endsWith("bin.js")
+          ? { type: "script", path: real }
+          : { type: "binary", path: real };
+      }
     }
   } catch {
     /* 继续走 fallback */
@@ -83,7 +138,7 @@ class DshServer extends EventEmitter {
   /**
    * 启动 dsh web 子进程,并轮询直到就绪或超时。
    * @param {object} [options]
-   * @param {string} [options.dshBin] dsh 可执行文件路径(默认自动解析)
+   * @param {string} [options.dshBin] dsh 入口(自动解析,一般不用传)
    * @param {string} [options.dshHome] DSH_HOME 目录(默认 ~/.dsh)
    * @param {string} [options.logDir] 日志目录(默认系统临时目录)
    * @returns {Promise<string>} 就绪后的服务 URL
@@ -94,11 +149,13 @@ class DshServer extends EventEmitter {
   async start({ dshBin, dshHome, logDir } = {}) {
     if (this.child) throw new Error("dsh server 已在运行,请先 stop()");
 
-    this.dshBin = dshBin ?? resolveDshBin();
+    const resolved = resolveDsh();
+    this.dshBin = dshBin ?? (resolved ? resolved.path : null);
+    const dshType = resolved ? resolved.type : "script";
     if (!this.dshBin) {
       const err = new Error(
-        "找不到 dsh 命令。请先安装: npm install -g @deepseek-ai/dsh@^0.1.0-rc.6\n" +
-          "或者在启动 App 前设置环境变量 DSH_BIN 指向 dsh 可执行文件。"
+        "找不到 dsh。打包后的 App 应该自带 dsh(node_modules/@deepseek-ai/dsh)," +
+          "如果开发模式下报这个错,请先 npm install。"
       );
       err.code = "DSH_NOT_FOUND";
       this.emit("error", err);
@@ -121,15 +178,30 @@ class DshServer extends EventEmitter {
       DSH_TELEMETRY_DISABLED: "1",
     };
 
+    // 运行方式:
+    //   script → 用当前 Electron/Node 运行,ELECTRON_RUN_AS_NODE 让
+    //            Electron 二进制退化成纯 Node 运行时(不需要系统 Node)
+    //   binary → 直接运行
+    // 注:dsh 的 HMR 插件需要 --expose-internals(Node < 25 默认不给),
+    // 所以跑 script 时显式带上;对较新的 Node 也是无害的。
+    let command;
     const args = ["web", "--port", String(this.port)];
+    if (dshType === "script") {
+      command = process.execPath;
+      args.unshift("--expose-internals", this.dshBin);
+      env.ELECTRON_RUN_AS_NODE = "1";
+    } else {
+      command = this.dshBin;
+    }
 
-    console.log(`[dsh] 启动: ${this.dshBin} ${args.join(" ")}`);
+    console.log(`[dsh] 启动: ${command} ${args.join(" ")}`);
+    console.log(`[dsh] 入口 = ${this.dshBin} (${dshType === "script" ? "用内置 Node 运行" : "直接运行"})`);
     console.log(`[dsh] DSH_HOME = ${this.dshHome}`);
     console.log(`[dsh] 日志文件 = ${this.logFile}`);
 
     let child;
     try {
-      child = spawn(this.dshBin, args, {
+      child = spawn(command, args, {
         env,
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -236,4 +308,4 @@ class DshServer extends EventEmitter {
   }
 }
 
-module.exports = { DshServer, resolveDshBin, defaultDshHome, DEFAULT_PORT };
+module.exports = { DshServer, resolveDsh, bundledDshPath, defaultDshHome, DEFAULT_PORT };

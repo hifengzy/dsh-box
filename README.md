@@ -9,18 +9,19 @@
 环境要求:macOS 14+(Apple Silicon,本项目按 M4 Pro 开发)、Node.js ≥ 20、npm。
 
 ```bash
-# 1. 安装 dsh CLI(全局,让 App 能找到它)
-npm install -g @deepseek-ai/dsh@^0.1.0-rc.6
-
-# 2. 安装本项目依赖
+# 1. 安装本项目依赖(会把 dsh 一起装进来)
 npm install
 
-# 3. 环境体检(可选但推荐)
+# 2. 环境体检(可选但推荐)
 npm run doctor
 
-# 4. 启动 App
+# 3. 启动 App
 npm start
 ```
+
+> 开发模式下不再需要全局安装 dsh:项目把 `@deepseek-ai/dsh` 作为**正式依赖**,
+> 运行时用 App 自带的 Electron(经 `ELECTRON_RUN_AS_NODE`)直接跑打进来的 dsh,
+> 连系统 Node 都不依赖。
 
 启动后,窗口先显示加载页,等 dsh 服务就绪后自动切换到 Harness WebUI(默认端口 `3260`,可用环境变量 `DSH_APP_PORT` 覆盖)。
 
@@ -42,7 +43,11 @@ npm start
 ```
 
 - **主进程** (`src/main/`) 负责启动/停止 dsh 服务、管理窗口与权限。
-- **dsh-server.js** 把 `dsh web` 作为子进程拉起:环境变量 `DSH_BIN` 或 PATH 里的 `dsh`;`DSH_HOME` 默认 `~/.dsh`,与命令行共用同一套 profile 和会话。
+- **dsh-server.js** 把 `dsh web` 作为子进程拉起。dsh 的查找优先级:
+  1. 环境变量 `DSH_BIN`(测试/调试用);
+  2. **打进 App 的 dsh**(打包后是 `app.asar.unpacked/node_modules/@deepseek-ai/dsh`,开发时是项目 `node_modules`)——默认走这个;
+  3. PATH 里的 `dsh`(兜底)。
+  用 `ELECTRON_RUN_AS_NODE=1` + 当前可执行文件运行,所以**用户机器上不需要装 Node,也不需要装 dsh**。`DSH_HOME` 默认 `~/.dsh`,与命令行共用同一套 profile 和会话。
 - **渲染进程** 只显示启动状态,真正的 UI 是 dsh 自己服务的 WebUI。
 
 ## 目录结构
@@ -86,9 +91,17 @@ npm run dist:dir    # 只生成解包后的 .app,最快
 npm run dist:dmg    # 只生成 .dmg
 ```
 
-打包产物在 `dist/`。打开 `DeepSeek Harness.app` 后,**需要先给它授予文件权限**(系统设置 → 隐私与安全性),具体见 [docs/PERMISSIONS.md](docs/PERMISSIONS.md)。
+打包产物在 `dist/`。**dsh 已经打进 App 里了**(`Contents/Resources/app/node_modules/@deepseek-ai/dsh`),用户拿到 `.dmg` 后:
+拖进「应用程序」→ 打开,就能直接用——**不需要装 Node,也不需要装 dsh**。
 
-> 说明:目前 `hardenedRuntime` 为 `false`(未开启公证/签名)。发布到其他机器需要 Apple Developer 证书 + notarization,这是后续路线,见文末。
+> **签名说明**:如果本机钥匙串里有 electron-builder 能自动发现、但无法用于签名的证书(比如只装了证书没装私钥),打包会报 `this identity cannot be used for signing code`。这时用
+> `CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist` 跳过自动签名(用 ad-hoc 签名,本机可运行)。正式分发需要真正的 Developer ID 证书 + notarization,见路线图。
+
+注意:
+- 打包后首次打开,需要在系统设置里给 App 授予文件权限(系统设置 → 隐私与安全性),具体见 [docs/PERMISSIONS.md](docs/PERMISSIONS.md)。
+- 目前 `hardenedRuntime` 为 `false`(未开启公证/签名)。发布到其他机器需要 Apple Developer 证书 + notarization,见文末路线图。
+- 原生模块(node-pty / koffi)走 N-API 预编译,`npmRebuild: false` 不重新编译;换架构打包(如 arm64 → x64)前先确认对应平台的 prebuild 存在。
+- **为什么 `asar: false`**:App 用 `ELECTRON_RUN_AS_NODE` 把 dsh 当纯 Node 脚本跑,而该模式读不了 asar 归档;且 dsh 的解包目录需要能解析到整个依赖树。所以代码以真实文件形式放在 `Contents/Resources/app/`(对 MIT 开源项目无影响)。
 
 ## 常用配置(环境变量)
 
@@ -101,7 +114,7 @@ npm run dist:dmg    # 只生成 .dmg
 ## 常见问题
 
 **`找不到 dsh 命令`**
-运行 `npm run doctor` 看提示;然后 `npm install -g @deepseek-ai/dsh@^0.1.0-rc.6`,或设置 `DSH_BIN`。
+运行 `npm run doctor` 看提示。打包后的 App 自带 dsh;开发模式下先确认 `npm install` 装过 `@deepseek-ai/dsh`。也可用 `DSH_BIN` 强制指定。
 
 **启动后一直停在加载页**
 看日志:主进程终端会打印 `[dsh:err] ...`,完整日志在 `~/Library/Application Support/DeepSeek Harness/logs/`。最常见原因:端口被占用(换 `DSH_APP_PORT`)或 `~/.dsh` 里的 profile 配置损坏。
@@ -116,6 +129,7 @@ macOS 惯例:关窗不退出,点 Dock 图标重新开窗,dsh 服务保持运行(
 
 - [x] Electron 壳:dsh 子进程托管 + WebUI 加载
 - [x] 权限继承方案(进程树继承 TCC)
+- [x] dsh 打进 App,用户免安装(内置 Node 运行)
 - [ ] 正式图标、关于页
 - [ ] 打包签名 + notarization(hardened runtime)
 - [ ] 自动更新

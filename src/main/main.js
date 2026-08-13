@@ -20,7 +20,7 @@
 const { app, BrowserWindow, Menu, session, shell, ipcMain } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
-const { DshServer, resolveDshBin, DEFAULT_PORT } = require("./dsh-server");
+const { DshServer, DEFAULT_PORT } = require("./dsh-server");
 
 const APP_NAME = "DeepSeek Harness";
 const isMac = process.platform === "darwin";
@@ -140,7 +140,7 @@ function main() {
 
     try {
       await server.start({
-        dshBin: resolveDshBin(),
+        // dshBin 由 DshServer 内部自动解析(优先用打进 App 的副本)
         dshHome: process.env.DSH_HOME,
         logDir,
       });

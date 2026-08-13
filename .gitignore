@@ -2,6 +2,7 @@
 node_modules/
 .npm-cache/
 .electron-cache/
+.electron-builder-cache/
 
 # 构建产物
 dist/
