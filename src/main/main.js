@@ -130,20 +130,16 @@ function main() {
   }
 
   // ---------- 隐形标题栏(dsh UI 注入) ----------
-  // 隐藏标题栏后,网页内容顶到窗口最上方,红绿灯会压住 UI 顶部。
-  // 这里给 dsh 页面注入:顶部预留 36px 空白条(拖动窗口用),
-  // 内容整体下移、不遮挡任何交互元素。加载页有自己的同款实现。
-  const TOP_STRIP_CSS = `
-    html { background: var(--dsw-alias-bg-base, #0d1117) !important; }
-    body { padding-top: 36px !important; }
-  `;
+  // Discord 风格:内容全出血、不预留顶部空间(避免 100vh 布局出现滚动条、
+  // 也避免侧边栏和标题栏区域产生色界)。红绿灯浮在内容左上角,
+  // 顶部 32px 注入透明拖拽条用于拖动窗口,双击=最大化。
   const TOP_STRIP_JS = `
     (() => {
       if (document.getElementById('__dshDesktopDragStrip')) return;
       const strip = document.createElement('div');
       strip.id = '__dshDesktopDragStrip';
       strip.style.cssText =
-        'position:fixed;top:0;left:0;right:0;height:36px;z-index:99999;-webkit-app-region:drag;';
+        'position:fixed;top:0;left:0;right:0;height:32px;z-index:2147483647;-webkit-app-region:drag;';
       strip.addEventListener('dblclick', () => {
         if (window.dsh && window.dsh.toggleMaximize) window.dsh.toggleMaximize();
       });
@@ -156,7 +152,6 @@ function main() {
     const wc = mainWindow.webContents;
     wc.on("did-finish-load", () => {
       if (!server || !wc.getURL().startsWith(server.url)) return;
-      wc.insertCSS(TOP_STRIP_CSS).catch(() => {});
       wc.executeJavaScript(TOP_STRIP_JS, true).catch(() => {});
     });
   }
