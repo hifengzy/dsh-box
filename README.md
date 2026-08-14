@@ -1,4 +1,4 @@
-# DSH Desktop for macOS (dshfordesktop)
+# DSH Desktop for macOS (dsh-desktop)
 
 把 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 封装成**原生 macOS 桌面 App**(基于 Electron)。
 
