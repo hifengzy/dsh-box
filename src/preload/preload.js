@@ -27,4 +27,7 @@ contextBridge.exposeInMainWorld("dsh", {
 
   /** 服务失败后点击重试 */
   retry: () => ipcRenderer.invoke("dsh:retry"),
+
+  /** 双击隐形标题栏:最大化 / 还原 */
+  toggleMaximize: () => ipcRenderer.invoke("window:toggle-maximize"),
 });

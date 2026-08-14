@@ -50,6 +50,10 @@ npm start
   用 `ELECTRON_RUN_AS_NODE=1` + 当前可执行文件运行,所以**用户机器上不需要装 Node,也不需要装 dsh**。`DSH_HOME` 默认 `~/.dsh`,与命令行共用同一套 profile 和会话。
 - **渲染进程** 只显示启动状态,真正的 UI 是 dsh 自己服务的 WebUI。
 
+### 窗口外观
+
+无边框(隐藏标题栏,`titleBarStyle: hiddenInset`),**保留 macOS 左上角红绿灯**。顶部 36px 是"隐形标题栏":可拖动窗口,双击最大化/还原;dsh UI 内容整体下移 36px,不遮挡任何交互元素(加载页同理)。
+
 ## 目录结构
 
 ```

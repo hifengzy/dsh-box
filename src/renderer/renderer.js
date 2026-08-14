@@ -15,6 +15,11 @@ const errorPanel = document.getElementById("errorPanel");
 const errorMessageEl = document.getElementById("errorMessage");
 const retryBtn = document.getElementById("retryBtn");
 
+// 双击隐形标题栏 = 最大化/还原(macOS 惯例)
+document.getElementById("dragStrip").addEventListener("dblclick", () => {
+  window.dsh.toggleMaximize();
+});
+
 function setStatus(state, message) {
   statusEl.textContent = message || "…";
   const loading = state === "starting" || state === "ready";

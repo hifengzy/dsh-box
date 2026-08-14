@@ -56,6 +56,8 @@ function main() {
       minWidth: 960,
       minHeight: 600,
       backgroundColor: "#0d1117",
+      // 隐藏标题栏但保留 macOS 红绿灯按钮(原生实现,不是去掉窗口边框)
+      titleBarStyle: "hiddenInset",
       webPreferences: {
         preload: path.join(__dirname, "..", "preload", "preload.js"),
         contextIsolation: true,
@@ -127,6 +129,38 @@ function main() {
     });
   }
 
+  // ---------- 隐形标题栏(dsh UI 注入) ----------
+  // 隐藏标题栏后,网页内容顶到窗口最上方,红绿灯会压住 UI 顶部。
+  // 这里给 dsh 页面注入:顶部预留 36px 空白条(拖动窗口用),
+  // 内容整体下移、不遮挡任何交互元素。加载页有自己的同款实现。
+  const TOP_STRIP_CSS = `
+    html { background: var(--dsw-alias-bg-base, #0d1117) !important; }
+    body { padding-top: 36px !important; }
+  `;
+  const TOP_STRIP_JS = `
+    (() => {
+      if (document.getElementById('__dshDesktopDragStrip')) return;
+      const strip = document.createElement('div');
+      strip.id = '__dshDesktopDragStrip';
+      strip.style.cssText =
+        'position:fixed;top:0;left:0;right:0;height:36px;z-index:99999;-webkit-app-region:drag;';
+      strip.addEventListener('dblclick', () => {
+        if (window.dsh && window.dsh.toggleMaximize) window.dsh.toggleMaximize();
+      });
+      document.documentElement.appendChild(strip);
+    })();
+  `;
+
+  function installHiddenTitleBarForWebUI() {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const wc = mainWindow.webContents;
+    wc.on("did-finish-load", () => {
+      if (!server || !wc.getURL().startsWith(server.url)) return;
+      wc.insertCSS(TOP_STRIP_CSS).catch(() => {});
+      wc.executeJavaScript(TOP_STRIP_JS, true).catch(() => {});
+    });
+  }
+
   async function startServer() {
     if (!server) {
       server = new DshServer({ port });
@@ -163,6 +197,13 @@ function main() {
     broadcastStatus({ state: "starting", message: "正在重新启动 dsh 服务…" });
     await restartServer();
     return getServerInfo();
+  });
+  // 双击隐形标题栏 = 最大化/还原(macOS 惯例)
+  ipcMain.handle("window:toggle-maximize", () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    if (mainWindow.isMaximized()) mainWindow.unmaximize();
+    else mainWindow.maximize();
+    return true;
   });
 
   // ---------- 权限:本应用只信任本机 dsh 服务 ----------
@@ -257,6 +298,7 @@ function main() {
     buildMenu();
     installPermissionHandlers();
     createWindow();
+    installHiddenTitleBarForWebUI();
     await startServer();
 
     // 测试钩子:冒烟测试模式 — 就绪后打印标记并退出(CI / 自检用)
