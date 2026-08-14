@@ -33,6 +33,7 @@
     "files": [
       "src/**/*",
       "assets/**/*",
+      "custom.css",
       "package.json",
       "node_modules/**/*"
     ],

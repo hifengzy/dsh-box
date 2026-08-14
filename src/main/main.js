@@ -147,12 +147,25 @@ function main() {
     })();
   `;
 
+  // ---------- custom.css(用户自定义样式) ----------
+  // 项目根目录的 custom.css 会被注入到 dsh WebUI,改布局不用写插件。
+  // 开发时是项目根目录;打包后在 Resources/app/custom.css。
+  function readCustomCss() {
+    try {
+      return fs.readFileSync(path.join(__dirname, "..", "..", "custom.css"), "utf8");
+    } catch {
+      return "";
+    }
+  }
+
   function installHiddenTitleBarForWebUI() {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     const wc = mainWindow.webContents;
     wc.on("did-finish-load", () => {
       if (!server || !wc.getURL().startsWith(server.url)) return;
       wc.executeJavaScript(TOP_STRIP_JS, true).catch(() => {});
+      const css = readCustomCss();
+      if (css) wc.insertCSS(css).catch(() => {});
     });
   }
 

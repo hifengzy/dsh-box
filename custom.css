@@ -1,0 +1,45 @@
+/* ============================================================
+ * custom.css — DSH Desktop 的 UI 自定义样式
+ *
+ * 这个文件会被自动注入到 dsh WebUI 页面里,改完保存后
+ * 重启 App(或 ⌘R 刷新)即可生效。
+ *
+ * 不需要写 DSH 插件,适合做:颜色、字号、间距、列宽、隐藏栏目。
+ * 想改页面结构(新增组件/面板)才需要写 client 插件,见 README。
+ *
+ * 所有规则默认被注释掉,取消注释即启用。
+ * ============================================================ */
+
+/* ---------- 1. 颜色(用 DSH 自己的设计变量,最稳) ---------- */
+
+/* 整体背景色 */
+/* :root { --dsw-alias-bg-base: #0d1117; } */
+
+/* 侧边栏底色(左栏和标题栏区域产生色界的就是它) */
+/* :root { --dsw-specific-sidebar-fill: #161b22; } */
+
+/* 边框色 / 文字主色 */
+/* :root {
+  --dsw-alias-border-l1: #21262d;
+  --dsw-alias-label-primary: #e6edf3;
+} */
+
+/* ---------- 2. 三栏比例(侧边栏 | 对话区 | 详情栏) ---------- */
+
+/* 例:侧边栏固定 300px,详情栏关闭(0px) */
+/* .pI_x6G_frame { grid-template-columns: 300px minmax(0, 1fr) 0px !important; } */
+
+/* 例:完全隐藏侧边栏 */
+/* .pI_x6G_sidebarCol { display: none !important; }
+   .pI_x6G_frame { grid-template-columns: minmax(0, 1fr) 0px !important; } */
+
+/* 例:给侧边栏顶部留出红绿灯的空间(配合隐藏窗口边框) */
+/* .pI_x6G_sidebarCol { padding-top: 36px !important; } */
+
+/* ---------- 3. 其它 ---------- */
+
+/* 例:缩小对话区的上下留白 */
+/* .pI_x6G_centerCol { padding-top: 0 !important; } */
+
+/* 提示:.pI_x6G_* 是 DSH 内置框架的类名,升级 dsh 版本后可能变化;
+   优先用上面的 CSS 变量,类名规则失效时再回来改这里。 */
