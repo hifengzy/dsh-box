@@ -34,7 +34,7 @@ const isMac = process.platform === "darwin";
 // 窗口外观常量
 const BAR_HEIGHT = 40; // 自定义顶栏高度
 const CONTENT_INSET = 8; // 内容区相对窗口边缘的内缩(视觉边框)
-const CONTENT_GAP = 8; // 顶栏与内容区之间的间隙
+const CONTENT_GAP = 0; // 顶栏与内容区之间的间隙(0 = 内容紧贴顶栏,顶栏无底边线也不显高)
 const CONTENT_RADIUS = 10; // 内容区四角圆角
 const FRAME_COLOR = "#0d1117"; // 窗口底色(内缩后露出的"边框")
 

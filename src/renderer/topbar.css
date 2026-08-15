@@ -1,7 +1,6 @@
 /* topbar.css — 自定义顶栏样式(高度 40px,由主进程控制) */
 :root {
   --bar-bg: #0d1117;
-  --bar-border: #21262d;
   --bar-text: #8b949e;
   --bar-placeholder: #484f58;
 }
@@ -25,9 +24,8 @@ body {
   align-items: center;
   padding: 0 14px 0 84px; /* 左侧 84px 预留给红绿灯 */
   gap: 14px;
-  /* 整条顶栏可拖动窗口 */
+  /* 整条顶栏可拖动窗口;无底边线,与内容区视觉上连成一体 */
   -webkit-app-region: drag;
-  border-bottom: 1px solid var(--bar-border);
   user-select: none;
 }
 
