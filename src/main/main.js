@@ -5,25 +5,38 @@
  *
  * 职责:
  *   1. 启动 dsh web 子进程(见 dsh-server.js),等待 HTTP 就绪;
- *   2. 创建 BrowserWindow 显示启动页,就绪后切换到 dsh Web UI;
+ *   2. 创建窗口:自定义顶栏视图 + 内容视图(WebContentsView),内容区内缩+圆角;
  *   3. 管理应用菜单、权限请求、外链打开、单实例锁;
  *   4. 退出时清理 dsh 子进程。
  *
  * 进程模型:
- *   ┌─ Electron 主进程 (main.js) ──────────────┐
- *   │  ├─ spawn ─→ dsh web 子进程 (Node)        │ ← 同一原生进程树,
- *   │  │              └─ spawn ─→ bash/shell    │   继承 App 的 TCC 权限
- *   │  └─ BrowserWindow ─→ preload ─→ dsh UI    │
- *   └──────────────────────────────────────────┘
+ *   ┌─ Electron 主进程 (main.js) ───────────────────────┐
+ *   │  ├─ spawn ─→ dsh web 子进程 (Node)                │ ← 同一原生进程树,
+ *   │  │              └─ spawn ─→ bash/shell            │   继承 App 的 TCC 权限
+ *   │  ├─ WebContentsView 顶栏 (topbar.html)            │ 自定义标题栏(拖拽/双击/未来功能)
+ *   │  └─ WebContentsView 内容 (加载页 → dsh UI)        │ 内缩 8px + 圆角 10px
+ *   └──────────────────────────────────────────────────┘
+ *
+ * 为什么用 WebContentsView 而不是在 dsh 页面里注入顶栏:
+ *   dsh 页面内部用了视口单位(100vh),在页面内做留白/内缩会产生滚动条;
+ *   顶栏作为独立的原生级视图,内容区在窗口层内缩,完全不碰页面布局,
+ *   并且顶栏里将来可以随意加搜索框等功能入口(纯 HTML)。
  */
 
-const { app, BrowserWindow, Menu, session, shell, ipcMain } = require("electron");
+const { app, BrowserWindow, Menu, session, shell, ipcMain, WebContentsView } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
 const { DshServer, DEFAULT_PORT } = require("./dsh-server");
 
 const APP_NAME = "DSH Desktop";
 const isMac = process.platform === "darwin";
+
+// 窗口外观常量
+const BAR_HEIGHT = 40; // 自定义顶栏高度
+const CONTENT_INSET = 8; // 内容区相对窗口边缘的内缩(视觉边框)
+const CONTENT_GAP = 8; // 顶栏与内容区之间的间隙
+const CONTENT_RADIUS = 10; // 内容区四角圆角
+const FRAME_COLOR = "#0d1117"; // 窗口底色(内缩后露出的"边框")
 
 // 测试钩子:重定向用户数据目录(冒烟测试/CI 用,避免写 ~/Library)
 if (process.env.DSH_USER_DATA) {
@@ -41,13 +54,24 @@ if (!gotLock) {
 function main() {
   /** @type {BrowserWindow|null} */
   let mainWindow = null;
+  /** @type {WebContentsView|null} */
+  let topBarView = null;
+  /** @type {WebContentsView|null} */
+  let contentView = null;
   let server = null;
 
   const port = Number(process.env.DSH_APP_PORT) || DEFAULT_PORT;
 
   app.setName(APP_NAME);
 
-  // ---------- 窗口 ----------
+  const VIEW_PRELOAD = {
+    preload: path.join(__dirname, "..", "preload", "preload.js"),
+    contextIsolation: true,
+    nodeIntegration: false,
+    sandbox: true,
+  };
+
+  // ---------- 窗口与视图 ----------
   function createWindow() {
     mainWindow = new BrowserWindow({
       title: APP_NAME,
@@ -55,28 +79,42 @@ function main() {
       height: 820,
       minWidth: 960,
       minHeight: 600,
-      backgroundColor: "#0d1117",
-      // 隐藏标题栏但保留 macOS 红绿灯按钮(原生实现,不是去掉窗口边框)
+      backgroundColor: FRAME_COLOR,
+      // 隐藏标题栏但保留 macOS 红绿灯按钮;红绿灯浮在自定义顶栏上
       titleBarStyle: "hiddenInset",
-      webPreferences: {
-        preload: path.join(__dirname, "..", "preload", "preload.js"),
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-      },
+      trafficLightPosition: { x: 18, y: 14 },
     });
 
-    mainWindow.setMenuBarVisibility(false);
-    mainWindow.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
+    // 顶栏视图:自定义标题栏(整条可拖动,双击最大化,将来加功能入口)
+    topBarView = new WebContentsView({ webPreferences: VIEW_PRELOAD });
+    // 内容视图:加载页 → dsh UI;内缩 + 圆角
+    contentView = new WebContentsView({ webPreferences: VIEW_PRELOAD });
+    contentView.setBorderRadius(CONTENT_RADIUS);
 
-    // 禁止窗口内导航离开本应用,外部链接交给系统浏览器
-    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    mainWindow.contentView.addChildView(topBarView);
+    mainWindow.contentView.addChildView(contentView);
+
+    mainWindow.setMenuBarVisibility(false);
+    layoutViews();
+
+    mainWindow.on("resize", layoutViews);
+    mainWindow.on("enter-full-screen", () => setTimeout(layoutViews, 120));
+    mainWindow.on("leave-full-screen", () => setTimeout(layoutViews, 120));
+
+    // 顶栏内容
+    topBarView.webContents.loadFile(path.join(__dirname, "..", "renderer", "topbar.html"));
+    // 内容视图:先显示加载页,服务就绪后切到 dsh UI
+    contentView.webContents.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
+
+    // 内容视图的导航与外链处理
+    const wc = contentView.webContents;
+    wc.setWindowOpenHandler(({ url }) => {
       if (url.startsWith("http://") || url.startsWith("https://")) {
         shell.openExternal(url);
       }
       return { action: "deny" };
     });
-    mainWindow.webContents.on("will-navigate", (event, url) => {
+    wc.on("will-navigate", (event, url) => {
       const serverUrl = server ? server.url : "";
       if (serverUrl && !url.startsWith(serverUrl)) {
         event.preventDefault();
@@ -88,13 +126,28 @@ function main() {
 
     mainWindow.on("closed", () => {
       mainWindow = null;
+      topBarView = null;
+      contentView = null;
     });
   }
 
-  // ---------- 启动页 / 状态广播 ----------
+  /** 按当前窗口尺寸摆放两个视图(顶栏通栏;内容区内缩+圆角)。 */
+  function layoutViews() {
+    if (!mainWindow || mainWindow.isDestroyed() || !topBarView || !contentView) return;
+    const { width, height } = mainWindow.getContentBounds();
+    topBarView.setBounds({ x: 0, y: 0, width, height: BAR_HEIGHT });
+    contentView.setBounds({
+      x: CONTENT_INSET,
+      y: BAR_HEIGHT + CONTENT_GAP,
+      width: Math.max(0, width - CONTENT_INSET * 2),
+      height: Math.max(0, height - BAR_HEIGHT - CONTENT_GAP - CONTENT_INSET),
+    });
+  }
+
+  // ---------- 状态广播(发给内容视图) ----------
   function broadcastStatus(status) {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("dsh:status", status);
+    if (contentView && !contentView.webContents.isDestroyed()) {
+      contentView.webContents.send("dsh:status", status);
     }
   }
 
@@ -113,8 +166,8 @@ function main() {
   function wireServerEvents() {
     server.on("ready", (url) => {
       broadcastStatus({ state: "ready", message: `服务已就绪: ${url}` });
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.loadURL(url);
+      if (contentView && !contentView.webContents.isDestroyed()) {
+        contentView.webContents.loadURL(url);
       }
     });
     server.on("error", (error) => {
@@ -129,24 +182,6 @@ function main() {
     });
   }
 
-  // ---------- 隐形标题栏(dsh UI 注入) ----------
-  // Discord 风格:内容全出血、不预留顶部空间(避免 100vh 布局出现滚动条、
-  // 也避免侧边栏和标题栏区域产生色界)。红绿灯浮在内容左上角,
-  // 顶部 32px 注入透明拖拽条用于拖动窗口,双击=最大化。
-  const TOP_STRIP_JS = `
-    (() => {
-      if (document.getElementById('__dshDesktopDragStrip')) return;
-      const strip = document.createElement('div');
-      strip.id = '__dshDesktopDragStrip';
-      strip.style.cssText =
-        'position:fixed;top:0;left:0;right:0;height:32px;z-index:2147483647;-webkit-app-region:drag;';
-      strip.addEventListener('dblclick', () => {
-        if (window.dsh && window.dsh.toggleMaximize) window.dsh.toggleMaximize();
-      });
-      document.documentElement.appendChild(strip);
-    })();
-  `;
-
   // ---------- custom.css(用户自定义样式) ----------
   // 项目根目录的 custom.css 会被注入到 dsh WebUI,改布局不用写插件。
   // 开发时是项目根目录;打包后在 Resources/app/custom.css。
@@ -158,12 +193,11 @@ function main() {
     }
   }
 
-  function installHiddenTitleBarForWebUI() {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    const wc = mainWindow.webContents;
+  function installWebUIInjection() {
+    if (!contentView) return;
+    const wc = contentView.webContents;
     wc.on("did-finish-load", () => {
       if (!server || !wc.getURL().startsWith(server.url)) return;
-      wc.executeJavaScript(TOP_STRIP_JS, true).catch(() => {});
       const css = readCustomCss();
       if (css) wc.insertCSS(css).catch(() => {});
     });
@@ -206,7 +240,7 @@ function main() {
     await restartServer();
     return getServerInfo();
   });
-  // 双击隐形标题栏 = 最大化/还原(macOS 惯例)
+  // 双击顶栏 = 最大化/还原(macOS 惯例)
   ipcMain.handle("window:toggle-maximize", () => {
     if (!mainWindow || mainWindow.isDestroyed()) return false;
     if (mainWindow.isMaximized()) mainWindow.unmaximize();
@@ -217,7 +251,7 @@ function main() {
   // ---------- 权限:本应用只信任本机 dsh 服务 ----------
   // (必须在 app ready 之后才能访问 session,所以放在 whenReady 里)
   function installPermissionHandlers() {
-    // 信任两个来源:本机 dsh 服务 + 应用自带的 file:// 页面(加载页)
+    // 信任三个来源:本机 dsh 服务 + 应用自带的 file:// 页面(加载页/顶栏)
     const isTrustedOrigin = (origin) =>
       origin.startsWith("http://127.0.0.1") ||
       origin.startsWith("http://localhost") ||
@@ -306,7 +340,7 @@ function main() {
     buildMenu();
     installPermissionHandlers();
     createWindow();
-    installHiddenTitleBarForWebUI();
+    installWebUIInjection();
     await startServer();
 
     // 测试钩子:冒烟测试模式 — 就绪后打印标记并退出(CI / 自检用)

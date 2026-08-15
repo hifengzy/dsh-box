@@ -34,8 +34,8 @@ npm start
 │  主进程 src/main/main.js                           │
 │    ├─ spawn ──→ dsh web 子进程 (Node)              │  ← 同一原生进程树
 │    │               └─ spawn ─→ bash / shell        │     → 继承 App 的
-│    ├─ 轮询 HTTP 就绪后加载 WebUI                   │       macOS 权限(TCC)
-│    └─ BrowserWindow (加载页 → WebUI)               │
+│    ├─ WebContentsView 顶栏 (topbar.html)           │        macOS 权限(TCC)
+│    └─ WebContentsView 内容 (加载页 → WebUI)        │  自定义标题栏 / 内缩+圆角
 │            ▲ contextBridge                         │
 │            │                                       │
 │        preload.js (最小 IPC 桥,不暴露 Node)         │
@@ -48,11 +48,12 @@ npm start
   2. **打进 App 的 dsh**(打包后是 `app.asar.unpacked/node_modules/@deepseek-ai/dsh`,开发时是项目 `node_modules`)——默认走这个;
   3. PATH 里的 `dsh`(兜底)。
   用 `ELECTRON_RUN_AS_NODE=1` + 当前可执行文件运行,所以**用户机器上不需要装 Node,也不需要装 dsh**。`DSH_HOME` 默认 `~/.dsh`,与命令行共用同一套 profile 和会话。
-- **渲染进程** 只显示启动状态,真正的 UI 是 dsh 自己服务的 WebUI。
+- **顶栏视图** (`src/renderer/topbar.*`) 是独立的自定义标题栏:整条可拖动、双击最大化,左侧留红绿灯空间,右侧 `.actions` 是将来加搜索框等功能入口的位置(纯 HTML,想加就加)。
+- **内容视图** 显示加载页,就绪后加载 dsh WebUI;窗口层内缩 8px + 圆角 10px(VS Code 风格),**不碰页面布局**,不会产生滚动条。
 
 ### 窗口外观
 
-无边框 Discord 风格(`titleBarStyle: hiddenInset`):隐藏标题栏,保留 macOS 左上角红绿灯,**内容全出血**(不预留顶部空间,不产生布局性滚动条)。顶部 32px 是透明拖拽条:可拖动窗口,双击最大化/还原;红绿灯浮在内容左上角(通常落在侧边栏上,与 Discord 一致)。
+隐藏系统标题栏(`titleBarStyle: hiddenInset`),用**自定义顶栏视图**替代:macOS 红绿灯浮在顶栏左侧(不随侧边栏收起而横跨区域);顶栏整条可拖动,双击最大化。内容区相对窗口边缘**内缩 8px、四角圆角 10px**,形成视觉边框;窗口底色为深色 `#0d1117`,即内缩后露出的"边框"。
 
 ### 自定义 UI(不用写插件)
 

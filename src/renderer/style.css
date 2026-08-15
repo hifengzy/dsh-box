@@ -29,17 +29,6 @@ body {
   user-select: none;
 }
 
-/* 隐形标题栏:顶部 32px 可拖动窗口(macOS 红绿灯在此区域) */
-#dragStrip {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 32px;
-  z-index: 9999;
-  -webkit-app-region: drag;
-}
-
 .stage {
   height: 100%;
   display: flex;

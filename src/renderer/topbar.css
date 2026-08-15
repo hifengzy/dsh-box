@@ -1,0 +1,55 @@
+/* topbar.css — 自定义顶栏样式(高度 40px,由主进程控制) */
+:root {
+  --bar-bg: #0d1117;
+  --bar-border: #21262d;
+  --bar-text: #8b949e;
+  --bar-placeholder: #484f58;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--bar-bg);
+}
+
+.bar {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding: 0 14px 0 84px; /* 左侧 84px 预留给红绿灯 */
+  gap: 14px;
+  /* 整条顶栏可拖动窗口 */
+  -webkit-app-region: drag;
+  border-bottom: 1px solid var(--bar-border);
+  user-select: none;
+}
+
+.title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--bar-text);
+  white-space: nowrap;
+}
+
+/* 将来的功能入口区:no-drag 保证里面的控件可点击 */
+.actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+}
+
+.placeholder {
+  font-size: 11px;
+  color: var(--bar-placeholder);
+  white-space: nowrap;
+}

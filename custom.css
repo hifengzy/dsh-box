@@ -33,8 +33,8 @@
 /* .pI_x6G_sidebarCol { display: none !important; }
    .pI_x6G_frame { grid-template-columns: minmax(0, 1fr) 0px !important; } */
 
-/* 例:给侧边栏顶部留出红绿灯的空间(配合隐藏窗口边框) */
-/* .pI_x6G_sidebarCol { padding-top: 36px !important; } */
+/* 注:红绿灯和窗口拖动由 App 的自定义顶栏(独立视图)负责,
+   不需要再给页面留红绿灯空间。 */
 
 /* ---------- 3. 其它 ---------- */
 
