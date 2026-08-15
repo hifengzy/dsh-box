@@ -47,7 +47,7 @@ npm start
   1. 环境变量 `DSH_BIN`(测试/调试用);
   2. **打进 App 的 dsh**(打包后是 `app.asar.unpacked/node_modules/@deepseek-ai/dsh`,开发时是项目 `node_modules`)——默认走这个;
   3. PATH 里的 `dsh`(兜底)。
-  用 `ELECTRON_RUN_AS_NODE=1` + 当前可执行文件运行,所以**用户机器上不需要装 Node,也不需要装 dsh**。`DSH_HOME` 默认 `~/.dsh`,与命令行共用同一套 profile 和会话。
+  用 `ELECTRON_RUN_AS_NODE=1` + 当前可执行文件运行,所以**用户机器上不需要装 Node,也不需要装 dsh**。`DSH_HOME` 默认用 App 自己的数据目录(`~/Library/Application Support/DSH Desktop/dsh-home`),与浏览器 WebUI 的 `~/.dsh` 隔离,避免两个 dsh 服务并发读写同一会话导致弹层闪烁(见「常见问题」)。
 - **顶栏视图** (`src/renderer/topbar.*`) 是独立的自定义标题栏:整条可拖动、双击最大化,左侧留红绿灯空间,右侧 `.actions` 是将来加搜索框等功能入口的位置(纯 HTML,想加就加)。
 - **内容视图** 显示加载页,就绪后加载 dsh WebUI;窗口层内缩 8px + 圆角 10px(VS Code 风格),**不碰页面布局**,不会产生滚动条。
 
@@ -118,7 +118,7 @@ npm run dist:dmg    # 只生成 .dmg
 | --- | --- | --- |
 | `DSH_APP_PORT` | `3260` | dsh WebUI 监听端口(避开开发常用的 3080) |
 | `DSH_BIN` | 自动查找 | 显式指定 dsh 可执行文件路径 |
-| `DSH_HOME` | `~/.dsh` | Harness 数据目录(profile/会话) |
+| `DSH_HOME` | App 数据目录 | Harness 数据目录(profile/会话);默认与浏览器 WebUI 隔离 |
 
 ## 常见问题
 
@@ -126,7 +126,10 @@ npm run dist:dmg    # 只生成 .dmg
 运行 `npm run doctor` 看提示。打包后的 App 自带 dsh;开发模式下先确认 `npm install` 装过 `@deepseek-ai/dsh`。也可用 `DSH_BIN` 强制指定。
 
 **启动后一直停在加载页**
-看日志:主进程终端会打印 `[dsh:err] ...`,完整日志在 `~/Library/Application Support/DSH Desktop/logs/`。最常见原因:端口被占用(换 `DSH_APP_PORT`)或 `~/.dsh` 里的 profile 配置损坏。
+看日志:主进程终端会打印 `[dsh:err] ...`,完整日志在 `~/Library/Application Support/DSH Desktop/logs/`。最常见原因:端口被占用(换 `DSH_APP_PORT`)或 DSH_HOME 里的 profile 配置损坏。
+
+**命令面板/触发菜单打开即消失(闪烁)**
+通常是**两个 dsh 服务共享同一会话**导致的:浏览器 WebUI 和桌面 App 各跑一个 dsh 服务,同时打开同一个会话时,一方写入会让另一方的会话状态刷新,把会话级弹层顶掉。App 默认已用独立 DSH_HOME 隔离;如果手动设了 `DSH_HOME=~/.dsh` 共享,请**不要同时在两个客户端打开同一个会话**。
 
 **WebUI 里执行 shell 命令没有权限(比如访问桌面/文档/下载)**
 这是 macOS 的 TCC 限制,与 Harness 无关。按 [docs/PERMISSIONS.md](docs/PERMISSIONS.md) 给 App 授予「完全磁盘访问权限」即可——这是本方案相对浏览器的核心优势。

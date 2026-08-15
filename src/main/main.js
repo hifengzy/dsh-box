@@ -257,7 +257,10 @@ function main() {
     try {
       await server.start({
         // dshBin 由 DshServer 内部自动解析(优先用打进 App 的副本)
-        dshHome: process.env.DSH_HOME,
+        // DSH_HOME 默认用 App 自己的目录,与浏览器 WebUI 的 ~/.dsh 隔离:
+        // 两个 dsh 服务共享同一会话会互相刷新状态,导致命令面板等
+        // 会话级弹层"打开即消失"。设 DSH_HOME 可覆盖(共享时勿双开同会话)。
+        dshHome: process.env.DSH_HOME || path.join(app.getPath("userData"), "dsh-home"),
         logDir,
       });
     } catch (error) {
