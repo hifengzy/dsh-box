@@ -94,6 +94,19 @@ function main() {
     mainWindow.contentView.addChildView(topBarView);
     mainWindow.contentView.addChildView(contentView);
 
+    // ---------- 焦点管理(关键修复) ----------
+    // WebContentsView 架构下,窗口聚焦不代表内容页聚焦(document.hasFocus()
+    // 仍为 false)。页面无焦点时,Chromium 会把点击当"未聚焦窗口的首次点击",
+    // macOS 会重复投递 pointerdown,触发 dsh 命令面板等弹层"打开即消失"
+    // (它们用 document 捕获期 pointerdown + 点击外部即关闭)。
+    // 修复:窗口聚焦时显式把焦点交给内容视图。
+    const focusContent = () => {
+      if (contentView && !contentView.webContents.isDestroyed()) {
+        contentView.webContents.focus();
+      }
+    };
+    mainWindow.on("focus", focusContent);
+
     mainWindow.setMenuBarVisibility(false);
     layoutViews();
 
@@ -105,6 +118,8 @@ function main() {
     topBarView.webContents.loadFile(path.join(__dirname, "..", "renderer", "topbar.html"));
     // 内容视图:先显示加载页,服务就绪后切到 dsh UI
     contentView.webContents.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
+    // 初始焦点交给内容视图(同上,防止 document.hasFocus() 一直为 false)
+    setTimeout(focusContent, 0);
 
     // 内容视图的导航与外链处理
     const wc = contentView.webContents;
@@ -182,7 +197,7 @@ function main() {
     });
   }
 
-  // ---------- custom.css(用户自定义样式) ----------
+  // ---------- 页面注入(custom.css + 事件防御) ----------
   // 项目根目录的 custom.css 会被注入到 dsh WebUI,改布局不用写插件。
   // 开发时是项目根目录;打包后在 Resources/app/custom.css。
   function readCustomCss() {
@@ -193,11 +208,36 @@ function main() {
     }
   }
 
+  // 防御:macOS 在"未聚焦窗口的首次点击"时,Chromium 会对同一次物理点击
+  // 重复投递 pointerdown(激活 + 实际点击)。dsh 的命令面板/触发菜单等弹层
+  // 都监听"document 捕获期 pointerdown + 点击卡片外即关闭",重复投递会让
+  // 面板"打开即消失"。这里在捕获期吞掉 60ms/4px 内的重复 pointerdown。
+  // 注意:注册时机早于任何弹层的 dismiss 监听(我们在页面加载后注册),
+  // 所以捕获期先执行;人类双击间隔远大于 60ms,不会误伤。
+  const POINTER_DUP_GUARD_JS = `
+    (() => {
+      if (window.__dshDesktopPointerGuard) return;
+      window.__dshDesktopPointerGuard = true;
+      let last = null;
+      document.addEventListener('pointerdown', (e) => {
+        const now = performance.now();
+        if (last !== null && now - last.t < 60 &&
+            Math.abs(e.clientX - last.x) <= 4 && Math.abs(e.clientY - last.y) <= 4) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+          return;
+        }
+        last = { t: now, x: e.clientX, y: e.clientY };
+      }, true);
+    })();
+  `;
+
   function installWebUIInjection() {
     if (!contentView) return;
     const wc = contentView.webContents;
     wc.on("did-finish-load", () => {
       if (!server || !wc.getURL().startsWith(server.url)) return;
+      wc.executeJavaScript(POINTER_DUP_GUARD_JS, true).catch(() => {});
       const css = readCustomCss();
       if (css) wc.insertCSS(css).catch(() => {});
     });
