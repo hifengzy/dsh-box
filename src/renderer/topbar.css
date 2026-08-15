@@ -1,8 +1,10 @@
-/* topbar.css — 自定义顶栏样式(高度 40px,由主进程控制) */
+/* topbar.css — 自定义顶栏样式(高度 40px,由主进程控制)
+ * 玻璃拟态:背景透明,透出窗口的 macOS 毛玻璃材质;
+ * 文字用 light-dark() 跟随系统外观(深色玻璃→亮字,浅色玻璃→深字)。 */
 :root {
-  --bar-bg: #0d1117;
-  --bar-text: #8b949e;
-  --bar-placeholder: #484f58;
+  color-scheme: light dark;
+  --bar-text: light-dark(rgba(20, 26, 36, 0.78), rgba(235, 240, 255, 0.85));
+  --bar-placeholder: light-dark(rgba(20, 26, 36, 0.4), rgba(235, 240, 255, 0.42));
 }
 
 * {
@@ -15,7 +17,8 @@ html,
 body {
   height: 100%;
   overflow: hidden;
-  background: var(--bar-bg);
+  /* 透明 → 窗口的 vibrancy 毛玻璃透出 */
+  background: transparent;
 }
 
 .bar {

@@ -36,7 +36,9 @@ const BAR_HEIGHT = 40; // 自定义顶栏高度
 const CONTENT_INSET = 8; // 内容区相对窗口边缘的内缩(视觉边框)
 const CONTENT_GAP = 0; // 顶栏与内容区之间的间隙(0 = 内容紧贴顶栏,顶栏无底边线也不显高)
 const CONTENT_RADIUS = 10; // 内容区四角圆角
-const FRAME_COLOR = "#0d1117"; // 窗口底色(内缩后露出的"边框")
+// 玻璃拟态(参考新版微信 macOS):内容区以外的区域(顶栏+边框)用
+// macOS 原生毛玻璃材质。可换材质: 'under-window' | 'sidebar' | 'hud' | 'header'
+const VIBRANCY_MATERIAL = "under-window";
 
 // 测试钩子:重定向用户数据目录(冒烟测试/CI 用,避免写 ~/Library)
 if (process.env.DSH_USER_DATA) {
@@ -79,7 +81,10 @@ function main() {
       height: 820,
       minWidth: 960,
       minHeight: 600,
-      backgroundColor: FRAME_COLOR,
+      // 玻璃拟态:窗口背景用 macOS 原生毛玻璃材质(内容区以外=顶栏+边框
+      // 都是它);不设不透明 backgroundColor,让材质透出
+      vibrancy: VIBRANCY_MATERIAL,
+      visualEffectState: "active", // 窗口失焦时也保持模糊(微信同款观感)
       // 隐藏标题栏但保留 macOS 红绿灯按钮;红绿灯浮在自定义顶栏上
       titleBarStyle: "hiddenInset",
       trafficLightPosition: { x: 18, y: 14 },
@@ -87,9 +92,13 @@ function main() {
 
     // 顶栏视图:自定义标题栏(整条可拖动,双击最大化,将来加功能入口)
     topBarView = new WebContentsView({ webPreferences: VIEW_PRELOAD });
-    // 内容视图:加载页 → dsh UI;内缩 + 圆角
+    // 顶栏背景透明 → 透出窗口的毛玻璃材质
+    topBarView.setBackgroundColor("#00000000");
+    // 内容视图:加载页 → dsh UI;内缩 + 圆角(内容本身不透明)
     contentView = new WebContentsView({ webPreferences: VIEW_PRELOAD });
     contentView.setBorderRadius(CONTENT_RADIUS);
+    // 页面绘制前透明,避免白闪(加载页/dsh UI 有各自的不透明背景)
+    contentView.setBackgroundColor("#00000000");
 
     mainWindow.contentView.addChildView(topBarView);
     mainWindow.contentView.addChildView(contentView);
