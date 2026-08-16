@@ -66,6 +66,27 @@ function main() {
 
   app.setName(APP_NAME);
 
+  // ---------- 启动即应用已持久化的外观主题 ----------
+  // dsh UI 的「外观」偏好持久化在 <DSH_HOME>/settings.yaml 的
+  // settings.theme.preference(light/dark/system)。窗口创建前读取并设置
+  // nativeTheme.themeSource,让启动页(prefers-color-scheme)与毛玻璃
+  // 从第一帧就跟随用户已设置的主题,而不是先闪一下系统主题。
+  // 之后 dsh UI 加载完成会通过 shell:theme-changed 持续同步。
+  (function applyPersistedTheme() {
+    try {
+      const home = process.env.DSH_HOME || path.join(app.getPath("userData"), "dsh-home");
+      const raw = fs.readFileSync(path.join(home, "settings.yaml"), "utf8");
+      const match = raw.match(/^settings\.theme:\s*\n\s*preference:\s*["']?(light|dark|system)["']?/m);
+      const preference = match ? match[1] : null;
+      if (preference === "dark" || preference === "light") {
+        nativeTheme.themeSource = preference;
+        console.log(`[app] 启动应用已持久化的外观主题: ${preference}`);
+      }
+    } catch {
+      /* settings.yaml 不存在或读不到 → 保持跟随系统 */
+    }
+  })();
+
   const VIEW_PRELOAD = {
     preload: path.join(__dirname, "..", "preload", "preload.js"),
     contextIsolation: true,

@@ -1,10 +1,29 @@
-/* style.css — 启动加载页样式(全屏黑色 + logo + 加载/失败态) */
+/* style.css — 启动加载页(主题自适应:深色=黑底,浅色=白底)
+ * 主题来源:prefers-color-scheme(跟随 nativeTheme.themeSource;
+ * 主进程会在窗口创建前读取 dsh 已持久化的外观偏好并设置 themeSource)。 */
 :root {
-  --bg: #000000;
   --accent: #4d6bfe;
+  /* 深色主题(默认) */
+  --page-bg: #000000;
   --text: #ffffff;
   --muted: rgba(255, 255, 255, 0.55);
-  --danger: #f85149;
+  --spinner-track: rgba(255, 255, 255, 0.18);
+  --btn-border: rgba(255, 255, 255, 0.25);
+  --btn-bg: rgba(255, 255, 255, 0.08);
+  --btn-bg-hover: rgba(255, 255, 255, 0.16);
+}
+
+/* 浅色主题 */
+@media (prefers-color-scheme: light) {
+  :root {
+    --page-bg: #ffffff;
+    --text: #111111;
+    --muted: rgba(0, 0, 0, 0.58);
+    --spinner-track: rgba(0, 0, 0, 0.16);
+    --btn-border: rgba(0, 0, 0, 0.22);
+    --btn-bg: rgba(0, 0, 0, 0.05);
+    --btn-bg-hover: rgba(0, 0, 0, 0.1);
+  }
 }
 
 * {
@@ -19,13 +38,27 @@ body {
 }
 
 body {
-  background: var(--bg);
+  background: var(--page-bg);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
     "Helvetica Neue", sans-serif;
   -webkit-font-smoothing: antialiased;
   user-select: none;
   overflow: hidden;
+}
+
+/* 两套 logo 只显示与当前主题匹配的那一张 */
+.logo-light {
+  display: none;
+}
+
+@media (prefers-color-scheme: light) {
+  .logo-dark {
+    display: none;
+  }
+  .logo-light {
+    display: block;
+  }
 }
 
 /* hero:顶部从窗口 30% 开始,水平居中,宽度为窗口 50% */
@@ -60,7 +93,7 @@ body {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.18);
+  border: 2px solid var(--spinner-track);
   border-top-color: var(--accent);
   animation: spin 0.9s linear infinite;
   flex: none;
@@ -90,7 +123,7 @@ body {
 .error-title {
   font-size: 15px;
   font-weight: 600;
-  color: var(--danger);
+  color: #f85149;
 }
 
 .error-detail {
@@ -112,8 +145,8 @@ body {
   bottom: 48px;
   transform: translateX(-50%);
   appearance: none;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--btn-border);
+  background: var(--btn-bg);
   color: var(--text);
   padding: 9px 32px;
   border-radius: 8px;
@@ -123,7 +156,7 @@ body {
 }
 
 .retry:hover {
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--btn-bg-hover);
 }
 
 .retry:active {

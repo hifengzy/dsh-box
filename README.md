@@ -57,7 +57,7 @@ npm start
 
 **玻璃拟态(参考新版微信 macOS)**:内容区以外的区域(顶栏 + 边框)用 macOS 原生毛玻璃材质(`vibrancy: under-window`,`visualEffectState: active` 失焦也保持模糊),背景透出桌面/其它窗口;顶栏文字用 `light-dark()` 跟随外观。想换材质改 `src/main/main.js` 顶部的 `VIBRANCY_MATERIAL`(`under-window` / `sidebar` / `hud` / `header`)。
 
-**主题联动**:dsh UI 设置 → 通用设置 → 外观 里切换浅色/深色/跟随系统时,外壳(毛玻璃材质、红绿灯、顶栏文字)会一起跟随(通过监听 dsh 前端 `data-ds-dark-theme` 属性同步到 `nativeTheme.themeSource`)。已知边界:显式选深/浅色后切回「跟随系统」且与系统相反时,需要重启一次才完全跟随系统。
+**主题联动**:dsh UI 设置 → 通用设置 → 外观 里切换浅色/深色/跟随系统时,外壳(毛玻璃材质、红绿灯、顶栏文字)会一起跟随(通过监听 dsh 前端 `data-ds-dark-theme` 属性同步到 `nativeTheme.themeSource`)。**启动加载页也主题自适应**:深色 = 黑底 + `logo-dark.svg`,浅色 = 白底 + `logo-light.svg`,文案/动画/按钮颜色同步;主进程启动时读取 `settings.yaml` 里已持久化的 `settings.theme.preference`,让启动页从第一帧就跟随用户设置(不是先闪系统主题)。已知边界:显式选深/浅色后切回「跟随系统」且与系统相反时,需要重启一次才完全跟随系统。
 
 ### 自定义 UI(不用写插件)
 

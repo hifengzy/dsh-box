@@ -54,7 +54,7 @@ window.dsh
   .getInfo()
   .then((info) => {
     if (info && info.url) {
-      loadingTextEl.textContent = `服务启动中: ${info.url}`;
+      loadingTextEl.textContent = `服务启动中 ${info.url}`;
     }
   })
   .catch(() => {});

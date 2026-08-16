@@ -10,12 +10,13 @@
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
-    <!-- 启动加载页:全屏黑色。
+    <!-- 启动加载页:主题自适应(深色=黑底+logo-dark,浅色=白底+logo-light)。
          logo:宽度为窗口 50%,顶部边缘距窗口顶部 30%,水平居中。
          loading:logo 下方 30px 居中(动画 + 文案,含动态端口)。
          error:logo 下方 100px 居中;重试按钮固定在窗口底部。 -->
     <div class="hero">
-      <img class="logo" src="./logo-home.svg" alt="DSH Desktop" draggable="false" />
+      <img class="logo logo-dark" src="./logo-dark.svg" alt="DSH Desktop" draggable="false" />
+      <img class="logo logo-light" src="./logo-light.svg" alt="DSH Desktop" draggable="false" />
       <div class="loading" id="loading">
         <div class="spinner" aria-label="加载中"></div>
         <p class="loading-text" id="loadingText">服务启动中…</p>
