@@ -163,6 +163,10 @@ function main() {
     contentView.setBorderRadius(CONTENT_RADIUS);
     // 页面绘制前透明,避免白闪(加载页/dsh UI 有各自的不透明背景)
     contentView.setBackgroundColor("#00000000");
+    // 注入(custom.css / 事件防御 / 主题同步)必须按窗口注册:
+    // 之前只在第一个窗口的 webContents 上装了一次,关窗重开(activate)
+    // 的新窗口完全没有注入。这里每个窗口各装一份。
+    installWebUIInjection();
 
     mainWindow.contentView.addChildView(topBarView);
     mainWindow.contentView.addChildView(contentView);
@@ -189,8 +193,13 @@ function main() {
 
     // 顶栏内容
     topBarView.webContents.loadFile(path.join(__dirname, "..", "renderer", "topbar.html"));
-    // 内容视图:先显示加载页,服务就绪后切到 dsh UI
-    contentView.webContents.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
+    // 内容视图:服务已就绪(关窗重开等场景)→ 直接加载 WebUI;
+    // 否则先显示加载页,等 dsh 服务就绪后再由 ready 事件切过去。
+    if (server && server.ready) {
+      contentView.webContents.loadURL(server.url);
+    } else {
+      contentView.webContents.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
+    }
     // 初始焦点交给内容视图(同上,防止 document.hasFocus() 一直为 false)
     setTimeout(focusContent, 0);
 
@@ -490,7 +499,6 @@ function main() {
     buildMenu();
     installPermissionHandlers();
     createWindow();
-    installWebUIInjection();
     await startServer();
 
     // 测试钩子:冒烟测试模式 — 就绪后打印标记并退出(CI / 自检用)
