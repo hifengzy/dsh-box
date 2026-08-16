@@ -25,6 +25,7 @@
 
 const { app, BrowserWindow, Menu, session, shell, ipcMain, WebContentsView, nativeTheme } = require("electron");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { DshServer, DEFAULT_PORT } = require("./dsh-server");
 
@@ -45,11 +46,49 @@ if (process.env.DSH_USER_DATA) {
   app.setPath("userData", path.resolve(process.env.DSH_USER_DATA));
 }
 
-// 单实例锁:重复启动时聚焦已有窗口
-const gotLock = app.requestSingleInstanceLock();
-if (!gotLock) {
+// ---------- 全局单实例锁 ----------
+// Electron 的 requestSingleInstanceLock 以 userData 为作用域:dev(npm start)
+// 与打包版 userData 不同,两个实例可以同时运行,并争抢同一个端口,导致
+// 后启动者的 dsh 绑定失败(EADDRINUSE)→ 启动页误报"服务启动失败"。
+// 这里用固定路径的锁文件,让所有实例(无论 userData)共享一把锁。
+// 测试/CI 可用 DSH_LOCK_PATH 覆盖,避免与正在运行的实例冲突。
+const GLOBAL_LOCK_PATH = process.env.DSH_LOCK_PATH || path.join(os.tmpdir(), "dsh-desktop.lock");
+
+/**
+ * 获取全局锁:成功返回 true;另一实例在跑返回 false;陈旧锁(持有者已死)自动接管。
+ * @returns {boolean}
+ */
+function acquireGlobalLock() {
+  try {
+    fs.mkdirSync(GLOBAL_LOCK_PATH);
+    fs.writeFileSync(path.join(GLOBAL_LOCK_PATH, "pid"), String(process.pid));
+    return true;
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+    try {
+      const pid = Number(fs.readFileSync(path.join(GLOBAL_LOCK_PATH, "pid"), "utf8"));
+      process.kill(pid, 0); // 持有者存活 → 拒绝
+      return false;
+    } catch {
+      // 陈旧锁(持有者已死):接管
+      fs.rmSync(GLOBAL_LOCK_PATH, { recursive: true, force: true });
+      return acquireGlobalLock();
+    }
+  }
+}
+
+const gotGlobalLock = acquireGlobalLock();
+if (!gotGlobalLock) {
+  console.log("[app] 已有 DSH Desktop 实例在运行,本次启动退出");
   app.quit();
 } else {
+  app.on("will-quit", () => {
+    try {
+      fs.rmSync(GLOBAL_LOCK_PATH, { recursive: true, force: true });
+    } catch {
+      /* 忽略清理失败 */
+    }
+  });
   main();
 }
 
@@ -76,7 +115,10 @@ function main() {
     try {
       const home = process.env.DSH_HOME || path.join(app.getPath("userData"), "dsh-home");
       const raw = fs.readFileSync(path.join(home, "settings.yaml"), "utf8");
-      const match = raw.match(/^settings\.theme:\s*\n\s*preference:\s*["']?(light|dark|system)["']?/m);
+      // 实测 settings.yaml 的键是 ui-theme(settings 命名空间 "settings.theme"
+      // 持久化后写作 ui-theme);两种写法都兼容
+      const match = raw.match(/^ui-theme:\s*\n\s*preference:\s*["']?(light|dark|system)["']?/m)
+        ?? raw.match(/^settings\.theme:\s*\n\s*preference:\s*["']?(light|dark|system)["']?/m);
       const preference = match ? match[1] : null;
       if (preference === "dark" || preference === "light") {
         nativeTheme.themeSource = preference;
@@ -441,13 +483,6 @@ function main() {
   }
 
   // ---------- 生命周期 ----------
-  app.on("second-instance", () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
-  });
-
   app.whenReady().then(async () => {
     buildMenu();
     installPermissionHandlers();

@@ -320,9 +320,10 @@ class DshServer extends EventEmitter {
    * 导致下次启动时新 spawn 的 dsh 绑定失败(EADDRINUSE),而健康检查又命中
    * 残留服务,造成"服务启动失败"红字误报。启动前把占用本端口的残留清掉。
    *
-   * 安全性:按"完整签名"匹配 —— 命令行必须同时包含本 App 的 dsh 入口
-   * (dsh/lib/bin.js web)和本次端口;这样的进程只可能是本 App 之前实例
-   * 拉起的(单实例锁保证正常场景不存在并发活实例)。不匹配签名的进程不动。
+   * 安全性:只清理"父进程已死(PPID=1)"的孤儿进程 —— 父进程存活的
+   * 是本 App 正在运行的另一个实例的活服务,绝不误杀。若系统没有 ps
+   * (拿不到 PPID),保守起见不清理。匹配仍按"本 App dsh 入口 + 端口"
+   * 签名,不匹配的进程不动。
    *
    * @param {number} port 监听端口
    * @returns {Promise<number>} 清理数量
@@ -335,7 +336,10 @@ class DshServer extends EventEmitter {
       });
       const pids = (probe.stdout || "").trim().split("\n").filter((p) => /^\d+$/.test(p));
       for (const pid of pids) {
-        console.log(`[dsh] 清理占用端口 ${port} 的残留 dsh 服务进程 pid=${pid}`);
+        const ps = spawnSync("ps", ["-o", "ppid=", "-p", pid], { encoding: "utf8" });
+        const ppid = (ps.stdout || "").trim();
+        if (ppid !== "1") continue; // 父进程存活 = 活实例的服务,不碰;ps 不可用时也不碰
+        console.log(`[dsh] 清理残留的 dsh 孤儿进程 pid=${pid} port=${port}`);
         try {
           process.kill(Number(pid), "SIGTERM");
           reaped++;
