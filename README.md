@@ -53,9 +53,11 @@ npm start
 
 ### 窗口外观
 
-隐藏系统标题栏(`titleBarStyle: hiddenInset`),用**自定义顶栏视图**替代:macOS 红绿灯浮在顶栏左侧(不随侧边栏收起而横跨区域);顶栏整条可拖动,双击最大化。内容区相对窗口边缘**内缩 8px、四角圆角 10px**。
+隐藏系统标题栏(`titleBarStyle: hiddenInset`),用**自定义顶栏视图**替代:macOS 红绿灯浮在顶栏左侧(不随侧边栏收起而横跨区域);顶栏整条可拖动,双击最大化。内容区相对窗口边缘**内缩 4px、四角圆角 10px**(纤细边框)。
 
-**玻璃拟态(参考新版微信 macOS)**:内容区以外的区域(顶栏 + 边框)用 macOS 原生毛玻璃材质(`vibrancy: under-window`,`visualEffectState: active` 失焦也保持模糊),背景透出桌面/其它窗口;顶栏文字用 `light-dark()` 跟随系统外观。想换材质改 `src/main/main.js` 顶部的 `VIBRANCY_MATERIAL`(`under-window` / `sidebar` / `hud` / `header`)。
+**玻璃拟态(参考新版微信 macOS)**:内容区以外的区域(顶栏 + 边框)用 macOS 原生毛玻璃材质(`vibrancy: under-window`,`visualEffectState: active` 失焦也保持模糊),背景透出桌面/其它窗口;顶栏文字用 `light-dark()` 跟随外观。想换材质改 `src/main/main.js` 顶部的 `VIBRANCY_MATERIAL`(`under-window` / `sidebar` / `hud` / `header`)。
+
+**主题联动**:dsh UI 设置 → 通用设置 → 外观 里切换浅色/深色/跟随系统时,外壳(毛玻璃材质、红绿灯、顶栏文字)会一起跟随(通过监听 dsh 前端 `data-ds-dark-theme` 属性同步到 `nativeTheme.themeSource`)。已知边界:显式选深/浅色后切回「跟随系统」且与系统相反时,需要重启一次才完全跟随系统。
 
 ### 自定义 UI(不用写插件)
 

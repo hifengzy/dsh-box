@@ -23,7 +23,7 @@
  *   并且顶栏里将来可以随意加搜索框等功能入口(纯 HTML)。
  */
 
-const { app, BrowserWindow, Menu, session, shell, ipcMain, WebContentsView } = require("electron");
+const { app, BrowserWindow, Menu, session, shell, ipcMain, WebContentsView, nativeTheme } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
 const { DshServer, DEFAULT_PORT } = require("./dsh-server");
@@ -33,7 +33,7 @@ const isMac = process.platform === "darwin";
 
 // 窗口外观常量
 const BAR_HEIGHT = 40; // 自定义顶栏高度
-const CONTENT_INSET = 8; // 内容区相对窗口边缘的内缩(视觉边框)
+const CONTENT_INSET = 4; // 内容区相对窗口边缘的内缩(视觉边框,纤细款)
 const CONTENT_GAP = 0; // 顶栏与内容区之间的间隙(0 = 内容紧贴顶栏,顶栏无底边线也不显高)
 const CONTENT_RADIUS = 10; // 内容区四角圆角
 // 玻璃拟态(参考新版微信 macOS):内容区以外的区域(顶栏+边框)用
@@ -241,12 +241,38 @@ function main() {
     })();
   `;
 
+  // 主题同步:dsh UI 设置里切换外观(浅色/深色/跟随系统)时,前端会在
+  // document.body 上设置/移除 data-ds-dark-theme(有=深色,无=浅色)。
+  // 这里监听该属性并把解析结果上报给主进程,让外壳跟随。
+  const THEME_WATCHER_JS = `
+    (() => {
+      if (window.__dshDesktopThemeWatcher) return;
+      window.__dshDesktopThemeWatcher = true;
+      const report = () => {
+        const dark = document.body ? document.body.hasAttribute('data-ds-dark-theme') : false;
+        if (window.dsh && window.dsh.reportTheme) {
+          window.dsh.reportTheme(dark ? 'dark' : 'light');
+        }
+      };
+      const start = () => {
+        if (!document.body) { setTimeout(start, 100); return; }
+        new MutationObserver(report).observe(document.body, {
+          attributes: true,
+          attributeFilter: ['data-ds-dark-theme']
+        });
+        report();
+      };
+      start();
+    })();
+  `;
+
   function installWebUIInjection() {
     if (!contentView) return;
     const wc = contentView.webContents;
     wc.on("did-finish-load", () => {
       if (!server || !wc.getURL().startsWith(server.url)) return;
       wc.executeJavaScript(POINTER_DUP_GUARD_JS, true).catch(() => {});
+      wc.executeJavaScript(THEME_WATCHER_JS, true).catch(() => {});
       const css = readCustomCss();
       if (css) wc.insertCSS(css).catch(() => {});
     });
@@ -298,6 +324,19 @@ function main() {
     if (mainWindow.isMaximized()) mainWindow.unmaximize();
     else mainWindow.maximize();
     return true;
+  });
+
+  // ---------- 主题同步(dsh UI → 外壳) ----------
+  // dsh UI 在设置里切换外观(浅色/深色/跟随系统)时,dsh 前端会在
+  // document.body 上设置/移除 data-ds-dark-theme;注入脚本把解析结果
+  // 报过来,这里镜像到 nativeTheme.themeSource,让毛玻璃材质、红绿灯、
+  // 顶栏文字(light-dark())一起跟随 dsh 的主题。
+  ipcMain.on("shell:theme-changed", (_event, scheme) => {
+    if (scheme !== "dark" && scheme !== "light") return;
+    if (nativeTheme.themeSource !== scheme) {
+      nativeTheme.themeSource = scheme;
+      console.log(`[app] 外壳主题跟随 dsh UI: ${scheme}`);
+    }
   });
 
   // ---------- 权限:本应用只信任本机 dsh 服务 ----------
