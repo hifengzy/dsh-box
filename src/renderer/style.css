@@ -32,6 +32,12 @@
   box-sizing: border-box;
 }
 
+/* hidden 属性必须生效:作者样式(如 .error/.loading 的 display:flex)会覆盖
+ * UA 对 [hidden] 的 display:none,导致「服务启动失败」与加载动画永远同时可见。 */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   height: 100%;
