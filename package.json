@@ -15,6 +15,7 @@
     "smoke": "node scripts/smoke.js",
     "smoke:e2e": "DSH_SMOKE=1 DSH_USER_DATA=.runtime/smoke/user-data DSH_HOME=.runtime/smoke/dsh-home DSH_APP_PORT=3278 DSH_LOCK_PATH=.runtime/smoke/lock electron . --no-sandbox",
     "test:theme": "electron scripts/theme-logo-test.js --no-sandbox",
+    "test:regression": "node scripts/regression-url-guard.js && electron scripts/regression-loading-visibility.js --no-sandbox && electron scripts/regression-reopen.js --no-sandbox && electron scripts/regression-port-conflict.js --no-sandbox && electron scripts/regression-crash-feedback.js --no-sandbox",
     "make-icon": "node scripts/make-icon.mjs",
     "dist": "electron-builder --mac",
     "dist:dmg": "electron-builder --mac dmg",
