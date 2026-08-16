@@ -28,6 +28,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { DshServer, DEFAULT_PORT } = require("./dsh-server");
+const { isServerOrigin, isTrustedOrigin } = require("./url-guard");
 
 const APP_NAME = "DSH Desktop";
 const isMac = process.platform === "darwin";
@@ -203,7 +204,9 @@ function main() {
     });
     wc.on("will-navigate", (event, url) => {
       const serverUrl = server ? server.url : "";
-      if (serverUrl && !url.startsWith(serverUrl)) {
+      // 精确同源判断(解析 URL 比对 origin),避免前缀匹配被
+      // userinfo(http://127.0.0.1:3260@evil.com)或端口前缀(32600)绕过
+      if (serverUrl && !isServerOrigin(url, serverUrl)) {
         event.preventDefault();
         if (url.startsWith("http://") || url.startsWith("https://")) {
           shell.openExternal(url);
@@ -333,7 +336,7 @@ function main() {
     if (!contentView) return;
     const wc = contentView.webContents;
     wc.on("did-finish-load", () => {
-      if (!server || !wc.getURL().startsWith(server.url)) return;
+      if (!server || !isServerOrigin(wc.getURL(), server.url)) return;
       wc.executeJavaScript(POINTER_DUP_GUARD_JS, true).catch(() => {});
       wc.executeJavaScript(THEME_WATCHER_JS, true).catch(() => {});
       const css = readCustomCss();
@@ -405,21 +408,21 @@ function main() {
   // ---------- 权限:本应用只信任本机 dsh 服务 ----------
   // (必须在 app ready 之后才能访问 session,所以放在 whenReady 里)
   function installPermissionHandlers() {
-    // 信任三个来源:本机 dsh 服务 + 应用自带的 file:// 页面(加载页/顶栏)
-    const isTrustedOrigin = (origin) =>
-      origin.startsWith("http://127.0.0.1") ||
-      origin.startsWith("http://localhost") ||
-      origin.startsWith("file://");
+    // 只信任两个来源:dsh 服务自身的 origin(精确匹配)+ App 自带的 file:// 页面。
+    // 之前用 startsWith("http://127.0.0.1") 会把端口上任何本地服务都当可信来源。
+    const trustedOrigin = (origin) =>
+      isTrustedOrigin(origin, server?.url ?? `http://127.0.0.1:${port}`);
     session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
       const origin = webContents.getURL();
-      const trusted = isTrustedOrigin(origin);
+      const trusted = trustedOrigin(origin);
       if (!trusted) console.warn(`[app] 拒绝权限请求 ${permission} (${origin})`);
       callback(trusted);
     });
     session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
-      const trusted = isTrustedOrigin(requestingOrigin);
-      // 空来源是 Chromium 页面加载时的内部检查,不构成风险,不打印
-      if (!trusted && requestingOrigin) {
+      // 空来源是 Chromium 页面加载时的内部检查,不构成风险,放行且不打印
+      if (!requestingOrigin) return true;
+      const trusted = trustedOrigin(requestingOrigin);
+      if (!trusted) {
         console.warn(`[app] 拒绝权限检查 ${permission} (${requestingOrigin})`);
       }
       return trusted;
