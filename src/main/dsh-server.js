@@ -128,6 +128,8 @@ class DshServer extends EventEmitter {
     this.dshBin = null;
     this.dshHome = null;
     this.logFile = null;
+    /** 子进程退出码(start 期间子进程提前退出时用于快速失败) */
+    this.childExitCode = null;
   }
 
   /** @returns {string} 服务地址 */
@@ -165,6 +167,7 @@ class DshServer extends EventEmitter {
     this.dshHome = dshHome ?? defaultDshHome();
     this.stopping = false;
     this.ready = false;
+    this.childExitCode = null;
 
     // 启动前清理残留:App 被强制退出/崩溃时,dsh 子进程可能变孤儿继续存活,
     // 占用端口导致本次 spawn 的 dsh 绑定失败(EADDRINUSE),却因健康检查
@@ -233,6 +236,7 @@ class DshServer extends EventEmitter {
 
     child.on("exit", (code, signal) => {
       logStream.end();
+      this.childExitCode = code;
       if (this.stopping) return;
       this.ready = false;
       this.child = null;
@@ -294,17 +298,26 @@ class DshServer extends EventEmitter {
     console.log("[dsh] 已停止");
   }
 
-  /** 轮询 HTTP,直到收到 2xx/3xx 响应或超时。 */
+  /** 轮询 HTTP,直到确认「端口上是真正的 dsh」或超时。 */
   async _waitReady() {
     const deadline = Date.now() + START_TIMEOUT_MS;
     while (Date.now() < deadline) {
       if (this.stopping) throw new Error("服务已停止");
+      // 子进程提前退出(典型:端口被别的服务占用,EADDRINUSE)→ 立即失败,
+      // 不要等满超时,也不要被端口上其它服务返回的 2xx 骗过。
+      if (this.childExitCode !== null) {
+        throw new Error(`dsh 进程启动后立即退出 (code=${this.childExitCode}),端口 ${this.port} 可能被占用`);
+      }
       try {
         const res = await fetch(this.url, {
           signal: AbortSignal.timeout(2_000),
         });
-        if (res.status >= 200 && res.status < 400) return;
-        // 4xx/5xx:服务器在监听但还没准备好,继续等
+        if (res.status >= 200 && res.status < 400) {
+          // 只认真正的 dsh:首页必须带 __DSH_BOOT__ 引导标记。
+          // 端口被任意本地 HTTP 服务占用时,健康检查不能把它的页面当 WebUI。
+          const html = await res.text();
+          if (html.includes("__DSH_BOOT__")) return;
+        }
       } catch {
         // 连接被拒:还没监听,继续等
       }
