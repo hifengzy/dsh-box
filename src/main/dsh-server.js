@@ -166,6 +166,12 @@ class DshServer extends EventEmitter {
     this.stopping = false;
     this.ready = false;
 
+    // 启动前清理残留:App 被强制退出/崩溃时,dsh 子进程可能变孤儿继续存活,
+    // 占用端口导致本次 spawn 的 dsh 绑定失败(EADDRINUSE),却因健康检查
+    // 命中残留服务而误报"服务启动失败"。只清理"父进程已死(PPID=1)"且
+    // 命令行匹配本 App dsh 子进程签名的进程,不影响其它进程。
+    await this._reapStaleServers(this.port);
+
     const logDirResolved = logDir ?? path.join(os.tmpdir(), "dsh-desktop");
     fs.mkdirSync(logDirResolved, { recursive: true });
     this.logFile = path.join(logDirResolved, `dsh-server-${Date.now()}.log`);
@@ -305,6 +311,54 @@ class DshServer extends EventEmitter {
       await new Promise((r) => setTimeout(r, HEALTH_INTERVAL_MS));
     }
     throw new Error(`端口 ${this.port} 上的服务始终未就绪`);
+  }
+
+  /**
+   * 清理占用指定端口的残留 dsh 服务进程,并等待端口释放。
+   *
+   * 背景:App 被强制退出/崩溃时,dsh 子进程可能变孤儿继续存活并占用端口,
+   * 导致下次启动时新 spawn 的 dsh 绑定失败(EADDRINUSE),而健康检查又命中
+   * 残留服务,造成"服务启动失败"红字误报。启动前把占用本端口的残留清掉。
+   *
+   * 安全性:按"完整签名"匹配 —— 命令行必须同时包含本 App 的 dsh 入口
+   * (dsh/lib/bin.js web)和本次端口;这样的进程只可能是本 App 之前实例
+   * 拉起的(单实例锁保证正常场景不存在并发活实例)。不匹配签名的进程不动。
+   *
+   * @param {number} port 监听端口
+   * @returns {Promise<number>} 清理数量
+   */
+  async _reapStaleServers(port) {
+    let reaped = 0;
+    try {
+      const probe = spawnSync("pgrep", ["-f", `dsh/lib/bin.js web --port ${port}`], {
+        encoding: "utf8",
+      });
+      const pids = (probe.stdout || "").trim().split("\n").filter((p) => /^\d+$/.test(p));
+      for (const pid of pids) {
+        console.log(`[dsh] 清理占用端口 ${port} 的残留 dsh 服务进程 pid=${pid}`);
+        try {
+          process.kill(Number(pid), "SIGTERM");
+          reaped++;
+        } catch {
+          /* 进程可能已消失 */
+        }
+      }
+    } catch {
+      /* 系统没有 pgrep 时跳过清理 */
+    }
+    if (reaped === 0) return 0;
+    // 等端口释放(最多 2s):SIGTERM 是异步的,直接 spawn 可能仍撞 EADDRINUSE
+    const deadline = Date.now() + 2_000;
+    while (Date.now() < deadline) {
+      try {
+        await fetch(`http://127.0.0.1:${port}`, { signal: AbortSignal.timeout(300) });
+      } catch {
+        return reaped; // 连不上 = 端口已释放
+      }
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    console.log(`[dsh] 端口 ${port} 在清理后仍被占用`);
+    return reaped;
   }
 }
 
