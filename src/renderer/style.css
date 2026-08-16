@@ -47,16 +47,18 @@ body {
   overflow: hidden;
 }
 
-/* 两套 logo 只显示与当前主题匹配的那一张 */
-.logo-light {
+/* 两套 logo 只显示与当前主题匹配的那一张。
+ * 注意:用 .hero .logo-* 双类选择器提升优先级,避免被后面的
+ * .logo { display:block } 按源顺序覆盖(同优先级后写者胜)。 */
+.hero .logo-light {
   display: none;
 }
 
 @media (prefers-color-scheme: light) {
-  .logo-dark {
+  .hero .logo-dark {
     display: none;
   }
-  .logo-light {
+  .hero .logo-light {
     display: block;
   }
 }
