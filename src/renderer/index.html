@@ -10,28 +10,23 @@
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
-    <main class="stage">
-      <div class="logo" aria-hidden="true">
-        <div class="logo-dot"></div>
+    <!-- 启动加载页:全屏黑色。
+         logo:宽度为窗口 50%,顶部边缘距窗口顶部 30%,水平居中。
+         loading:logo 下方 30px 居中(动画 + 文案,含动态端口)。
+         error:logo 下方 100px 居中;重试按钮固定在窗口底部。 -->
+    <div class="hero">
+      <img class="logo" src="./logo-home.svg" alt="DSH Desktop" draggable="false" />
+      <div class="loading" id="loading">
+        <div class="spinner" aria-label="加载中"></div>
+        <p class="loading-text" id="loadingText">服务启动中…</p>
       </div>
-      <h1 class="title">DSH Desktop</h1>
-      <p id="status" class="status">正在启动…</p>
-
-      <div class="spinner" id="spinner" aria-label="加载中"></div>
-
-      <div class="error-panel" id="errorPanel" hidden>
-        <p class="error-title">启动失败</p>
-        <pre id="errorMessage" class="error-message"></pre>
-        <div class="error-actions">
-          <button id="retryBtn" class="btn">重试</button>
-        </div>
+      <div class="error" id="error" hidden>
+        <p class="error-title">服务启动失败</p>
+        <pre class="error-detail" id="errorDetail"></pre>
       </div>
+    </div>
 
-      <p class="hint">
-        首次启动时,如果系统提示「DSH Desktop 想要访问…」,
-        请点击「允许」— 这是 App 获得本地文件权限的方式。
-      </p>
-    </main>
+    <button class="retry" id="retryBtn" hidden>重试</button>
 
     <script src="./renderer.js"></script>
   </body>

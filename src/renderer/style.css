@@ -1,11 +1,9 @@
-/* style.css — 启动页样式(深色,贴近 Harness 的视觉) */
+/* style.css — 启动加载页样式(全屏黑色 + logo + 加载/失败态) */
 :root {
-  --bg: #0d1117;
-  --panel: #161b22;
-  --border: #30363d;
-  --text: #e6edf3;
-  --muted: #8b949e;
+  --bg: #000000;
   --accent: #4d6bfe;
+  --text: #ffffff;
+  --muted: rgba(255, 255, 255, 0.55);
   --danger: #f85149;
 }
 
@@ -27,68 +25,45 @@ body {
     "Helvetica Neue", sans-serif;
   -webkit-font-smoothing: antialiased;
   user-select: none;
+  overflow: hidden;
 }
 
-.stage {
-  height: 100%;
+/* hero:顶部从窗口 30% 开始,水平居中,宽度为窗口 50% */
+.hero {
+  position: absolute;
+  top: 30vh;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 50vw;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 18px;
-  padding: 24px;
 }
 
-/* 占位 Logo:圆环 + 圆点,后续可换成正式图标 */
+/* logo:占满 hero 宽度 = 窗口宽度 50%;高度按比例自适应 */
 .logo {
-  width: 96px;
-  height: 96px;
-  border-radius: 24px;
-  background: linear-gradient(135deg, #1f2937, #111827);
-  border: 1px solid var(--border);
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* 加载中:logo 下方 30px,水平居中 */
+.loading {
+  margin-top: 30px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  position: relative;
+  gap: 12px;
+  white-space: nowrap;
 }
 
-.logo::before {
-  content: "";
-  width: 52px;
-  height: 52px;
-  border-radius: 50%;
-  border: 4px solid var(--accent);
-}
-
-.logo-dot {
-  position: absolute;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--accent);
-  right: 22px;
-  bottom: 22px;
-}
-
-.title {
-  font-size: 22px;
-  font-weight: 600;
-}
-
-.status {
-  color: var(--muted);
-  font-size: 14px;
-  min-height: 20px;
-}
-
-/* 旋转指示器 */
 .spinner {
-  width: 28px;
-  height: 28px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
-  border: 3px solid var(--border);
+  border: 2px solid rgba(255, 255, 255, 0.18);
   border-top-color: var(--accent);
   animation: spin 0.9s linear infinite;
+  flex: none;
 }
 
 @keyframes spin {
@@ -97,65 +72,60 @@ body {
   }
 }
 
-/* 错误面板 */
-.error-panel {
-  width: min(560px, 90vw);
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 20px;
+.loading-text {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+/* 失败:logo 下方 100px,水平居中 */
+.error {
+  margin-top: 100px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  align-items: center;
+  gap: 8px;
+  max-width: 80vw;
 }
 
 .error-title {
-  color: var(--danger);
-  font-weight: 600;
   font-size: 15px;
+  font-weight: 600;
+  color: var(--danger);
 }
 
-.error-message {
-  color: var(--muted);
+.error-detail {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.6;
+  color: var(--muted);
   white-space: pre-wrap;
   word-break: break-all;
-  max-height: 180px;
+  max-height: 120px;
   overflow-y: auto;
   user-select: text;
 }
 
-.error-actions {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.btn {
+/* 重试按钮:固定在窗口底部中央,仅失败时显示 */
+.retry {
+  position: fixed;
+  left: 50%;
+  bottom: 48px;
+  transform: translateX(-50%);
   appearance: none;
-  border: 1px solid var(--border);
-  background: #21262d;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.08);
   color: var(--text);
-  padding: 8px 20px;
+  padding: 9px 32px;
   border-radius: 8px;
   font-size: 14px;
   cursor: pointer;
   transition: background 0.15s ease;
 }
 
-.btn:hover {
-  background: #30363d;
+.retry:hover {
+  background: rgba(255, 255, 255, 0.16);
 }
 
-.btn:active {
-  transform: translateY(1px);
-}
-
-.hint {
-  color: var(--muted);
-  font-size: 12px;
-  max-width: 480px;
-  text-align: center;
-  line-height: 1.7;
+.retry:active {
+  transform: translateX(-50%) translateY(1px);
 }
