@@ -49,12 +49,17 @@ window.dsh.onStatus((status) => {
   else if (status.state === "starting" || status.state === "ready") showLoading();
 });
 
-// 启动时拉取服务信息,显示动态端口文案(如 服务启动中: http://127.0.0.1:3260)
+// 启动时拉取服务信息,显示动态端口文案;若主进程已有错误状态(如服务
+// 崩溃后切回加载页),直接把错误呈现出来,而不是只等下一次状态广播。
 window.dsh
   .getInfo()
   .then((info) => {
-    if (info && info.url) {
+    if (!info) return;
+    if (info.url) {
       loadingTextEl.textContent = `服务启动中 ${info.url}`;
+    }
+    if (info.state === "error") {
+      showError(info.message || "服务启动失败");
     }
   })
   .catch(() => {});

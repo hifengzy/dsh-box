@@ -101,6 +101,8 @@ function main() {
   /** @type {WebContentsView|null} */
   let contentView = null;
   let server = null;
+  /** 最近一次错误消息;加载页加载时会拉取,避免错误只在广播瞬间可见 */
+  let lastError = null;
 
   const port = Number(process.env.DSH_APP_PORT) || DEFAULT_PORT;
 
@@ -258,12 +260,15 @@ function main() {
       dshHome: server?.dshHome ?? null,
       logFile: server?.logFile ?? null,
       ready: server?.ready ?? false,
+      state: lastError ? "error" : server?.ready ? "ready" : "starting",
+      message: lastError ?? "",
     };
   }
 
   // ---------- dsh 服务生命周期 ----------
   function wireServerEvents() {
     server.on("ready", (url) => {
+      lastError = null;
       broadcastStatus({ state: "ready", message: `服务已就绪: ${url}` });
       if (contentView && !contentView.webContents.isDestroyed()) {
         contentView.webContents.loadURL(url);
@@ -271,13 +276,21 @@ function main() {
     });
     server.on("error", (error) => {
       console.error("[app] dsh 启动失败:", error);
-      broadcastStatus({ state: "error", message: error.message });
+      lastError = error.message;
+      broadcastStatus({ state: "error", message: lastError });
     });
     server.on("exited", ({ code, signal }) => {
-      broadcastStatus({
-        state: "error",
-        message: `dsh 服务意外退出 (code=${code}, signal=${signal})。点击重试重新启动。`,
-      });
+      lastError = `dsh 服务意外退出 (code=${code}, signal=${signal})。点击重试重新启动。`;
+      broadcastStatus({ state: "error", message: lastError });
+      // 若内容视图正显示 WebUI(服务已死,页面已无响应),切回加载页
+      // 展示错误与重试入口,而不是让用户对着一块死页面。
+      if (
+        contentView &&
+        !contentView.webContents.isDestroyed() &&
+        isServerOrigin(contentView.webContents.getURL(), server.url)
+      ) {
+        contentView.webContents.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
+      }
     });
   }
 
@@ -359,6 +372,7 @@ function main() {
       wireServerEvents();
     }
     if (server.ready || server.child) return;
+    lastError = null;
     broadcastStatus({ state: "starting", message: "正在启动 dsh 服务…" });
 
     const logDir = path.join(app.getPath("userData"), "logs");
@@ -389,6 +403,7 @@ function main() {
   // ---------- IPC(preload 桥) ----------
   ipcMain.handle("dsh:get-info", () => getServerInfo());
   ipcMain.handle("dsh:retry", async () => {
+    lastError = null;
     broadcastStatus({ state: "starting", message: "正在重新启动 dsh 服务…" });
     await restartServer();
     return getServerInfo();
