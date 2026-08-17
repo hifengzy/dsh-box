@@ -23,7 +23,7 @@ const { app, BrowserWindow, webContents } = require("electron");
 
 // Regression: ISSUE-001 — 注入与导航只绑在第一个窗口,关窗重开卡加载页
 // Found by /qa on 2026-08-16
-// Report: .gstack/qa-reports/qa-report-dsh-desktop-2026-08-16.md
+// Report: .gstack/qa-reports/qa-report-dsh-box-2026-08-16.md
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 require(path.join(__dirname, "..", "src", "main", "main.js"));

@@ -1,4 +1,4 @@
-# DSH Desktop for macOS (dsh-desktop)
+# DSH Box for macOS (dsh-box)
 
 把 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 封装成**原生 macOS 桌面 App**(基于 Electron)。
 
@@ -29,7 +29,7 @@ npm start
 
 ```
 ┌────────────────────────────────────────────────────┐
-│  DSH Desktop.app (Electron)                     │
+│  DSH Box.app (Electron)                          │
 │                                                    │
 │  主进程 src/main/main.js                           │
 │    ├─ spawn ──→ dsh web 子进程 (Node)              │  ← 同一原生进程树
@@ -47,7 +47,7 @@ npm start
   1. 环境变量 `DSH_BIN`(测试/调试用);
   2. **打进 App 的 dsh**(打包后是 `app.asar.unpacked/node_modules/@deepseek-ai/dsh`,开发时是项目 `node_modules`)——默认走这个;
   3. PATH 里的 `dsh`(兜底)。
-  用 `ELECTRON_RUN_AS_NODE=1` + 当前可执行文件运行,所以**用户机器上不需要装 Node,也不需要装 dsh**。`DSH_HOME` 默认用 App 自己的数据目录(`~/Library/Application Support/DSH Desktop/dsh-home`),与浏览器 WebUI 的 `~/.dsh` 隔离,避免两个 dsh 服务并发读写同一会话导致弹层闪烁(见「常见问题」)。
+  用 `ELECTRON_RUN_AS_NODE=1` + 当前可执行文件运行,所以**用户机器上不需要装 Node,也不需要装 dsh**。`DSH_HOME` 默认用 App 自己的数据目录(`~/Library/Application Support/DSH Box/dsh-home`),与浏览器 WebUI 的 `~/.dsh` 隔离,避免两个 dsh 服务并发读写同一会话导致弹层闪烁(见「常见问题」)。
 - **顶栏视图** (`src/renderer/topbar.*`) 是独立的自定义标题栏:整条可拖动、双击最大化,左侧留红绿灯空间,右侧 `.actions` 是将来加搜索框等功能入口的位置(纯 HTML,想加就加)。
 - **内容视图** 显示加载页,就绪后加载 dsh WebUI;窗口层内缩 8px + 圆角 10px(VS Code 风格),**不碰页面布局**,不会产生滚动条。
 
@@ -130,7 +130,7 @@ npm run dist:dmg    # 只生成 .dmg
 运行 `npm run doctor` 看提示。打包后的 App 自带 dsh;开发模式下先确认 `npm install` 装过 `@deepseek-ai/dsh`。也可用 `DSH_BIN` 强制指定。
 
 **启动后一直停在加载页**
-看日志:主进程终端会打印 `[dsh:err] ...`,完整日志在 `~/Library/Application Support/DSH Desktop/logs/`。最常见原因:端口被占用(换 `DSH_APP_PORT`)或 DSH_HOME 里的 profile 配置损坏。
+看日志:主进程终端会打印 `[dsh:err] ...`,完整日志在 `~/Library/Application Support/DSH Box/logs/`。最常见原因:端口被占用(换 `DSH_APP_PORT`)或 DSH_HOME 里的 profile 配置损坏。
 
 **启动页总是闪一下红色「服务启动失败」但服务其实正常**
 最常见原因:**同时跑了两个实例**(比如 `npm start` 的 dev 版和已安装的打包版同时打开)。两个实例的 userData 不同,Electron 自带单实例锁管不住,会争抢同一个端口,后启动者的 dsh 绑定失败(EADDRINUSE)却从先启动者的服务加载 UI → 误报。App 现已用**全局单实例锁**(所有实例共享,与 userData 无关),后启动的实例会直接退出。若仍出现,检查是否有残留进程:`pkill -f "bin.js web"` 后重开。

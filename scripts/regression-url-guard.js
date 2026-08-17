@@ -13,7 +13,7 @@ const { isServerOrigin, isTrustedOrigin, isAppFilePage } = require("../src/main/
 
 // Regression: ISSUE-004 — URL 信任边界用前缀匹配,userinfo/端口前缀可绕过
 // Found by /qa on 2026-08-16
-// Report: .gstack/qa-reports/qa-report-dsh-desktop-2026-08-16.md
+// Report: .gstack/qa-reports/qa-report-dsh-box-2026-08-16.md
 
 const SERVER = "http://127.0.0.1:3260";
 

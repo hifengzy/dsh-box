@@ -25,7 +25,7 @@ macOS 用 **TCC(Transparency, Consent, and Control)** 管理系统级隐私权�
 本项目的架构是:
 
 ```
-DSH Desktop.app (原生进程,由你显式启动)
+DSH Box.app (原生进程,由你显式启动)
   └─ Electron 主进程
        └─ spawn → dsh web 子进程 (Node)
             └─ spawn → bash / 任意 shell 命令
@@ -33,7 +33,7 @@ DSH Desktop.app (原生进程,由你显式启动)
 
 **整条链是同一个原生 App 的进程树。** 因此:
 
-1. 你在「系统设置 → 隐私与安全性」里给 **DSH Desktop** 授予权限;
+1. 你在「系统设置 → 隐私与安全性」里给 **DSH Box** 授予权限;
 2. 权限沿进程树自动继承到 dsh 服务和它跑的每一条 shell 命令;
 3. Harness 里的 agent 就可以读写桌面/文档、操作任意本地文件——和你自己在终端里跑命令拥有同等权限。
 
@@ -45,7 +45,7 @@ DSH Desktop.app (原生进程,由你显式启动)
 
 系统设置 → 隐私与安全性 → **完全磁盘访问权限** → 点「+」→ 添加应用:
 
-- **打包后**:选 `dist/DSH Desktop.app`
+- **打包后**:选 `dist/DSH Box.app`
 - **开发模式**(`npm start`):选 Electron 二进制:
   `node_modules/electron/dist/Electron.app`(开发模式下权限属于 Electron 本体)
 
@@ -59,7 +59,7 @@ DSH Desktop.app (原生进程,由你显式启动)
 
 ### 4.3 首次启动的弹窗
 
-App 内 dsh 第一次尝试访问受保护目录时,macOS 会弹「DSH Desktop 想要访问…」,点「允许」即可。如果误点了「不允许」,去系统设置里补授权。
+App 内 dsh 第一次尝试访问受保护目录时,macOS 会弹「DSH Box 想要访问…」,点「允许」即可。如果误点了「不允许」,去系统设置里补授权。
 
 ## 5. 安全建议
 

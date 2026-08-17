@@ -16,7 +16,7 @@ const { execFileSync } = require("node:child_process");
 
 // Regression: ISSUE-005 — 崩溃时错误只广播给加载页,用户面对死页面无反馈
 // Found by /qa on 2026-08-16
-// Report: .gstack/qa-reports/qa-report-dsh-desktop-2026-08-16.md
+// Report: .gstack/qa-reports/qa-report-dsh-box-2026-08-16.md
 
 const RUNTIME = path.resolve(__dirname, "..", ".runtime", "regression");
 fs.mkdirSync(RUNTIME, { recursive: true });

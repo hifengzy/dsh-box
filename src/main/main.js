@@ -30,7 +30,7 @@ const path = require("node:path");
 const { DshServer, DEFAULT_PORT } = require("./dsh-server");
 const { isServerOrigin, isTrustedOrigin } = require("./url-guard");
 
-const APP_NAME = "DSH Desktop";
+const APP_NAME = "DSH Box";
 const isMac = process.platform === "darwin";
 
 // 窗口外观常量
@@ -53,7 +53,7 @@ if (process.env.DSH_USER_DATA) {
 // 后启动者的 dsh 绑定失败(EADDRINUSE)→ 启动页误报"服务启动失败"。
 // 这里用固定路径的锁文件,让所有实例(无论 userData)共享一把锁。
 // 测试/CI 可用 DSH_LOCK_PATH 覆盖,避免与正在运行的实例冲突。
-const GLOBAL_LOCK_PATH = process.env.DSH_LOCK_PATH || path.join(os.tmpdir(), "dsh-desktop.lock");
+const GLOBAL_LOCK_PATH = process.env.DSH_LOCK_PATH || path.join(os.tmpdir(), "dsh-box.lock");
 
 /**
  * 获取全局锁:成功返回 true;另一实例在跑返回 false;陈旧锁(持有者已死)自动接管。
@@ -80,7 +80,7 @@ function acquireGlobalLock() {
 
 const gotGlobalLock = acquireGlobalLock();
 if (!gotGlobalLock) {
-  console.log("[app] 已有 DSH Desktop 实例在运行,本次启动退出");
+  console.log("[app] 已有 DSH Box 实例在运行,本次启动退出");
   app.quit();
 } else {
   app.on("will-quit", () => {

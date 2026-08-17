@@ -15,9 +15,9 @@ const os = require("node:os");
 
 // Regression: ISSUE-002 — .error/.loading 的 display 覆盖了 [hidden],错误常显
 // Found by /qa on 2026-08-16
-// Report: .gstack/qa-reports/qa-report-dsh-desktop-2026-08-16.md
+// Report: .gstack/qa-reports/qa-report-dsh-box-2026-08-16.md
 
-app.setPath("userData", path.join(os.tmpdir(), "dsh-desktop-regression-loading-visibility"));
+app.setPath("userData", path.join(os.tmpdir(), "dsh-box-regression-loading-visibility"));
 
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ show: false, width: 800, height: 600 });

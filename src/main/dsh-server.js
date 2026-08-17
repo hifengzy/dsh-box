@@ -175,7 +175,7 @@ class DshServer extends EventEmitter {
     // 命令行匹配本 App dsh 子进程签名的进程,不影响其它进程。
     await this._reapStaleServers(this.port);
 
-    const logDirResolved = logDir ?? path.join(os.tmpdir(), "dsh-desktop");
+    const logDirResolved = logDir ?? path.join(os.tmpdir(), "dsh-box");
     fs.mkdirSync(logDirResolved, { recursive: true });
     this.logFile = path.join(logDirResolved, `dsh-server-${Date.now()}.log`);
     const logStream = fs.createWriteStream(this.logFile, { flags: "a" });

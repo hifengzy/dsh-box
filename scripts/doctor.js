@@ -35,7 +35,7 @@ function run(cmd, args) {
   }
 }
 
-console.log("DSH Desktop 环境诊断\n");
+console.log("DSH Box 环境诊断\n");
 
 // 1. Node
 console.log(chalk.dim("[1/4] Node"));

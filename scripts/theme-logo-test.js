@@ -16,7 +16,7 @@ const { app, BrowserWindow, nativeTheme } = require("electron");
 const path = require("node:path");
 const os = require("node:os");
 
-app.setPath("userData", path.join(os.tmpdir(), "dsh-desktop-theme-test"));
+app.setPath("userData", path.join(os.tmpdir(), "dsh-box-theme-test"));
 
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ show: false, width: 800, height: 600 });

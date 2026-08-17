@@ -16,7 +16,7 @@ const path = require("node:path");
 
 // Regression: ISSUE-003 — 健康检查命中端口上任意 2xx 服务即误判就绪
 // Found by /qa on 2026-08-16
-// Report: .gstack/qa-reports/qa-report-dsh-desktop-2026-08-16.md
+// Report: .gstack/qa-reports/qa-report-dsh-box-2026-08-16.md
 
 const RUNTIME = path.resolve(__dirname, "..", ".runtime", "regression");
 fs.mkdirSync(RUNTIME, { recursive: true });
