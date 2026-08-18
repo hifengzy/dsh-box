@@ -42,10 +42,11 @@ body {
   -webkit-app-region: no-drag;
 }
 
-/* GitHub 入口:50×50 无背景按钮,悬停才显示背景色,图标 36×36 居中 */
+/* GitHub 入口:32×32 无背景按钮(适配 40px 顶栏),悬停才显示背景色,
+ * 图标 20×20 居中。 */
 .github-btn {
-  width: 50px;
-  height: 50px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -72,8 +73,8 @@ body {
 
 /* 图标:mask 把 github.svg 镂空成纯色,随 light/dark 自动变色 */
 .github-icon {
-  width: 36px;
-  height: 36px;
+  width: 20px;
+  height: 20px;
   background-color: var(--bar-text);
   -webkit-mask: url("../../assets/github.svg") no-repeat center / contain;
   mask: url("../../assets/github.svg") no-repeat center / contain;
