@@ -21,3 +21,6 @@ logs/
 # 编辑器
 .vscode/
 .idea/
+
+# QA 报告产物
+.gstack/
