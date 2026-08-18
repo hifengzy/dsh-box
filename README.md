@@ -54,7 +54,7 @@ npm start
   2. **打进 App 的 dsh**(打包后是 `app.asar.unpacked/node_modules/@deepseek-ai/dsh`,开发时是项目 `node_modules`)——默认走这个;
   3. PATH 里的 `dsh`(兜底)。
   用 `ELECTRON_RUN_AS_NODE=1` + 当前可执行文件运行,所以**用户机器上不需要装 Node,也不需要装 dsh**。`DSH_HOME` 默认用 App 自己的数据目录(`~/Library/Application Support/DSH Box/dsh-home`),与浏览器 WebUI 的 `~/.dsh` 隔离,避免两个 dsh 服务并发读写同一会话导致弹层闪烁(见「常见问题」)。
-- **顶栏视图** (`src/renderer/topbar.*`) 是独立的自定义标题栏:整条可拖动、双击最大化,左侧留红绿灯空间且**不显示应用名**;右侧 `.actions` 是功能入口区,当前放 **GitHub 仓库按钮**(32×32 无背景,悬停显示背景,图标 20×20 随 light/dark 变色,点击在系统浏览器打开 `https://github.com/hifengzy/dsh-box`,纯 HTML 想加就加)。
+- **顶栏视图** (`src/renderer/topbar.*`) 是独立的自定义标题栏:整条可拖动、双击最大化,左侧留红绿灯空间且**不显示应用名**;右侧 `.actions` 是功能入口区,当前放 **GitHub 仓库按钮**(28×28 无背景,悬停显示背景,图标 20×20 随 light/dark 变色,点击在系统浏览器打开 `https://github.com/hifengzy/dsh-box`,纯 HTML 想加就加)。
 - **内容视图** 显示加载页,就绪后加载 dsh WebUI;窗口层内缩 8px + 圆角 10px(VS Code 风格),**不碰页面布局**,不会产生滚动条。
 
 ### 窗口外观

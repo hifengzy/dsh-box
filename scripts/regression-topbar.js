@@ -4,7 +4,7 @@
 /**
  * regression-topbar.js — 自定义顶栏回归测试(真实 Electron 驱动):
  *   1. 顶栏不再显示应用名「DSH Box」(红绿灯右侧留白,无占位文字);
- *   2. 右侧功能入口区有 GitHub 按钮:32×32、图标 20×20 居中、默认透明背景,
+ *   2. 右侧功能入口区有 GitHub 按钮:28×28、图标 20×20 居中、默认透明背景,
  *      且样式表里存在 :hover 背景规则(light/dark 由 light-dark() 自适应);
  *   3. 点击 GitHub 按钮 → 经外壳桥发出 openExternal,URL 为仓库地址。
  *
@@ -65,13 +65,13 @@ app.whenReady().then(async () => {
     if (dom.hasPlaceholder) throw new Error("顶栏仍显示占位文字");
     console.log("[1] 顶栏已去掉应用名与占位文字 ✓");
     if (!dom.hasBtn || !dom.hasIcon) throw new Error("GitHub 按钮或图标缺失");
-    if (dom.btnW !== "32px" || dom.btnH !== "32px")
-      throw new Error(`按钮应为 32×32,实际 ${dom.btnW}×${dom.btnH}`);
+    if (dom.btnW !== "28px" || dom.btnH !== "28px")
+      throw new Error(`按钮应为 28×28,实际 ${dom.btnW}×${dom.btnH}`);
     if (dom.iconW !== "20px" || dom.iconH !== "20px")
       throw new Error(`图标应为 20×20,实际 ${dom.iconW}×${dom.iconH}`);
     if (dom.btnBg !== "rgba(0, 0, 0, 0)")
       throw new Error(`按钮默认应为透明背景,实际 ${dom.btnBg}`);
-    console.log(`[2] GitHub 按钮 32×32 / 图标 20×20 / 默认透明背景 ✓`);
+    console.log(`[2] GitHub 按钮 28×28 / 图标 20×20 / 默认透明背景 ✓`);
 
     // 2. 样式表存在 :hover 背景规则(默认无背景 → 悬停显示背景)
     const hasHoverRule = await win.webContents.executeJavaScript(`(() => {

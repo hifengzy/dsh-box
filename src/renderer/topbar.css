@@ -42,11 +42,11 @@ body {
   -webkit-app-region: no-drag;
 }
 
-/* GitHub 入口:32×32 无背景按钮(适配 40px 顶栏),悬停才显示背景色,
+/* GitHub 入口:28×28 无背景按钮(适配 40px 顶栏),悬停才显示背景色,
  * 图标 20×20 居中。 */
 .github-btn {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
