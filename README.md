@@ -79,10 +79,9 @@ src/
 scripts/
   doctor.js          环境诊断:npm run doctor
   smoke.js           核心链路冒烟测试(纯 Node):npm run smoke
-  make-app-icon.mjs 从源 logo 生成规范图标(icon.png + icon.icns):npm run make-icon
+  make-app-icon.mjs 把任意源图加安全边距后生成 assets/icon.png:npm run make-icon
 assets/
-  icon.png           应用图标源图(1024×1024,内容居中安全区)
-  icon.icns          macOS 图标(16→1024 全尺寸,打包用)
+  icon.png           应用图标源图(1024×1024,内容居中安全区;打包时由 electron-builder 自动转成 icns)
 docs/
   PERMISSIONS.md     macOS 权限原理与配置(重点读这篇)
 ```
