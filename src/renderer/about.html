@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; img-src 'self' file:; style-src 'self'; script-src 'self'"
+  />
+  <title>关于 DSH Box</title>
+  <link rel="stylesheet" href="about.css" />
+</head>
+<body>
+  <main class="about">
+    <img class="logo" src="../../assets/icon.png" alt="DSH Box" />
+    <h1 class="name" id="appName">DSH Box</h1>
+    <p class="version" id="version"></p>
+    <div class="divider"></div>
+    <dl class="deps">
+      <div class="dep"><dt>Electron</dt><dd id="electron"></dd></div>
+      <div class="dep"><dt>Node.js</dt><dd id="node"></dd></div>
+    </dl>
+    <p class="foot">DeepSeek Harness 桌面版</p>
+  </main>
+  <script src="about.js"></script>
+</body>
+</html>

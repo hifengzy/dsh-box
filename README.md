@@ -23,6 +23,12 @@ npm start
 > 运行时用 App 自带的 Electron(经 `ELECTRON_RUN_AS_NODE`)直接跑打进来的 dsh,
 > 连系统 Node 都不依赖。
 
+> `npm start` 会用**品牌化副本**启动(见 `scripts/dev-launch.mjs`):克隆一份
+> `Electron.app` 到 `.runtime/dev/DSH Box.app` 并改名为「DSH Box」,让 dev 模式
+> 菜单栏左上角也显示「DSH Box」而不是 Electron(首次拷贝约 1-2 秒,按 Electron
+> 版本缓存,之后无感;失败自动回退原生 Electron)。需要原始 Electron 环境调试时用
+> `npm run start:electron`。
+
 启动后,窗口先显示加载页,等 dsh 服务就绪后自动切换到 Harness WebUI(默认端口 `3260`,可用环境变量 `DSH_APP_PORT` 覆盖)。
 
 ## 架构
@@ -69,6 +75,8 @@ npm start
 src/
   main/
     main.js          Electron 入口:窗口、菜单、权限、生命周期
+    menu.js          应用菜单(全中文:关于 DSH Box / 退出 DSH Box / 编辑 / 视图 / 窗口)
+    about.js         「关于 DSH Box」品牌弹窗(logo / 版本 / 依赖版本)
     dsh-server.js    dsh 子进程管理:启动、健康检查、优雅停止
   preload/
     preload.js       contextBridge 最小桥(getInfo / onStatus / retry)
@@ -76,9 +84,11 @@ src/
     index.html       启动页(等待 dsh 就绪)
     renderer.js      启动页逻辑(状态渲染、重试)
     style.css
+    about.html       关于弹窗页面(about.css / about.js 配套)
 scripts/
   doctor.js          环境诊断:npm run doctor
   smoke.js           核心链路冒烟测试(纯 Node):npm run smoke
+  dev-launch.mjs     品牌化开发启动:npm start(菜单栏显示 DSH Box)
   make-app-icon.mjs 把任意源图加安全边距后生成 assets/icon.png:npm run make-icon
 assets/
   icon.png           应用图标源图(1024×1024,内容居中安全区;打包时由 electron-builder 自动转成 icns)
@@ -92,6 +102,7 @@ docs/
 npm run doctor    # 环境体检:Node / dsh / Electron / 端口
 npm run smoke     # 核心链路冒烟测试(纯 Node,不弹窗口)
 npm run smoke:e2e # 完整 E2E:启动真实 App → 拉起 dsh → 加载 WebUI → 退出
+npm run test:regression # 回归套件:重开窗口 / 加载页可见性 / 端口冲突 / 崩溃反馈 / 菜单栏 Tray / 应用菜单与关于弹窗
 ```
 
 > `smoke:e2e` 会短暂弹出应用窗口,并把临时数据放到 `.runtime/`(已 gitignore)。`--no-sandbox` 只用于测试环境(沙箱受限的 CI/容器)。
@@ -142,14 +153,14 @@ npm run dist:dmg    # 只生成 .dmg
 这是 macOS 的 TCC 限制,与 Harness 无关。按 [docs/PERMISSIONS.md](docs/PERMISSIONS.md) 给 App 授予「完全磁盘访问权限」即可——这是本方案相对浏览器的核心优势。
 
 **关掉窗口后 App 还在后台?**
-macOS 惯例:关窗不退出,点 Dock 图标重新开窗,dsh 服务保持运行(再次打开秒开)。要彻底退出:菜单栏 App 名 → 退出,或 ⌘Q。
+macOS 惯例:关窗不退出,点 Dock 图标重新开窗,dsh 服务保持运行(再次打开秒开)。要彻底退出:菜单栏「DSH Box」→「退出 DSH Box」,或 ⌘Q。
 
 ## 路线图
 
 - [x] Electron 壳:dsh 子进程托管 + WebUI 加载
 - [x] 权限继承方案(进程树继承 TCC)
 - [x] dsh 打进 App,用户免安装(内置 Node 运行)
-- [ ] 正式图标、关于页
+- [x] 正式图标、关于页(品牌化菜单栏 + 「关于 DSH Box」弹窗)
 - [ ] 打包签名 + notarization(hardened runtime)
 - [ ] 自动更新
 - [ ] 会话/Profile 管理界面(切换 DSH_HOME)

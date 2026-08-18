@@ -30,6 +30,8 @@ const path = require("node:path");
 const { DshServer, DEFAULT_PORT } = require("./dsh-server");
 const { isServerOrigin, isTrustedOrigin } = require("./url-guard");
 const { createTray } = require("./tray");
+const { createAppMenu } = require("./menu");
+const { showAboutWindow } = require("./about");
 
 const APP_NAME = "DSH Box";
 const isMac = process.platform === "darwin";
@@ -104,6 +106,8 @@ function main() {
   let server = null;
   /** macOS 菜单栏 Tray(常驻小图标);null = 非 mac 或创建失败 */
   let tray = null;
+  /** 应用菜单;null = 构建失败 */
+  let appMenu = null;
   /** 最近一次错误消息;加载页加载时会拉取,避免错误只在广播瞬间可见 */
   let lastError = null;
 
@@ -470,60 +474,14 @@ function main() {
     });
   }
 
-  // ---------- 菜单(macOS 惯例) ----------
+  // ---------- 菜单(macOS 惯例,中文品牌菜单)----------
+  // 「关于 DSH Box」打开自定义品牌弹窗(about.js:logo / 应用名 / 版本 / 依赖版本)。
+  // 菜单栏左上角的应用名由进程/包名决定,不由这里控制:
+  // dev 模式见 scripts/dev-launch.mjs(品牌化 Electron 副本),打包版由
+  // electron-builder 的 productName 生成。
   function buildMenu() {
-    const template = [
-      ...(isMac
-        ? [
-            {
-              label: APP_NAME,
-              submenu: [
-                { role: "about" },
-                { type: "separator" },
-                { role: "hide" },
-                { role: "hideOthers" },
-                { role: "unhide" },
-                { type: "separator" },
-                { role: "quit" },
-              ],
-            },
-          ]
-        : []),
-      {
-        label: "编辑",
-        submenu: [
-          { role: "undo" },
-          { role: "redo" },
-          { type: "separator" },
-          { role: "cut" },
-          { role: "copy" },
-          { role: "paste" },
-          { role: "selectAll" },
-        ],
-      },
-      {
-        label: "视图",
-        submenu: [
-          { role: "reload" },
-          { role: "toggleDevTools" },
-          { type: "separator" },
-          { role: "resetZoom" },
-          { role: "zoomIn" },
-          { role: "zoomOut" },
-          { type: "separator" },
-          { role: "togglefullscreen" },
-        ],
-      },
-      {
-        label: "窗口",
-        submenu: [
-          { role: "minimize" },
-          { role: "zoom" },
-          ...(isMac ? [{ type: "separator" }, { role: "front" }] : [{ role: "close" }]),
-        ],
-      },
-    ];
-    Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+    appMenu = createAppMenu({ onAbout: () => showAboutWindow({ parent: mainWindow }) });
+    Menu.setApplicationMenu(appMenu);
   }
 
   // ---------- 生命周期 ----------
@@ -561,6 +519,7 @@ function main() {
     // 测试钩子:冒烟测试模式 — 就绪后打印标记并退出(CI / 自检用)
     if (process.env.DSH_SMOKE === "1") {
       console.log(`[smoke] TRAY ${tray ? "ok" : isMac ? "fail" : "skip"}`);
+      console.log(`[smoke] MENU ${appMenu ? "ok" : "fail"}`);
       if (server.ready) {
         console.log(`[smoke] READY ${server.url}`);
         setTimeout(() => app.quit(), 1500);
