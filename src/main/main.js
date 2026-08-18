@@ -511,6 +511,17 @@ function main() {
 
   // ---------- 生命周期 ----------
   app.whenReady().then(async () => {
+    // 开发模式(npm start)运行的是 Electron 本体,Dock 默认显示 Electron 图标;
+    // 这里运行时设置成 App 图标。打包后由 .app bundle 自带图标,无需设置。
+    if (!app.isPackaged && process.platform === "darwin" && app.dock) {
+      const devIcon = path.join(__dirname, "..", "..", "assets", "icon.png");
+      try {
+        app.dock.setIcon(devIcon);
+        console.log(`[app] 开发模式 Dock 图标: ${devIcon}`);
+      } catch (error) {
+        console.warn("[app] 设置 Dock 图标失败:", error.message);
+      }
+    }
     buildMenu();
     installPermissionHandlers();
     createWindow();
