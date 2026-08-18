@@ -29,6 +29,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { DshServer, DEFAULT_PORT } = require("./dsh-server");
 const { isServerOrigin, isTrustedOrigin } = require("./url-guard");
+const { createTray } = require("./tray");
 
 const APP_NAME = "DSH Box";
 const isMac = process.platform === "darwin";
@@ -101,6 +102,8 @@ function main() {
   /** @type {WebContentsView|null} */
   let contentView = null;
   let server = null;
+  /** macOS 菜单栏 Tray(常驻小图标);null = 非 mac 或创建失败 */
+  let tray = null;
   /** 最近一次错误消息;加载页加载时会拉取,避免错误只在广播瞬间可见 */
   let lastError = null;
 
@@ -230,6 +233,20 @@ function main() {
       topBarView = null;
       contentView = null;
     });
+  }
+
+  /**
+   * 聚焦主窗口;窗口不存在(已关闭)则重新创建。
+   * 供 Dock 图标点击(activate)与菜单栏图标单击共用。
+   */
+  function focusOrCreateWindow() {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+      return;
+    }
+    createWindow();
   }
 
   /** 按当前窗口尺寸摆放两个视图(顶栏通栏;内容区内缩+圆角)。 */
@@ -525,10 +542,25 @@ function main() {
     buildMenu();
     installPermissionHandlers();
     createWindow();
+    // ---------- macOS 菜单栏(Tray)----------
+    // 单击图标聚焦窗口;右键弹出「打开 DSH Box / 退出」。仅 macOS。
+    if (isMac) {
+      try {
+        tray = createTray({
+          onActivate: focusOrCreateWindow,
+          onQuit: () => app.quit(),
+        });
+        console.log("[app] 菜单栏图标已创建");
+      } catch (error) {
+        // 图标缺失等 → 只告警,不拖垮 App(菜单栏功能降级)
+        console.warn("[app] 创建菜单栏图标失败:", error.message);
+      }
+    }
     await startServer();
 
     // 测试钩子:冒烟测试模式 — 就绪后打印标记并退出(CI / 自检用)
     if (process.env.DSH_SMOKE === "1") {
+      console.log(`[smoke] TRAY ${tray ? "ok" : isMac ? "fail" : "skip"}`);
       if (server.ready) {
         console.log(`[smoke] READY ${server.url}`);
         setTimeout(() => app.quit(), 1500);
@@ -538,10 +570,8 @@ function main() {
       }
     }
 
-    // macOS 惯例:关窗不退出,点击 Dock 图标重新开窗
-    app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow();
-    });
+    // macOS 惯例:关窗不退出,点击 Dock 图标重新开窗/聚焦
+    app.on("activate", focusOrCreateWindow);
   });
 
   app.on("window-all-closed", () => {
