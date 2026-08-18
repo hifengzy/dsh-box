@@ -7,7 +7,8 @@
  *   - 模板图(template image):系统只读取 alpha 通道的形状,RGB 任意(惯例纯黑);
  *     macOS 会按菜单栏当前深浅色自动渲染成黑色/白色,无需准备两套图标;
  *   - 尺寸:@1x 16×16、@2x 32×32(Electron 的 nativeImage 会自动加载 @2x 变体);
- *   - 内容留 ~1px 安全边距,不顶满边缘。
+ *   - 内容顶满画布:实测留边距(14/16)会让图标比系统/其他 App 的菜单栏
+ *     图标明显偏小,顶满 16px 视觉才一致(系统图标普遍接近顶满)。
  *
  * 用法: node scripts/make-tray-icon.mjs [源图.png, 默认 assets/icon.png]
  * 产物已提交,本脚本用于日后换图标时重新生成。
@@ -22,7 +23,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = process.argv[2] || join(ROOT, "assets", "icon.png");
 
 const SIZE = 16; // @1x 画布
-const CONTENT = 14; // 内容留 1px 边距
+const CONTENT = SIZE; // 内容顶满画布(与系统菜单栏图标视觉一致)
 const MARGIN = (SIZE - CONTENT) / 2;
 
 const meta = await sharp(SRC).metadata();
