@@ -165,6 +165,10 @@ function main() {
       height: 820,
       minWidth: 960,
       minHeight: 600,
+      // macOS:未聚焦窗口的首次点击也要传递给 Web 内容。默认 acceptFirstMouse
+      // 是 false——首击只激活窗口不派发事件,顶栏按钮(状态/GitHub)会变成
+      // 「第一下没反应,第二下才生效」。
+      acceptFirstMouse: true,
       // 玻璃拟态:窗口背景用 macOS 原生毛玻璃材质(内容区以外=顶栏+边框
       // 都是它);不设不透明 backgroundColor,让材质透出
       vibrancy: VIBRANCY_MATERIAL,
@@ -463,6 +467,8 @@ function main() {
       minWidth: 560,
       minHeight: 480,
       show: false,
+      // 同主窗口:未聚焦时首次点击也交给内容(否则页内按钮/滚动要点两次)
+      acceptFirstMouse: true,
       // 与主窗口一致的玻璃拟态 + 隐藏标题栏(保留红绿灯),页面自带头部
       ...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" } : {}),
       vibrancy: VIBRANCY_MATERIAL,
