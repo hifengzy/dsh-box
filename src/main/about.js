@@ -14,11 +14,42 @@
  */
 
 const { app, BrowserWindow } = require("electron");
+const fs = require("node:fs");
 const path = require("node:path");
 
 const ABOUT_HTML = path.join(__dirname, "..", "renderer", "about.html");
 const WIDTH = 340;
 const HEIGHT = 440;
+
+/**
+ * DeepSeek Harness(dsh)版本 —— 核心依赖,必须展示。
+ * 直接解析安装包内的 package.json(当前 dsh 无 exports 限制);
+ * 若未来 dsh 加了 exports 限制 ./package.json,退回从主入口向上找包根。
+ * @returns {string} 取不到返回空串(界面留空,不报错)
+ */
+function dshVersion() {
+  try {
+    const pkgPath = require.resolve("@deepseek-ai/dsh/package.json");
+    return JSON.parse(fs.readFileSync(pkgPath, "utf8")).version || "";
+  } catch {
+    try {
+      const entry = require.resolve("@deepseek-ai/dsh");
+      let dir = path.dirname(entry);
+      for (let i = 0; i < 8; i++) {
+        const pkg = path.join(dir, "package.json");
+        if (fs.existsSync(pkg)) {
+          return JSON.parse(fs.readFileSync(pkg, "utf8")).version || "";
+        }
+        const parent = path.dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+      }
+    } catch {
+      /* 忽略:dsh 缺失时版本留空 */
+    }
+    return "";
+  }
+}
 
 /** @type {BrowserWindow|null} */
 let aboutWindow = null;
@@ -86,6 +117,7 @@ function showAboutWindow({ parent = null } = {}) {
     query: {
       appName: "DSH Box",
       version: app.getVersion(),
+      dsh: dshVersion(),
       electron: process.versions.electron,
       node: process.versions.node,
     },

@@ -93,6 +93,20 @@ app.whenReady().then(async () => {
     if (title !== "关于 DSH Box") throw new Error("关于弹窗标题应为「关于 DSH Box」");
     if (!logoOk) throw new Error("关于弹窗 logo 未加载");
     if (!text.includes("版本：")) throw new Error("关于弹窗缺少「版本:」");
+    // DeepSeek Harness(核心依赖)版本必须展示,且在 Electron 上方
+    let dshVer = "";
+    try {
+      dshVer = JSON.parse(
+        require("node:fs").readFileSync(require.resolve("@deepseek-ai/dsh/package.json"), "utf8")
+      ).version || "";
+    } catch { /* dsh 缺失时跳过断言 */ }
+    if (dshVer) {
+      if (!text.includes(dshVer)) throw new Error("关于弹窗缺少 DeepSeek Harness 版本");
+      if (text.indexOf("DeepSeek Harness") > text.indexOf("Electron")) {
+        throw new Error("DeepSeek Harness 应在 Electron 版本上方");
+      }
+      console.log(`[6b] DeepSeek Harness 版本 ${dshVer} ✓(位于 Electron 上方)`);
+    }
     if (!text.includes(process.versions.electron)) throw new Error("关于弹窗缺少 Electron 版本");
     if (!text.includes(process.versions.node)) throw new Error("关于弹窗缺少 Node.js 版本");
     win.close();

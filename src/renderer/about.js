@@ -18,6 +18,7 @@
     const el = document.getElementById(id);
     if (el && q.get(id)) el.textContent = q.get(id);
   };
+  set("dsh");
   set("electron");
   set("node");
 })();
