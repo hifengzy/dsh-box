@@ -437,6 +437,12 @@ function main() {
     return true;
   });
 
+  // 顶栏 GitHub 等外链入口:只放行 http/https,交给系统默认浏览器
+  ipcMain.handle("shell:open-external", (_event, url) => {
+    if (typeof url !== "string" || !/^https?:\/\//i.test(url)) return false;
+    return shell.openExternal(url);
+  });
+
   // ---------- 主题同步(dsh UI → 外壳) ----------
   // dsh UI 在设置里切换外观(浅色/深色/跟随系统)时,dsh 前端会在
   // document.body 上设置/移除 data-ds-dark-theme;注入脚本把解析结果

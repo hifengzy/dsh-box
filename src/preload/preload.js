@@ -31,6 +31,9 @@ contextBridge.exposeInMainWorld("dsh", {
   /** 双击隐形标题栏:最大化 / 还原 */
   toggleMaximize: () => ipcRenderer.invoke("window:toggle-maximize"),
 
+  /** 打开外部链接(仅 http/https,主进程校验) */
+  openExternal: (url) => ipcRenderer.invoke("shell:open-external", url),
+
   /** 上报 dsh UI 当前解析出的主题('dark'|'light'),外壳据此跟随 */
   reportTheme: (scheme) => ipcRenderer.send("shell:theme-changed", scheme),
 });

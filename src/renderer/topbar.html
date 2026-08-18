@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'none'; img-src 'self' data:"
+      content="default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'none'; img-src 'self' data: file:"
     />
     <title>TitleBar</title>
     <link rel="stylesheet" href="./topbar.css" />
@@ -12,15 +12,20 @@
   <body>
     <!--
       自定义顶栏:整条可拖动窗口。左侧约 80px 留给 macOS 红绿灯,
-      不要在那里放可交互元素。右侧 .actions 是将来放功能入口的地方
-      (搜索框、按钮等),已加 no-drag,保证可点击。
+      不要在那里放可交互元素。右侧 .actions 放功能入口(当前:GitHub 仓库
+      按钮),已加 no-drag,保证可点击。应用名不在顶栏展示(红绿灯右侧留白)。
     -->
     <div class="bar">
-      <span class="title">DSH Box</span>
       <div class="actions">
-        <!-- 将来的功能入口加在这里,例如:
-             <input class="search" type="text" placeholder="搜索…" /> -->
-        <span class="placeholder">功能入口区域</span>
+        <button
+          class="github-btn"
+          id="githubBtn"
+          type="button"
+          aria-label="GitHub 仓库"
+          title="GitHub 仓库"
+        >
+          <span class="github-icon" aria-hidden="true"></span>
+        </button>
       </div>
     </div>
 
