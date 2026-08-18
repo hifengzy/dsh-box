@@ -32,6 +32,9 @@ const { isServerOrigin, isTrustedOrigin } = require("./url-guard");
 const { createTray } = require("./tray");
 const { createAppMenu } = require("./menu");
 const { showAboutWindow } = require("./about");
+const { getRuntimeDshInfo } = require("./dsh-version");
+const npmCheck = require("./npm-check");
+const { upgradeDsh } = require("./dsh-upgrade");
 
 const APP_NAME = "DSH Box";
 const isMac = process.platform === "darwin";
@@ -110,6 +113,14 @@ function main() {
   let appMenu = null;
   /** 最近一次错误消息;加载页加载时会拉取,避免错误只在广播瞬间可见 */
   let lastError = null;
+  /** 服务状态机:starting | ready | error | stopped(供状态页与加载页展示) */
+  let serviceState = "starting";
+  /** 「dsh 服务与版本」窗口(单例,可关可重开) */
+  let statusWindow = null;
+  /** 是否正在执行升级(防止并发升级) */
+  let upgrading = false;
+  /** 最近一次 npm 更新检查结果(顶栏红点用) */
+  let lastUpdateCheck = null;
 
   const port = Number(process.env.DSH_APP_PORT) || DEFAULT_PORT;
 
@@ -266,23 +277,35 @@ function main() {
     });
   }
 
-  // ---------- 状态广播(发给内容视图) ----------
+  // ---------- 状态广播(发给内容视图 + 服务状态窗口) ----------
   function broadcastStatus(status) {
     if (contentView && !contentView.webContents.isDestroyed()) {
       contentView.webContents.send("dsh:status", status);
     }
+    if (statusWindow && !statusWindow.isDestroyed()) {
+      statusWindow.webContents.send("dsh:status", status);
+    }
   }
 
   function getServerInfo() {
+    const runtime = getRuntimeDshInfo();
     return {
+      version: runtime.version ?? null,
       port,
       url: server ? server.url : `http://127.0.0.1:${port}`,
+      pid: server?.child?.pid ?? null,
       dshBin: server?.dshBin ?? null,
       dshHome: server?.dshHome ?? null,
       logFile: server?.logFile ?? null,
       ready: server?.ready ?? false,
-      state: lastError ? "error" : server?.ready ? "ready" : "starting",
-      message: lastError ?? "",
+      state: serviceState,
+      message:
+        lastError ??
+        (serviceState === "ready"
+          ? "服务运行中"
+          : serviceState === "stopped"
+            ? "服务已停止"
+            : ""),
     };
   }
 
@@ -290,6 +313,7 @@ function main() {
   function wireServerEvents() {
     server.on("ready", (url) => {
       lastError = null;
+      serviceState = "ready";
       broadcastStatus({ state: "ready", message: `服务已就绪: ${url}` });
       if (contentView && !contentView.webContents.isDestroyed()) {
         contentView.webContents.loadURL(url);
@@ -298,10 +322,12 @@ function main() {
     server.on("error", (error) => {
       console.error("[app] dsh 启动失败:", error);
       lastError = error.message;
+      serviceState = "error";
       broadcastStatus({ state: "error", message: lastError });
     });
     server.on("exited", ({ code, signal }) => {
       lastError = `dsh 服务意外退出 (code=${code}, signal=${signal})。点击重试重新启动。`;
+      serviceState = "error";
       broadcastStatus({ state: "error", message: lastError });
       // 若内容视图正显示 WebUI(服务已死,页面已无响应),切回加载页
       // 展示错误与重试入口,而不是让用户对着一块死页面。
@@ -394,6 +420,7 @@ function main() {
     }
     if (server.ready || server.child) return;
     lastError = null;
+    serviceState = "starting";
     broadcastStatus({ state: "starting", message: "正在启动 dsh 服务…" });
 
     const logDir = path.join(app.getPath("userData"), "logs");
@@ -421,6 +448,75 @@ function main() {
     await startServer();
   }
 
+  // ---------- 「dsh 服务与版本」窗口(单例) ----------
+  function openStatusWindow() {
+    if (statusWindow && !statusWindow.isDestroyed()) {
+      if (statusWindow.isMinimized()) statusWindow.restore();
+      statusWindow.show();
+      statusWindow.focus();
+      return statusWindow;
+    }
+    statusWindow = new BrowserWindow({
+      title: "dsh 服务与版本",
+      width: 680,
+      height: 640,
+      minWidth: 560,
+      minHeight: 480,
+      show: false,
+      // 与主窗口一致的玻璃拟态 + 隐藏标题栏(保留红绿灯),页面自带头部
+      ...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" } : {}),
+      vibrancy: VIBRANCY_MATERIAL,
+      visualEffectState: "active",
+      backgroundColor: "#00000000",
+      webPreferences: VIEW_PRELOAD,
+    });
+    statusWindow.on("closed", () => {
+      statusWindow = null;
+    });
+    statusWindow.once("ready-to-show", () => statusWindow.show());
+    statusWindow.loadFile(path.join(__dirname, "..", "renderer", "dsh-status.html"));
+    return statusWindow;
+  }
+
+  // ---------- npm 更新检查(启动查一次 → 顶栏红点) ----------
+  function broadcastUpdateFlag() {
+    if (topBarView && !topBarView.webContents.isDestroyed()) {
+      topBarView.webContents.send("dsh:update-flag", lastUpdateCheck);
+    }
+  }
+
+  /** 查一次 npm(失败回退缓存),刷新红点并广播;永远不抛错。 */
+  async function refreshUpdateFlag() {
+    try {
+      const { data, fromCache } = await npmCheck.checkOnce();
+      const runtime = getRuntimeDshInfo().version ?? null;
+      lastUpdateCheck = { ...npmCheck.decorate(data, runtime), fromCache };
+      broadcastUpdateFlag();
+      return lastUpdateCheck;
+    } catch {
+      return lastUpdateCheck;
+    }
+  }
+
+  // ---------- 升级编排:停服 → 换文件 → 恢复服务 → 刷新红点 ----------
+  async function performUpgrade(version) {
+    const wasReady = server?.ready ?? false;
+    broadcastStatus({ state: "starting", message: `正在升级 dsh 至 ${version}…` });
+    if (server) await server.stop();
+    serviceState = "stopped";
+    const result = await upgradeDsh(version, {
+      cacheDir: path.join(app.getPath("userData"), "cache"),
+      log: console,
+    });
+    if (!result.ok) {
+      if (wasReady) await startServer();
+      return result;
+    }
+    if (wasReady) await startServer();
+    await refreshUpdateFlag();
+    return result;
+  }
+
   // ---------- IPC(preload 桥) ----------
   ipcMain.handle("dsh:get-info", () => getServerInfo());
   ipcMain.handle("dsh:retry", async () => {
@@ -441,6 +537,45 @@ function main() {
   ipcMain.handle("shell:open-external", (_event, url) => {
     if (typeof url !== "string" || !/^https?:\/\//i.test(url)) return false;
     return shell.openExternal(url);
+  });
+
+  // ---------- dsh 服务与版本页 ----------
+  // 进入页面时查一次 npm(每次都查,返回完整列表),并刷新红点
+  ipcMain.handle("dsh:check-updates", async () => {
+    const result = await refreshUpdateFlag();
+    if (!result) return { error: "无法获取 npm 版本信息", hasUpdate: false, rows: [] };
+    return result;
+  });
+  // 顶栏红点查询(启动时已静默查过一次)
+  ipcMain.handle("dsh:get-update-flag", () => lastUpdateCheck ?? { hasUpdate: false });
+  // 打开「dsh 服务与版本」窗口(顶栏入口 / 菜单)
+  ipcMain.handle("dsh:open-status", () => {
+    openStatusWindow();
+    return true;
+  });
+  // 停止服务(状态页「停止」按钮);停止后加载页与状态页都显示「未运行」
+  ipcMain.handle("dsh:stop", async () => {
+    if (server) await server.stop();
+    serviceState = "stopped";
+    lastError = null;
+    broadcastStatus({ state: "stopped", message: "服务已停止" });
+    return getServerInfo();
+  });
+  // 应用内升级捆绑的 dsh 到指定版本(单飞:同时只允许一个升级任务)
+  ipcMain.handle("dsh:upgrade", async (_event, version) => {
+    if (upgrading) return { ok: false, error: "已有升级任务进行中,请稍候" };
+    if (typeof version !== "string" || !/^\d+\.\d+\.\d+(?:[-+].*)?$/.test(version)) {
+      return { ok: false, error: "版本号格式不正确" };
+    }
+    upgrading = true;
+    try {
+      return await performUpgrade(version);
+    } catch (error) {
+      console.error("[app] 升级失败:", error);
+      return { ok: false, error: error.message || String(error) };
+    } finally {
+      upgrading = false;
+    }
   });
 
   // ---------- 主题同步(dsh UI → 外壳) ----------
@@ -486,7 +621,10 @@ function main() {
   // dev 模式见 scripts/dev-launch.mjs(品牌化 Electron 副本),打包版由
   // electron-builder 的 productName 生成。
   function buildMenu() {
-    appMenu = createAppMenu({ onAbout: () => showAboutWindow({ parent: mainWindow }) });
+    appMenu = createAppMenu({
+      onAbout: () => showAboutWindow({ parent: mainWindow }),
+      onOpenStatus: () => openStatusWindow(),
+    });
     Menu.setApplicationMenu(appMenu);
   }
 
@@ -505,6 +643,8 @@ function main() {
     }
     buildMenu();
     installPermissionHandlers();
+    // npm 版本缓存目录(userData/cache);启动时静默查一次,有新版 → 顶栏红点
+    npmCheck.init(path.join(app.getPath("userData"), "cache"));
     createWindow();
     // ---------- macOS 菜单栏(Tray)----------
     // 单击图标聚焦窗口;右键弹出「打开 DSH Box / 退出」。仅 macOS。
@@ -521,6 +661,9 @@ function main() {
       }
     }
     await startServer();
+
+    // 启动时自动查一次 npm(非阻塞,失败静默):有新版 → 顶栏入口红点
+    refreshUpdateFlag().catch(() => {});
 
     // 测试钩子:冒烟测试模式 — 就绪后打印标记并退出(CI / 自检用)
     if (process.env.DSH_SMOKE === "1") {

@@ -36,4 +36,26 @@ contextBridge.exposeInMainWorld("dsh", {
 
   /** 上报 dsh UI 当前解析出的主题('dark'|'light'),外壳据此跟随 */
   reportTheme: (scheme) => ipcRenderer.send("shell:theme-changed", scheme),
+
+  /** 查一次 npm 上的 dsh 版本(进入「服务与版本」页时调用),返回完整列表 */
+  checkUpdates: () => ipcRenderer.invoke("dsh:check-updates"),
+
+  /** 查询当前更新标志(顶栏红点);启动时已静默查过一次 */
+  getUpdateFlag: () => ipcRenderer.invoke("dsh:get-update-flag"),
+
+  /** 订阅更新标志变化(顶栏红点实时刷新);返回取消订阅函数 */
+  onUpdateFlag: (callback) => {
+    const listener = (_event, flag) => callback(flag);
+    ipcRenderer.on("dsh:update-flag", listener);
+    return () => ipcRenderer.removeListener("dsh:update-flag", listener);
+  },
+
+  /** 应用内升级捆绑的 dsh 到指定版本(主进程会停服→替换→恢复) */
+  upgrade: (version) => ipcRenderer.invoke("dsh:upgrade", version),
+
+  /** 停止 dsh 服务(状态页「停止」按钮) */
+  stopServer: () => ipcRenderer.invoke("dsh:stop"),
+
+  /** 打开「dsh 服务与版本」窗口(顶栏入口 / 菜单) */
+  openStatusPage: () => ipcRenderer.invoke("dsh:open-status"),
 });

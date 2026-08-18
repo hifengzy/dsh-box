@@ -26,6 +26,8 @@ ipcMain.handle("shell:open-external", (_event, url) => {
   openedUrl = url;
   return true;
 });
+// 顶栏新入口:更新标志(红点)与打开状态页(本次不点状态按钮,仅防日志噪音)
+ipcMain.handle("dsh:get-update-flag", () => ({ hasUpdate: false }));
 
 app.whenReady().then(async () => {
   try {
@@ -81,7 +83,7 @@ app.whenReady().then(async () => {
           for (const rule of sheet.cssRules) text += rule.cssText + "\\n";
         } catch { /* 跨源样式表忽略 */ }
       }
-      return /\\.github-btn:hover\\s*\\{[^}]*background-color/.test(text);
+      return /\\.github-btn:hover[^{]*\\{[^}]*background-color/.test(text);
     })()`);
     if (!hasHoverRule) throw new Error("缺少 .github-btn:hover 背景规则");
     console.log("[3] 悬停显示背景规则存在(light/dark 自适应) ✓");

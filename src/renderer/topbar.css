@@ -42,9 +42,11 @@ body {
   -webkit-app-region: no-drag;
 }
 
-/* GitHub 入口:28×28 无背景按钮(适配 40px 顶栏),悬停才显示背景色,
+/* GitHub / dsh 状态入口:28×28 无背景按钮(适配 40px 顶栏),悬停才显示背景色,
  * 图标 20×20 居中。 */
-.github-btn {
+.github-btn,
+.status-btn {
+  position: relative;
   width: 28px;
   height: 28px;
   display: flex;
@@ -58,24 +60,49 @@ body {
   transition: background-color 0.15s ease;
 }
 
-.github-btn:hover {
+.github-btn:hover,
+.status-btn:hover {
   background-color: var(--bar-hover);
 }
 
-.github-btn:active {
+.github-btn:active,
+.status-btn:active {
   background-color: var(--bar-active);
 }
 
-.github-btn:focus-visible {
+.github-btn:focus-visible,
+.status-btn:focus-visible {
   outline: 1px solid var(--bar-text);
   outline-offset: -1px;
 }
 
-/* 图标:mask 把 github.svg 镂空成纯色,随 light/dark 自动变色 */
-.github-icon {
+/* 图标:mask 把 svg 镂空成纯色,随 light/dark 自动变色 */
+.github-icon,
+.status-icon {
   width: 20px;
   height: 20px;
   background-color: var(--bar-text);
+}
+
+.github-icon {
   -webkit-mask: url("../../assets/github.svg") no-repeat center / contain;
   mask: url("../../assets/github.svg") no-repeat center / contain;
+}
+
+.status-icon {
+  -webkit-mask: url("../../assets/dsh-status.svg") no-repeat center / contain;
+  mask: url("../../assets/dsh-status.svg") no-repeat center / contain;
+}
+
+/* 更新红点:有可升级版本时,状态入口右上角亮起(红色,带一圈与玻璃适配的描边) */
+.status-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: light-dark(rgb(236, 19, 19), rgb(242, 90, 90));
+  box-shadow: 0 0 0 1.5px light-dark(rgba(255, 255, 255, 0.85), rgba(20, 26, 36, 0.85));
+  pointer-events: none;
 }

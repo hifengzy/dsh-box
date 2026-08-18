@@ -17,6 +17,17 @@
     -->
     <div class="bar">
       <div class="actions">
+        <!-- dsh 服务与版本入口:点击打开状态页;有可升级版本时右上角亮红点 -->
+        <button
+          class="status-btn"
+          id="statusBtn"
+          type="button"
+          aria-label="dsh 服务与版本"
+          title="dsh 服务与版本"
+        >
+          <span class="status-icon" aria-hidden="true"></span>
+          <span class="status-dot" id="updateDot" hidden aria-hidden="true"></span>
+        </button>
         <button
           class="github-btn"
           id="githubBtn"
