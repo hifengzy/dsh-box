@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'none'; img-src 'self' data:"
+    />
+    <title>dsh 服务与版本</title>
+    <link rel="stylesheet" href="./dsh-status.css" />
+  </head>
+  <body>
+    <!-- 面板头部:位于窗口顶栏下方的面板顶部;不开/关按钮,开关由顶栏状态按钮控制 -->
+    <header class="panel-header">
+      <span class="panel-title">dsh 服务与版本</span>
+      <div class="header-right">
+        <span class="last-check" id="lastCheck"></span>
+        <button class="btn btn-ghost" id="refreshBtn" type="button">刷新</button>
+      </div>
+    </header>
+
+    <main class="content">
+      <!-- 当前服务卡 -->
+      <section class="card">
+        <div class="status-row">
+          <span class="dot" id="statusDot"></span>
+          <span class="status-label" id="statusLabel"></span>
+          <span class="chip" id="versionChip"></span>
+        </div>
+        <div class="meta" id="metaLine"></div>
+        <div class="meta mono" id="homeLine"></div>
+        <div class="meta mono" id="logLine"></div>
+        <div class="error-box" id="errorBox" hidden>
+          <div class="error-title">启动失败原因</div>
+          <pre class="error-detail" id="errorDetail"></pre>
+        </div>
+        <div class="actions-row">
+          <button class="btn btn-primary" id="startBtn" hidden>启动服务</button>
+          <button class="btn" id="stopBtn" hidden>停止服务</button>
+          <button class="btn" id="restartBtn" hidden>重启服务</button>
+          <span class="hint" id="serviceHint"></span>
+        </div>
+      </section>
+
+      <!-- 版本列表卡 -->
+      <section class="card">
+        <div class="card-title-row">
+          <h2>版本列表</h2>
+          <span class="source">npm registry</span>
+        </div>
+        <div class="banner" id="updateBanner" hidden>
+          <span>发现新版本</span><span class="banner-version" id="bannerVersion"></span>
+        </div>
+        <div class="offline" id="offlineNote" hidden></div>
+        <div class="version-table" id="versionList"></div>
+        <div class="hint" id="upgradeHint"></div>
+      </section>
+    </main>
+
+    <script src="./dsh-status.js"></script>
+  </body>
+</html>

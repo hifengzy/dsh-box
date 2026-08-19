@@ -111,7 +111,14 @@ function showAboutWindow({ parent = null } = {}) {
     if (input.type === "keyDown" && input.key === "Escape") win.close();
   });
 
-  win.once("ready-to-show", () => win.show());
+  // 显示时机:用 did-finish-load 而非 ready-to-show。
+  // 同「dsh 服务与版本」窗口的实测结论:show:false + 透明背景的窗口在隐藏
+  // 状态下不产出首帧,ready-to-show 可能永远不触发(窗口永远不显示);
+  // did-finish-load 在隐藏状态稳定触发,页面就绪后再 show,无闪屏。
+  // (keep the vibrancy glass look for this small dialog)
+  win.webContents.once("did-finish-load", () => {
+    if (!win.isDestroyed()) win.show();
+  });
 
   win.loadFile(ABOUT_HTML, {
     query: {

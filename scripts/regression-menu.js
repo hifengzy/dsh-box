@@ -26,7 +26,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 app.whenReady().then(async () => {
   try {
     let aboutCalled = 0;
-    const menu = createAppMenu({ onAbout: () => { aboutCalled += 1; } });
+    let statusCalled = 0;
+    const menu = createAppMenu({
+      onAbout: () => { aboutCalled += 1; },
+      onOpenStatus: () => { statusCalled += 1; },
+    });
     const functional = (submenu) => submenu.items.filter((i) => i.type !== "separator");
     const appMenu = menu.items[0];
 
@@ -41,6 +45,7 @@ app.whenReady().then(async () => {
     console.log(`[2] 应用菜单: ${JSON.stringify(labels)}`);
     const expect = [
       "关于 DSH Box",
+      MENU_LABELS.dshStatus,
       "服务",
       "隐藏 DSH Box",
       "隐藏其他",
@@ -59,6 +64,13 @@ app.whenReady().then(async () => {
     if (aboutCalled !== 1) throw new Error("「关于 DSH Box」未触发 onAbout");
     if (quitItem.role !== "quit") throw new Error("「退出 DSH Box」应为 role=quit");
     console.log("[3] 「关于 DSH Box」→ onAbout ✓,「退出 DSH Box」role=quit ✓");
+
+    // 3.5 「dsh 服务与版本…」触发 onOpenStatus(打开服务状态窗口)
+    const statusItem = appMenu.submenu.items.find((i) => i.label === MENU_LABELS.dshStatus);
+    if (!statusItem) throw new Error(`缺少「${MENU_LABELS.dshStatus}」`);
+    statusItem.click();
+    if (statusCalled !== 1) throw new Error("「dsh 服务与版本…」未触发 onOpenStatus");
+    console.log(`[3.5] 「${MENU_LABELS.dshStatus}」→ onOpenStatus ✓`);
 
     // 4. 编辑 / 窗口菜单齐全
     const editLabels = functional(menu.items.find((i) => i.label === "编辑").submenu).map((i) => i.label);
@@ -84,6 +96,9 @@ app.whenReady().then(async () => {
     });
     await sleep(300);
     const title = win.getTitle();
+    // 6b. show 时机修复的回归:About 窗口用 did-finish-load→show(不用
+    // ready-to-show),隐藏窗口必须真的显示出来——否则就是「点一下没反应」。
+    if (!win.isVisible()) throw new Error("关于弹窗在 did-finish-load 后应可见(show 时机回归)");
     const text = await win.webContents.executeJavaScript("document.body.innerText", true);
     const logoOk = await win.webContents.executeJavaScript(
       "(() => { const i = document.querySelector('.logo'); return !!i && i.complete && i.naturalWidth > 0; })()",

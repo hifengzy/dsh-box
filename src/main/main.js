@@ -32,6 +32,11 @@ const { isServerOrigin, isTrustedOrigin } = require("./url-guard");
 const { createTray } = require("./tray");
 const { createAppMenu } = require("./menu");
 const { showAboutWindow } = require("./about");
+const { getRuntimeDshInfo } = require("./dsh-version");
+const npmCheck = require("./npm-check");
+const { upgradeDsh } = require("./dsh-upgrade");
+const { computeSidebar, SIDEBAR_GAP } = require("./sidebar-layout");
+const { SIDEBAR_ANIM_MS, easeSidebar } = require("./sidebar-anim");
 
 const APP_NAME = "DSH Box";
 const isMac = process.platform === "darwin";
@@ -110,6 +115,18 @@ function main() {
   let appMenu = null;
   /** 最近一次错误消息;加载页加载时会拉取,避免错误只在广播瞬间可见 */
   let lastError = null;
+  /** 服务状态机:starting | ready | error | stopped(供状态页与加载页展示) */
+  let serviceState = "starting";
+  /** 右侧「dsh 服务与版本」面板视图(WebContentsView);null = 未展开 */
+  let statusView = null;
+  /** 面板是否展开(顶栏状态按钮的激活态来源) */
+  let sidebarOpen = false;
+  /** 面板展开/收起动画句柄(帧驱动 setBounds);null = 无动画进行中 */
+  let sidebarAnim = null;
+  /** 是否正在执行升级(防止并发升级) */
+  let upgrading = false;
+  /** 最近一次 npm 更新检查结果(顶栏红点用) */
+  let lastUpdateCheck = null;
 
   const port = Number(process.env.DSH_APP_PORT) || DEFAULT_PORT;
 
@@ -154,6 +171,10 @@ function main() {
       height: 820,
       minWidth: 960,
       minHeight: 600,
+      // macOS:未聚焦窗口的首次点击也要传递给 Web 内容。默认 acceptFirstMouse
+      // 是 false——首击只激活窗口不派发事件,顶栏按钮(状态/GitHub)会变成
+      // 「第一下没反应,第二下才生效」。
+      acceptFirstMouse: true,
       // 玻璃拟态:窗口背景用 macOS 原生毛玻璃材质(内容区以外=顶栏+边框
       // 都是它);不设不透明 backgroundColor,让材质透出
       vibrancy: VIBRANCY_MATERIAL,
@@ -196,9 +217,18 @@ function main() {
     mainWindow.setMenuBarVisibility(false);
     layoutViews();
 
-    mainWindow.on("resize", layoutViews);
-    mainWindow.on("enter-full-screen", () => setTimeout(layoutViews, 120));
-    mainWindow.on("leave-full-screen", () => setTimeout(layoutViews, 120));
+    mainWindow.on("resize", () => {
+      layoutViews();
+      broadcastSidebarState();
+    });
+    mainWindow.on("enter-full-screen", () => setTimeout(() => {
+      layoutViews();
+      broadcastSidebarState();
+    }, 120));
+    mainWindow.on("leave-full-screen", () => setTimeout(() => {
+      layoutViews();
+      broadcastSidebarState();
+    }, 120));
 
     // 顶栏内容
     topBarView.webContents.loadFile(path.join(__dirname, "..", "renderer", "topbar.html"));
@@ -236,6 +266,8 @@ function main() {
       mainWindow = null;
       topBarView = null;
       contentView = null;
+      statusView = null;
+      sidebarOpen = false;
     });
   }
 
@@ -253,36 +285,97 @@ function main() {
     createWindow();
   }
 
-  /** 按当前窗口尺寸摆放两个视图(顶栏通栏;内容区内缩+圆角)。 */
+  /** 当前窗口内容区宽度(不含两侧内缩),供侧边栏宽度计算 */
+  function currentInnerWidth() {
+    if (!mainWindow || mainWindow.isDestroyed()) return 0;
+    return Math.max(0, mainWindow.getContentBounds().width - CONTENT_INSET * 2);
+  }
+
+  /**
+   * 按当前窗口尺寸摆放所有视图:顶栏通栏;内容区 = dsh WebUI,右侧(可选)
+   * 状态面板展开时按「内容优先」(sidebar-layout.js)拆分为两块圆角视图。
+   */
   function layoutViews() {
     if (!mainWindow || mainWindow.isDestroyed() || !topBarView || !contentView) return;
+    // 缩放/全屏切换 = 快照布局,取消进行中的展开/收起动画
+    cancelSidebarAnimation();
     const { width, height } = mainWindow.getContentBounds();
     topBarView.setBounds({ x: 0, y: 0, width, height: BAR_HEIGHT });
+
+    const innerW = currentInnerWidth();
+    const innerH = Math.max(0, height - BAR_HEIGHT - CONTENT_GAP - CONTENT_INSET);
+    const layout = computeSidebar(innerW, { open: sidebarOpen });
+
+    // 窗口缩窄导致面板放不下(或内容区跌破保底)→ 自动收起(快照,不受 toggle 触发)
+    if (sidebarOpen && layout.shouldClose) {
+      sidebarOpen = false;
+      if (statusView) {
+        try {
+          mainWindow.contentView.removeChildView(statusView);
+        } catch {
+          /* 视图可能已被窗口清理 */
+        }
+        statusView = null;
+      }
+    }
+    // 收起动画进行中遇到缩放 → 直接清理残留视图(动画帧已被取消)
+    if (!sidebarOpen && statusView) {
+      try {
+        mainWindow.contentView.removeChildView(statusView);
+      } catch {
+        /* 视图可能已被窗口清理 */
+      }
+      statusView = null;
+    }
+
+    const sidebarW = sidebarOpen ? layout.sidebarW : 0;
+    const contentW = sidebarOpen ? layout.contentW : innerW;
     contentView.setBounds({
       x: CONTENT_INSET,
       y: BAR_HEIGHT + CONTENT_GAP,
-      width: Math.max(0, width - CONTENT_INSET * 2),
-      height: Math.max(0, height - BAR_HEIGHT - CONTENT_GAP - CONTENT_INSET),
+      width: contentW,
+      height: innerH,
     });
+
+    if (sidebarOpen && statusView) {
+      statusView.setBounds({
+        x: CONTENT_INSET + contentW + SIDEBAR_GAP,
+        y: BAR_HEIGHT + CONTENT_GAP,
+        width: Math.max(0, innerW - contentW - SIDEBAR_GAP),
+        height: innerH,
+      });
+    }
   }
 
-  // ---------- 状态广播(发给内容视图) ----------
+  // ---------- 状态广播(发给内容视图 + 右侧状态面板) ----------
   function broadcastStatus(status) {
     if (contentView && !contentView.webContents.isDestroyed()) {
       contentView.webContents.send("dsh:status", status);
     }
+    if (statusView && !statusView.webContents.isDestroyed()) {
+      statusView.webContents.send("dsh:status", status);
+    }
   }
 
   function getServerInfo() {
+    const runtime = getRuntimeDshInfo();
     return {
+      version: runtime.version ?? null,
       port,
       url: server ? server.url : `http://127.0.0.1:${port}`,
+      pid: server?.child?.pid ?? null,
       dshBin: server?.dshBin ?? null,
       dshHome: server?.dshHome ?? null,
       logFile: server?.logFile ?? null,
       ready: server?.ready ?? false,
-      state: lastError ? "error" : server?.ready ? "ready" : "starting",
-      message: lastError ?? "",
+      state: serviceState,
+      message:
+        lastError ??
+        (serviceState === "ready"
+          ? "服务运行中"
+          : serviceState === "stopped"
+            ? "服务已停止"
+            : ""),
     };
   }
 
@@ -290,6 +383,7 @@ function main() {
   function wireServerEvents() {
     server.on("ready", (url) => {
       lastError = null;
+      serviceState = "ready";
       broadcastStatus({ state: "ready", message: `服务已就绪: ${url}` });
       if (contentView && !contentView.webContents.isDestroyed()) {
         contentView.webContents.loadURL(url);
@@ -298,10 +392,12 @@ function main() {
     server.on("error", (error) => {
       console.error("[app] dsh 启动失败:", error);
       lastError = error.message;
+      serviceState = "error";
       broadcastStatus({ state: "error", message: lastError });
     });
     server.on("exited", ({ code, signal }) => {
       lastError = `dsh 服务意外退出 (code=${code}, signal=${signal})。点击重试重新启动。`;
+      serviceState = "error";
       broadcastStatus({ state: "error", message: lastError });
       // 若内容视图正显示 WebUI(服务已死,页面已无响应),切回加载页
       // 展示错误与重试入口,而不是让用户对着一块死页面。
@@ -394,6 +490,7 @@ function main() {
     }
     if (server.ready || server.child) return;
     lastError = null;
+    serviceState = "starting";
     broadcastStatus({ state: "starting", message: "正在启动 dsh 服务…" });
 
     const logDir = path.join(app.getPath("userData"), "logs");
@@ -421,6 +518,184 @@ function main() {
     await startServer();
   }
 
+  // ---------- 右侧「dsh 服务与版本」面板(顶栏按钮/菜单控制开关) ----------
+  /** @returns {{ open: boolean, canOpen: boolean }} 当前面板状态 */
+  function sidebarState() {
+    // 传 open:滞回判定(展开态不参与 canOpen;闭合态按重开阈值)
+    const layout = computeSidebar(currentInnerWidth(), { open: sidebarOpen });
+    return { open: sidebarOpen, canOpen: layout.canOpen };
+  }
+
+  function broadcastSidebarState() {
+    if (topBarView && !topBarView.webContents.isDestroyed()) {
+      topBarView.webContents.send("dsh:sidebar-state", sidebarState());
+    }
+  }
+
+  /**
+   * 按给定面板宽度摆位(动画逐帧调用):dsh 内容区占左侧,面板占右侧。
+   * 宽度按当前窗口内宽钳制,避免动画帧超过可用范围。
+   * @param {number} w 面板目标宽度(px)
+   */
+  function applySidebarWidth(w) {
+    if (!mainWindow || mainWindow.isDestroyed() || !contentView) return;
+    const { width, height } = mainWindow.getContentBounds();
+    const innerW = currentInnerWidth();
+    const innerH = Math.max(0, height - BAR_HEIGHT - CONTENT_GAP - CONTENT_INSET);
+    const wClamped = Math.max(0, Math.min(w, innerW - SIDEBAR_GAP));
+    // 面板完全收起(w=0)时内容区占满内宽、不留隔离缝——否则右侧会残留
+    // 一条 4px 玻璃条,与 4px 窗口内缩叠成「粗边框」
+    const contentW =
+      wClamped > 0 ? Math.max(0, innerW - wClamped - SIDEBAR_GAP) : innerW;
+    contentView.setBounds({
+      x: CONTENT_INSET,
+      y: BAR_HEIGHT + CONTENT_GAP,
+      width: contentW,
+      height: innerH,
+    });
+    if (statusView && !statusView.webContents.isDestroyed()) {
+      statusView.setBounds({
+        x: CONTENT_INSET + contentW + SIDEBAR_GAP,
+        y: BAR_HEIGHT + CONTENT_GAP,
+        width: wClamped,
+        height: innerH,
+      });
+    }
+  }
+
+  function cancelSidebarAnimation() {
+    sidebarAnim = null; // 帧回调按 identity 检查,置空即失效
+  }
+
+  /**
+   * 启动面板宽度动画(300ms,与 dsh 左侧边栏同款缓动 cubic-bezier(.4,0,.2,1))。
+   * @param {number} fromW 起始宽度
+   * @param {number} toW 目标宽度
+   * @param {() => void} [onDone] 动画结束回调(如收起后移除视图)
+   */
+  function startSidebarAnimation(fromW, toW, onDone) {
+    cancelSidebarAnimation();
+    if (Math.abs(toW - fromW) < 1) {
+      applySidebarWidth(toW);
+      onDone?.();
+      return;
+    }
+    const startAt = Date.now();
+    const anim = { startAt, fromW, toW, onDone };
+    sidebarAnim = anim;
+    const step = () => {
+      if (sidebarAnim !== anim) return; // 被新动画/取消/缩放顶替
+      const t = Math.min(1, (Date.now() - startAt) / SIDEBAR_ANIM_MS);
+      applySidebarWidth(Math.round(fromW + (toW - fromW) * easeSidebar(t)));
+      if (t < 1) {
+        setTimeout(step, 16);
+      } else {
+        sidebarAnim = null;
+        onDone?.();
+      }
+    };
+    step();
+  }
+
+  function openStatusSidebar() {
+    if (statusView) {
+      // 可能正处于「收起动画」中:取消收起,从当前宽度动画回目标
+      if (!sidebarOpen) {
+        const from = statusView.getBounds().width;
+        cancelSidebarAnimation();
+        sidebarOpen = true;
+        startSidebarAnimation(from, computeSidebar(currentInnerWidth(), { open: true }).sidebarW);
+        broadcastSidebarState();
+      }
+      return true;
+    }
+    if (!sidebarState().canOpen) return false; // 窗口太窄,不展开
+    sidebarOpen = true;
+    statusView = new WebContentsView({ webPreferences: VIEW_PRELOAD });
+    // 面板内容不透明,主题适配底色(页面自带同色背景,避免首帧闪色)
+    statusView.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#151517" : "#f9fafb");
+    statusView.setBorderRadius(CONTENT_RADIUS);
+    mainWindow.contentView.addChildView(statusView);
+    // 先按 0 宽摆位,再从 0 动画展开到目标宽度
+    applySidebarWidth(0);
+    // 每次打开都重建视图 → 进入面板必然重新查 npm(符合需求)
+    statusView.webContents.loadFile(path.join(__dirname, "..", "renderer", "dsh-status.html"));
+    broadcastSidebarState();
+    startSidebarAnimation(0, computeSidebar(currentInnerWidth(), { open: true }).sidebarW);
+    return true;
+  }
+
+  function closeStatusSidebar() {
+    if (!sidebarOpen && !statusView) return;
+    sidebarOpen = false;
+    broadcastSidebarState();
+    if (statusView) {
+      const from = statusView.getBounds().width;
+      startSidebarAnimation(from, 0, () => {
+        // 动画结束:移除视图,并恢复闭合布局——动画帧把内容区宽度停在
+        // 「减掉隔离缝」的状态,必须 layoutViews() 让内容区占满全宽,
+        // 否则右侧会残留 4px 玻璃条,与窗口边框叠成粗边框
+        if (statusView) {
+          try {
+            mainWindow?.contentView?.removeChildView(statusView);
+          } catch {
+            /* 视图可能已被窗口清理 */
+          }
+          statusView = null;
+        }
+        layoutViews();
+      });
+    }
+  }
+
+  function toggleStatusSidebar() {
+    if (sidebarOpen) {
+      closeStatusSidebar();
+      return sidebarState();
+    }
+    openStatusSidebar();
+    return sidebarState();
+  }
+
+  // ---------- npm 更新检查(启动查一次 → 顶栏红点) ----------
+  function broadcastUpdateFlag() {
+    if (topBarView && !topBarView.webContents.isDestroyed()) {
+      topBarView.webContents.send("dsh:update-flag", lastUpdateCheck);
+    }
+  }
+
+  /** 查一次 npm(失败回退缓存),刷新红点并广播;永远不抛错。 */
+  async function refreshUpdateFlag() {
+    try {
+      const { data, fromCache } = await npmCheck.checkOnce();
+      const runtime = getRuntimeDshInfo().version ?? null;
+      lastUpdateCheck = { ...npmCheck.decorate(data, runtime), fromCache };
+      broadcastUpdateFlag();
+      return lastUpdateCheck;
+    } catch {
+      return lastUpdateCheck;
+    }
+  }
+
+  // ---------- 升级编排:停服 → 换文件 → 恢复服务 → 刷新红点 ----------
+  async function performUpgrade(version) {
+    const wasReady = server?.ready ?? false;
+    broadcastStatus({ state: "starting", message: `正在升级 dsh 至 ${version}…` });
+    if (server) await server.stop();
+    serviceState = "stopped";
+    const result = await upgradeDsh(version, {
+      cacheDir: path.join(app.getPath("userData"), "cache"),
+      log: console,
+    });
+    if (!result.ok) {
+      if (wasReady) await startServer();
+      return result;
+    }
+    if (wasReady) await startServer();
+    await refreshUpdateFlag();
+    return result;
+  }
+
   // ---------- IPC(preload 桥) ----------
   ipcMain.handle("dsh:get-info", () => getServerInfo());
   ipcMain.handle("dsh:retry", async () => {
@@ -435,6 +710,50 @@ function main() {
     if (mainWindow.isMaximized()) mainWindow.unmaximize();
     else mainWindow.maximize();
     return true;
+  });
+
+  // 顶栏 GitHub 等外链入口:只放行 http/https,交给系统默认浏览器
+  ipcMain.handle("shell:open-external", (_event, url) => {
+    if (typeof url !== "string" || !/^https?:\/\//i.test(url)) return false;
+    return shell.openExternal(url);
+  });
+
+  // ---------- dsh 服务与版本页 ----------
+  // 进入页面时查一次 npm(每次都查,返回完整列表),并刷新红点
+  ipcMain.handle("dsh:check-updates", async () => {
+    const result = await refreshUpdateFlag();
+    if (!result) return { error: "无法获取 npm 版本信息", hasUpdate: false, rows: [] };
+    return result;
+  });
+  // 顶栏红点查询(启动时已静默查过一次)
+  ipcMain.handle("dsh:get-update-flag", () => lastUpdateCheck ?? { hasUpdate: false });
+  // 打开/关闭右侧「dsh 服务与版本」面板(顶栏按钮 / 菜单共用)
+  ipcMain.handle("dsh:toggle-sidebar", () => toggleStatusSidebar());
+  // 面板当前状态(顶栏按钮激活态/禁用与红点无关)
+  ipcMain.handle("dsh:get-sidebar", () => sidebarState());
+  // 停止服务(状态页「停止」按钮);停止后加载页与状态页都显示「未运行」
+  ipcMain.handle("dsh:stop", async () => {
+    if (server) await server.stop();
+    serviceState = "stopped";
+    lastError = null;
+    broadcastStatus({ state: "stopped", message: "服务已停止" });
+    return getServerInfo();
+  });
+  // 应用内升级捆绑的 dsh 到指定版本(单飞:同时只允许一个升级任务)
+  ipcMain.handle("dsh:upgrade", async (_event, version) => {
+    if (upgrading) return { ok: false, error: "已有升级任务进行中,请稍候" };
+    if (typeof version !== "string" || !/^\d+\.\d+\.\d+(?:[-+].*)?$/.test(version)) {
+      return { ok: false, error: "版本号格式不正确" };
+    }
+    upgrading = true;
+    try {
+      return await performUpgrade(version);
+    } catch (error) {
+      console.error("[app] 升级失败:", error);
+      return { ok: false, error: error.message || String(error) };
+    } finally {
+      upgrading = false;
+    }
   });
 
   // ---------- 主题同步(dsh UI → 外壳) ----------
@@ -480,7 +799,10 @@ function main() {
   // dev 模式见 scripts/dev-launch.mjs(品牌化 Electron 副本),打包版由
   // electron-builder 的 productName 生成。
   function buildMenu() {
-    appMenu = createAppMenu({ onAbout: () => showAboutWindow({ parent: mainWindow }) });
+    appMenu = createAppMenu({
+      onAbout: () => showAboutWindow({ parent: mainWindow }),
+      onOpenStatus: () => toggleStatusSidebar(),
+    });
     Menu.setApplicationMenu(appMenu);
   }
 
@@ -499,6 +821,8 @@ function main() {
     }
     buildMenu();
     installPermissionHandlers();
+    // npm 版本缓存目录(userData/cache);启动时静默查一次,有新版 → 顶栏红点
+    npmCheck.init(path.join(app.getPath("userData"), "cache"));
     createWindow();
     // ---------- macOS 菜单栏(Tray)----------
     // 单击图标聚焦窗口;右键弹出「打开 DSH Box / 退出」。仅 macOS。
@@ -515,6 +839,9 @@ function main() {
       }
     }
     await startServer();
+
+    // 启动时自动查一次 npm(非阻塞,失败静默):有新版 → 顶栏入口红点
+    refreshUpdateFlag().catch(() => {});
 
     // 测试钩子:冒烟测试模式 — 就绪后打印标记并退出(CI / 自检用)
     if (process.env.DSH_SMOKE === "1") {

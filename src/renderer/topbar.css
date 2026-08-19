@@ -4,7 +4,8 @@
 :root {
   color-scheme: light dark;
   --bar-text: light-dark(rgba(20, 26, 36, 0.78), rgba(235, 240, 255, 0.85));
-  --bar-placeholder: light-dark(rgba(20, 26, 36, 0.4), rgba(235, 240, 255, 0.42));
+  --bar-hover: light-dark(rgba(20, 26, 36, 0.08), rgba(235, 240, 255, 0.14));
+  --bar-active: light-dark(rgba(20, 26, 36, 0.14), rgba(235, 240, 255, 0.22));
 }
 
 * {
@@ -25,22 +26,14 @@ body {
   height: 100%;
   display: flex;
   align-items: center;
-  padding: 0 14px 0 84px; /* 左侧 84px 预留给红绿灯 */
+  padding: 0 14px 0 84px; /* 左侧 84px 预留给红绿灯(应用名已不展示) */
   gap: 14px;
   /* 整条顶栏可拖动窗口;无底边线,与内容区视觉上连成一体 */
   -webkit-app-region: drag;
   user-select: none;
 }
 
-.title {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--bar-text);
-  white-space: nowrap;
-}
-
-/* 将来的功能入口区:no-drag 保证里面的控件可点击 */
+/* 功能入口区:no-drag 保证里面的控件可点击 */
 .actions {
   margin-left: auto;
   display: flex;
@@ -49,8 +42,82 @@ body {
   -webkit-app-region: no-drag;
 }
 
-.placeholder {
-  font-size: 11px;
-  color: var(--bar-placeholder);
-  white-space: nowrap;
+/* GitHub / dsh 状态入口:28×28 无背景按钮(适配 40px 顶栏),悬停才显示背景色,
+ * 图标 20×20 居中。 */
+.github-btn,
+.status-btn {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  background: transparent; /* 默认不显示按钮背景 */
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition: background-color 0.15s ease;
+}
+
+.github-btn:hover,
+.status-btn:hover {
+  background-color: var(--bar-hover);
+}
+
+.github-btn:active,
+.status-btn:active {
+  background-color: var(--bar-active);
+}
+
+.github-btn:focus-visible,
+.status-btn:focus-visible {
+  outline: 1px solid var(--bar-text);
+  outline-offset: -1px;
+}
+
+/* 图标:mask 把 svg 镂空成纯色,随 light/dark 自动变色 */
+.github-icon,
+.status-icon {
+  width: 20px;
+  height: 20px;
+  background-color: var(--bar-text);
+}
+
+.github-icon {
+  -webkit-mask: url("../../assets/github.svg") no-repeat center / contain;
+  mask: url("../../assets/github.svg") no-repeat center / contain;
+}
+
+.status-icon {
+  -webkit-mask: url("../../assets/dsh-status.svg") no-repeat center / contain;
+  mask: url("../../assets/dsh-status.svg") no-repeat center / contain;
+}
+
+/* 更新红点:有可升级版本时,状态入口右上角亮起(红色,带一圈与玻璃适配的描边) */
+.status-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: light-dark(rgb(236, 19, 19), rgb(242, 90, 90));
+  box-shadow: 0 0 0 1.5px light-dark(rgba(255, 255, 255, 0.85), rgba(20, 26, 36, 0.85));
+  pointer-events: none;
+}
+
+/* 状态按钮激活态:面板展开时点亮(品牌蓝图标 + 淡色底),与红点互不干扰 */
+.status-btn.status-btn-active {
+  background-color: var(--bar-active);
+}
+
+.status-btn.status-btn-active .status-icon {
+  background-color: light-dark(rgb(65, 118, 230), rgb(103, 158, 254));
+}
+
+/* 窗口过窄无法展开面板时:置灰禁用 */
+.status-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
