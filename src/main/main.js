@@ -454,6 +454,11 @@ function main() {
 
   // ---------- 「dsh 服务与版本」窗口(单例) ----------
   function openStatusWindow() {
+    // 显示时机:用 did-finish-load 而非 ready-to-show。
+    // 实测(2026-08-19):本组合(show:false + 透明背景)下隐藏窗口不产出
+    // 首帧,ready-to-show 永远不触发——第一次点击只建窗、窗口永不显示,
+    // 第二次点击的 show() 才迫使首帧、窗口才出现(即「要点击两次」的根因)。
+    // did-finish-load 在隐藏状态下稳定触发,show() 后页面已就绪、无白闪。
     if (statusWindow && !statusWindow.isDestroyed()) {
       if (statusWindow.isMinimized()) statusWindow.restore();
       statusWindow.show();
@@ -467,19 +472,20 @@ function main() {
       minWidth: 560,
       minHeight: 480,
       show: false,
-      // 同主窗口:未聚焦时首次点击也交给内容(否则页内按钮/滚动要点两次)
+      // 同主窗口:未聚焦时首次点击也交给内容
       acceptFirstMouse: true,
-      // 与主窗口一致的玻璃拟态 + 隐藏标题栏(保留红绿灯),页面自带头部
+      // 隐藏标题栏但保留红绿灯,页面自带头部
       ...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" } : {}),
-      vibrancy: VIBRANCY_MATERIAL,
-      visualEffectState: "active",
-      backgroundColor: "#00000000",
+      // 内容全不透明,不用玻璃;用与页面 --bg 一致的实色,避免显示瞬间闪色
+      backgroundColor: nativeTheme.shouldUseDarkColors ? "#151517" : "#f9fafb",
       webPreferences: VIEW_PRELOAD,
     });
     statusWindow.on("closed", () => {
       statusWindow = null;
     });
-    statusWindow.once("ready-to-show", () => statusWindow.show());
+    statusWindow.webContents.once("did-finish-load", () => {
+      if (statusWindow && !statusWindow.isDestroyed()) statusWindow.show();
+    });
     statusWindow.loadFile(path.join(__dirname, "..", "renderer", "dsh-status.html"));
     return statusWindow;
   }

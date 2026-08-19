@@ -96,6 +96,9 @@ app.whenReady().then(async () => {
     });
     await sleep(300);
     const title = win.getTitle();
+    // 6b. show 时机修复的回归:About 窗口用 did-finish-load→show(不用
+    // ready-to-show),隐藏窗口必须真的显示出来——否则就是「点一下没反应」。
+    if (!win.isVisible()) throw new Error("关于弹窗在 did-finish-load 后应可见(show 时机回归)");
     const text = await win.webContents.executeJavaScript("document.body.innerText", true);
     const logoOk = await win.webContents.executeJavaScript(
       "(() => { const i = document.querySelector('.logo'); return !!i && i.complete && i.naturalWidth > 0; })()",
