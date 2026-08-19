@@ -299,10 +299,10 @@ function main() {
 
     const innerW = currentInnerWidth();
     const innerH = Math.max(0, height - BAR_HEIGHT - CONTENT_GAP - CONTENT_INSET);
-    const layout = computeSidebar(innerW);
+    const layout = computeSidebar(innerW, { open: sidebarOpen });
 
-    // 窗口缩窄导致面板放不下 → 自动收起(不受 toggle 触发,静默处理)
-    if (sidebarOpen && !layout.canOpen) {
+    // 窗口缩窄导致面板放不下(或内容区跌破保底)→ 自动收起(不受 toggle 触发)
+    if (sidebarOpen && layout.shouldClose) {
       sidebarOpen = false;
       if (statusView) {
         try {
@@ -507,7 +507,8 @@ function main() {
   // ---------- 右侧「dsh 服务与版本」面板(顶栏按钮/菜单控制开关) ----------
   /** @returns {{ open: boolean, canOpen: boolean }} 当前面板状态 */
   function sidebarState() {
-    const layout = computeSidebar(currentInnerWidth());
+    // 传 open:滞回判定(展开态不参与 canOpen;闭合态按重开阈值)
+    const layout = computeSidebar(currentInnerWidth(), { open: sidebarOpen });
     return { open: sidebarOpen, canOpen: layout.canOpen };
   }
 

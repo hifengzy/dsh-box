@@ -40,12 +40,13 @@ function syncSidebar(state) {
   const canOpen = st.canOpen !== false;
   statusBtn.classList.toggle("status-btn-active", open);
   statusBtn.setAttribute("aria-pressed", String(open));
-  statusBtn.disabled = !canOpen;
-  statusBtn.title = canOpen
-    ? open
-      ? "关闭 dsh 服务与版本"
-      : "dsh 服务与版本"
-    : "窗口太窄,无法展开 dsh 服务面板";
+  // 展开时始终可点(用于关闭);闭合时才按 canOpen 决定是否禁用(窗口太窄)
+  statusBtn.disabled = !open && !canOpen;
+  statusBtn.title = open
+    ? "关闭 dsh 服务与版本"
+    : canOpen
+      ? "dsh 服务与版本"
+      : "窗口太窄,无法展开 dsh 服务面板";
 }
 
 statusBtn.addEventListener("click", async () => {
