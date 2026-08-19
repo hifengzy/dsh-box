@@ -543,7 +543,10 @@ function main() {
     const innerW = currentInnerWidth();
     const innerH = Math.max(0, height - BAR_HEIGHT - CONTENT_GAP - CONTENT_INSET);
     const wClamped = Math.max(0, Math.min(w, innerW - SIDEBAR_GAP));
-    const contentW = Math.max(0, innerW - wClamped - SIDEBAR_GAP);
+    // 面板完全收起(w=0)时内容区占满内宽、不留隔离缝——否则右侧会残留
+    // 一条 4px 玻璃条,与 4px 窗口内缩叠成「粗边框」
+    const contentW =
+      wClamped > 0 ? Math.max(0, innerW - wClamped - SIDEBAR_GAP) : innerW;
     contentView.setBounds({
       x: CONTENT_INSET,
       y: BAR_HEIGHT + CONTENT_GAP,
@@ -629,7 +632,9 @@ function main() {
     if (statusView) {
       const from = statusView.getBounds().width;
       startSidebarAnimation(from, 0, () => {
-        // 动画结束:移除视图(期间窗口缩放会被 layoutViews 直接快照清理)
+        // 动画结束:移除视图,并恢复闭合布局——动画帧把内容区宽度停在
+        // 「减掉隔离缝」的状态,必须 layoutViews() 让内容区占满全宽,
+        // 否则右侧会残留 4px 玻璃条,与窗口边框叠成粗边框
         if (statusView) {
           try {
             mainWindow?.contentView?.removeChildView(statusView);
@@ -638,6 +643,7 @@ function main() {
           }
           statusView = null;
         }
+        layoutViews();
       });
     }
   }
