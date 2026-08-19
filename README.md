@@ -41,7 +41,8 @@ npm start
 │    ├─ spawn ──→ dsh web 子进程 (Node)              │  ← 同一原生进程树
 │    │               └─ spawn ─→ bash / shell        │     → 继承 App 的
 │    ├─ WebContentsView 顶栏 (topbar.html)           │        macOS 权限(TCC)
-│    └─ WebContentsView 内容 (加载页 → WebUI)        │  自定义标题栏 / 内缩+圆角
+│    ├─ WebContentsView 内容 (加载页 → WebUI)        │  自定义标题栏 / 内缩+圆角
+│    └─ WebContentsView 右侧面板 (dsh-status.html)   │  可选展开:≈1/5 宽服务面板
 │            ▲ contextBridge                         │
 │            │                                       │
 │        preload.js (最小 IPC 桥,不暴露 Node)         │
@@ -54,14 +55,15 @@ npm start
   2. **打进 App 的 dsh**(打包后是 `app.asar.unpacked/node_modules/@deepseek-ai/dsh`,开发时是项目 `node_modules`)——默认走这个;
   3. PATH 里的 `dsh`(兜底)。
   用 `ELECTRON_RUN_AS_NODE=1` + 当前可执行文件运行,所以**用户机器上不需要装 Node,也不需要装 dsh**。`DSH_HOME` 默认用 App 自己的数据目录(`~/Library/Application Support/DSH Box/dsh-home`),与浏览器 WebUI 的 `~/.dsh` 隔离,避免两个 dsh 服务并发读写同一会话导致弹层闪烁(见「常见问题」)。
-- **顶栏视图** (`src/renderer/topbar.*`) 是独立的自定义标题栏:整条可拖动、双击最大化,左侧留红绿灯空间且**不显示应用名**;右侧 `.actions` 是功能入口区,当前放 **dsh 状态入口**(点击打开「dsh 服务与版本」窗口;有可升级版本时右上角亮红点)和 **GitHub 仓库按钮**(28×28 无背景,悬停显示背景,图标 20×20 随 light/dark 变色,点击在系统浏览器打开 `https://github.com/hifengzy/dsh-box`,纯 HTML 想加就加)。
-- **「dsh 服务与版本」窗口** (`src/renderer/dsh-status.*`) 展示核心依赖 dsh 的运行状态 + 版本列表,并支持**应用内一键升级**:
+- **顶栏视图** (`src/renderer/topbar.*`) 是独立的自定义标题栏:整条可拖动、双击最大化,左侧留红绿灯空间且**不显示应用名**;右侧 `.actions` 是功能入口区,当前放 **dsh 状态入口**和 **GitHub 仓库按钮**(28×28 无背景,悬停显示背景,图标 20×20 随 light/dark 变色,点击在系统浏览器打开 `https://github.com/hifengzy/dsh-box`)。
+- **右侧「dsh 服务与版本」面板**(`src/renderer/dsh-status.*` + `src/main/sidebar-layout.js`):不是独立窗口,而是窗口内右侧面板,**由顶栏状态按钮(或菜单)开关,面板自身无关闭按钮**。展示核心依赖 dsh 的运行状态 + 版本列表,并支持**应用内一键升级**:
+  - **布局策略(内容优先 + 面板拿剩余)**:dsh 内容区保底 ≥900px(实测 dsh 至 720px 均无横向滚动);面板宽 ≈ 内宽 × 20%(≥240px 才可展开,`SIDEBAR_OPEN_MIN_INNER`);窗口过窄(<≈1216px)时按钮禁用提示。纯函数 `computeSidebar()` 单测覆盖。
   - 上卡 = 当前服务:运行中(绿)/ 启动失败(红 + 失败原因)/ 未运行(灰),显示版本、端口、PID、日志路径,按状态提供「启动 / 停止 / 重启」;
-  - 下卡 = 版本列表:每次进入页面自动查一次 npm registry(`https://registry.npmjs.org/@deepseek-ai/dsh` JSON API,非网页),按发布时间倒序,置顶为最新版;仅「比当前运行版本新」的行显示「更新」按钮;
-  - 每次启动应用也会静默查一次 npm,有新版 → 顶栏入口红点;
+  - 下卡 = 版本列表:**每次打开面板(视图重建)自动查一次 npm registry**(`https://registry.npmjs.org/@deepseek-ai/dsh` JSON API,非网页),按发布时间倒序,置顶为最新版;仅「比当前运行版本新」的行显示「更新」按钮;
+  - 每次启动应用也会静默查一次 npm,有新版 → 顶栏入口红点;面板展开时顶栏按钮呈激活态(品牌蓝),再点一次收起、dsh 内容区恢复整宽;
   - 升级链路(`src/main/dsh-upgrade.js`):下载 tarball → **sha512 校验**(registry 的 `dist.integrity`)→ 系统 tar 解压 → 停服 → **原子替换**(旧包留 `.bak` 备份)→ 启服;任何一步失败自动回滚,不留下半截状态。升级会短暂停止服务,完成后自动恢复。
   - 离线/查询失败时回退到上次缓存结果(userData/cache)并提示;中国网络可用 `DSH_NPM_REGISTRY` 切换镜像(如 `https://registry.npmmirror.com`)。
-- **内容视图** 显示加载页,就绪后加载 dsh WebUI;窗口层内缩 8px + 圆角 10px(VS Code 风格),**不碰页面布局**,不会产生滚动条。
+- **内容视图** 显示加载页,就绪后加载 dsh WebUI;窗口层内缩 4px + 圆角 10px,**不碰页面布局**,不会产生滚动条。
 
 ### 窗口外观
 
@@ -87,14 +89,15 @@ src/
     dsh-version.js   运行时 dsh 版本单一事实来源(从实际入口反查 package.json)
     npm-check.js     npm registry 版本查询:缓存 / 离线降级 / semver 比较
     dsh-upgrade.js   应用内升级:下载 → sha512 → 解压 → 原子替换 → 回滚
+    sidebar-layout.js 右侧面板宽度策略纯函数(内容优先 + 面板拿剩余)
   preload/
-    preload.js       contextBridge 最小桥(getInfo / onStatus / retry / checkUpdates / upgrade / …)
+    preload.js       contextBridge 最小桥(getInfo / onStatus / retry / checkUpdates / upgrade / toggleSidebar / …)
   renderer/
     index.html       启动页(等待 dsh 就绪)
     renderer.js      启动页逻辑(状态渲染、重试)
     style.css
     about.html       关于弹窗页面(about.css / about.js 配套)
-    dsh-status.html  「dsh 服务与版本」页(状态卡 + 版本列表 + 更新)
+    dsh-status.html  「dsh 服务与版本」右侧面板(状态卡 + 版本列表 + 更新,窄版竖排)
     dsh-status.js
     dsh-status.css
     topbar.html      自定义顶栏(菜单栏:GitHub / dsh 状态入口 + 红点)
@@ -103,6 +106,7 @@ scripts/
   smoke.js           核心链路冒烟测试(纯 Node):npm run smoke
   dev-launch.mjs     品牌化开发启动:npm start(菜单栏显示 DSH Box)
   make-app-icon.mjs 把任意源图加安全边距后生成 assets/icon.png:npm run make-icon
+  check-dsh-narrow.js dsh 窄宽度可用性扫描(校准 CONTENT_MIN):npm run test:narrow
 assets/
   icon.png           应用图标源图(1024×1024,内容居中安全区;打包时由 electron-builder 自动转成 icns)
   github.svg         GitHub 按钮图标(mask 镂空,随 light/dark 变色)
@@ -117,7 +121,7 @@ docs/
 npm run doctor    # 环境体检:Node / dsh / Electron / 端口
 npm run smoke     # 核心链路冒烟测试(纯 Node,不弹窗口)
 npm run smoke:e2e # 完整 E2E:启动真实 App → 拉起 dsh → 加载 WebUI → 退出
-npm run test:regression # 回归套件:重开窗口 / 加载页可见性 / 端口冲突 / 崩溃反馈 / 菜单栏 Tray / 应用菜单与关于弹窗 / 顶栏 / 服务与版本页 / 升级链路
+npm run test:regression # 回归套件:面板宽度策略 / URL 信任边界 / 重开窗口 / 加载页可见性 / 端口冲突 / 崩溃反馈 / 菜单栏 Tray / 应用菜单与关于弹窗 / 顶栏 / 服务与版本面板 / 升级链路
 ```
 
 > `smoke:e2e` 会短暂弹出应用窗口,并把临时数据放到 `.runtime/`(已 gitignore)。`--no-sandbox` 只用于测试环境(沙箱受限的 CI/容器)。

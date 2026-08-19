@@ -6,7 +6,9 @@
  *   1. 顶栏不再显示应用名「DSH Box」(红绿灯右侧留白,无占位文字);
  *   2. 右侧功能入口区有 GitHub 按钮:28×28、图标 20×20 居中、默认透明背景,
  *      且样式表里存在 :hover 背景规则(light/dark 由 light-dark() 自适应);
- *   3. 点击 GitHub 按钮 → 经外壳桥发出 openExternal,URL 为仓库地址。
+ *   3. 点击 GitHub 按钮 → 经外壳桥发出 openExternal,URL 为仓库地址;
+ *   4. dsh 状态按钮:未激活时无 .status-btn-active;收到 open=true 状态同步
+ *      后点亮;点击 → 触发 toggle-sidebar(面板开关由顶栏按钮控制)。
  *
  * 用法: electron scripts/regression-topbar.js --no-sandbox
  * 前置: assets/github.svg 存在(按钮图标)
@@ -20,14 +22,21 @@ app.setPath("userData", path.resolve(__dirname, "..", ".runtime", "regression", 
 
 const GITHUB_URL = "https://github.com/hifengzy/dsh-box";
 let openedUrl = null;
+let toggled = 0;
+let sidebarOpenFlag = false; // 与推送事件保持同步,点击 toggle 时翻转
 
-// 模拟主进程的外链处理器(不真正打开浏览器)
+// 模拟主进程:外链 / 更新标志 / 面板方向
 ipcMain.handle("shell:open-external", (_event, url) => {
   openedUrl = url;
   return true;
 });
-// 顶栏新入口:更新标志(红点)与打开状态页(本次不点状态按钮,仅防日志噪音)
 ipcMain.handle("dsh:get-update-flag", () => ({ hasUpdate: false }));
+ipcMain.handle("dsh:get-sidebar", () => ({ open: sidebarOpenFlag, canOpen: true }));
+ipcMain.handle("dsh:toggle-sidebar", () => {
+  toggled += 1;
+  sidebarOpenFlag = !sidebarOpenFlag;
+  return { open: sidebarOpenFlag, canOpen: true };
+});
 
 app.whenReady().then(async () => {
   try {
@@ -93,6 +102,34 @@ app.whenReady().then(async () => {
     if (openedUrl !== GITHUB_URL)
       throw new Error(`点击应请求打开 ${GITHUB_URL},实际 ${openedUrl}`);
     console.log(`[4] 点击 GitHub 按钮 → openExternal(${GITHUB_URL}) ✓`);
+
+    // 4. dsh 状态按钮:初始未激活;状态同步 open=true → 点亮;点击 → toggle
+    const btnState = () =>
+      win.webContents.executeJavaScript(`(() => {
+        const b = document.querySelector(".status-btn");
+        return {
+          active: b.classList.contains("status-btn-active"),
+          pressed: b.getAttribute("aria-pressed"),
+          disabled: b.disabled,
+        };
+      })()`);
+    const s0 = await btnState();
+    if (s0.active || s0.pressed !== "false" || s0.disabled)
+      throw new Error(`初始状态应未激活且可用,实际 ${JSON.stringify(s0)}`);
+    // 主进程推送 open=true → 激活
+    sidebarOpenFlag = true; // 让桩与推送一致,点击时才能翻回 false
+    win.webContents.send("dsh:sidebar-state", { open: true, canOpen: true });
+    await new Promise((r) => setTimeout(r, 100));
+    const s1 = await btnState();
+    if (!s1.active || s1.pressed !== "true")
+      throw new Error(`面板展开状态应点亮按钮,实际 ${JSON.stringify(s1)}`);
+    // 点击 → toggle-sidebar(面板开关由顶栏按钮控制)
+    await win.webContents.executeJavaScript(`document.querySelector(".status-btn").click()`);
+    await new Promise((r) => setTimeout(r, 100));
+    if (toggled !== 1) throw new Error(`点击状态按钮应触发 toggle-sidebar,实际 ${toggled} 次`);
+    const s2 = await btnState();
+    if (s2.active) throw new Error("toggle 后 open=false 应熄灭激活态");
+    console.log("[5] dsh 状态按钮:激活态同步 + 点击 toggle-sidebar ✓");
 
     console.log("\nPASS ✓ 顶栏回归通过");
     win.destroy();

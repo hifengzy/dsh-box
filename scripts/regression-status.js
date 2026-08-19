@@ -50,7 +50,7 @@ let state = "ready";
 let upgradedVersion = null;
 let retried = false;
 let stopped = false;
-let openedStatus = false;
+let toggledSidebar = 0;
 
 // 模拟主进程处理器(不真正启动/下载/打开)
 ipcMain.handle("dsh:get-info", () => ({ ...FIXTURE_INFO, state }));
@@ -69,9 +69,10 @@ ipcMain.handle("dsh:stop", async () => {
   return { ...FIXTURE_INFO, state };
 });
 ipcMain.handle("dsh:get-update-flag", () => ({ hasUpdate: true, latest: "0.2.0" }));
-ipcMain.handle("dsh:open-status", () => {
-  openedStatus = true;
-  return true;
+ipcMain.handle("dsh:get-sidebar", () => ({ open: false, canOpen: true }));
+ipcMain.handle("dsh:toggle-sidebar", () => {
+  toggledSidebar += 1;
+  return { open: true, canOpen: true };
 });
 
 const PRELOAD = {
@@ -206,7 +207,7 @@ app.whenReady().then(async () => {
       throw new Error("未运行应显示「启动服务」且不显示「停止」");
     console.log("[5] 未运行:灰点 + 启动服务按钮 ✓");
 
-    // ========== 6. 顶栏:红点可见 + 入口点击(同窗口换页) ==========
+    // ========== 6. 顶栏:红点可见 + 入口点击开/关面板(同窗口换页) ==========
     await win.loadFile(path.join(__dirname, "..", "src", "renderer", "topbar.html"));
     await wait(150);
     const tb = await win.webContents.executeJavaScript(`(() => {
@@ -223,15 +224,14 @@ app.whenReady().then(async () => {
     if (!tb.hasIcon) throw new Error("顶栏缺少 dsh 状态入口按钮");
     await win.webContents.executeJavaScript(`document.getElementById("statusBtn").click()`);
     await wait(100);
-    if (!openedStatus) throw new Error("点顶栏状态入口应打开状态页(openStatusPage)");
-    console.log("[6] 顶栏:红点可见 + 点击打开状态页 ✓");
+    if (toggledSidebar !== 1) throw new Error("点顶栏状态入口应触发 toggle-sidebar(面板开关)");
+    console.log("[6] 顶栏:红点可见 + 点击入口 toggle-sidebar ✓");
 
     console.log("\nPASS ✓ 服务与版本页回归通过");
     win.destroy();
     app.quit();
   } catch (err) {
     console.error("\nFAIL ✗ 服务与版本页回归:", err.message);
-    if (statusWin && !win.isDestroyed()) win.destroy();
     if (win && !win.isDestroyed()) win.destroy();
     app.exit(1);
   }

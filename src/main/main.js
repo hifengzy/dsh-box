@@ -35,6 +35,7 @@ const { showAboutWindow } = require("./about");
 const { getRuntimeDshInfo } = require("./dsh-version");
 const npmCheck = require("./npm-check");
 const { upgradeDsh } = require("./dsh-upgrade");
+const { computeSidebar, SIDEBAR_GAP } = require("./sidebar-layout");
 
 const APP_NAME = "DSH Box";
 const isMac = process.platform === "darwin";
@@ -115,8 +116,10 @@ function main() {
   let lastError = null;
   /** 服务状态机:starting | ready | error | stopped(供状态页与加载页展示) */
   let serviceState = "starting";
-  /** 「dsh 服务与版本」窗口(单例,可关可重开) */
-  let statusWindow = null;
+  /** 右侧「dsh 服务与版本」面板视图(WebContentsView);null = 未展开 */
+  let statusView = null;
+  /** 面板是否展开(顶栏状态按钮的激活态来源) */
+  let sidebarOpen = false;
   /** 是否正在执行升级(防止并发升级) */
   let upgrading = false;
   /** 最近一次 npm 更新检查结果(顶栏红点用) */
@@ -211,9 +214,18 @@ function main() {
     mainWindow.setMenuBarVisibility(false);
     layoutViews();
 
-    mainWindow.on("resize", layoutViews);
-    mainWindow.on("enter-full-screen", () => setTimeout(layoutViews, 120));
-    mainWindow.on("leave-full-screen", () => setTimeout(layoutViews, 120));
+    mainWindow.on("resize", () => {
+      layoutViews();
+      broadcastSidebarState();
+    });
+    mainWindow.on("enter-full-screen", () => setTimeout(() => {
+      layoutViews();
+      broadcastSidebarState();
+    }, 120));
+    mainWindow.on("leave-full-screen", () => setTimeout(() => {
+      layoutViews();
+      broadcastSidebarState();
+    }, 120));
 
     // 顶栏内容
     topBarView.webContents.loadFile(path.join(__dirname, "..", "renderer", "topbar.html"));
@@ -251,6 +263,8 @@ function main() {
       mainWindow = null;
       topBarView = null;
       contentView = null;
+      statusView = null;
+      sidebarOpen = false;
     });
   }
 
@@ -268,26 +282,64 @@ function main() {
     createWindow();
   }
 
-  /** 按当前窗口尺寸摆放两个视图(顶栏通栏;内容区内缩+圆角)。 */
+  /** 当前窗口内容区宽度(不含两侧内缩),供侧边栏宽度计算 */
+  function currentInnerWidth() {
+    if (!mainWindow || mainWindow.isDestroyed()) return 0;
+    return Math.max(0, mainWindow.getContentBounds().width - CONTENT_INSET * 2);
+  }
+
+  /**
+   * 按当前窗口尺寸摆放所有视图:顶栏通栏;内容区 = dsh WebUI,右侧(可选)
+   * 状态面板展开时按「内容优先」(sidebar-layout.js)拆分为两块圆角视图。
+   */
   function layoutViews() {
     if (!mainWindow || mainWindow.isDestroyed() || !topBarView || !contentView) return;
     const { width, height } = mainWindow.getContentBounds();
     topBarView.setBounds({ x: 0, y: 0, width, height: BAR_HEIGHT });
+
+    const innerW = currentInnerWidth();
+    const innerH = Math.max(0, height - BAR_HEIGHT - CONTENT_GAP - CONTENT_INSET);
+    const layout = computeSidebar(innerW);
+
+    // 窗口缩窄导致面板放不下 → 自动收起(不受 toggle 触发,静默处理)
+    if (sidebarOpen && !layout.canOpen) {
+      sidebarOpen = false;
+      if (statusView) {
+        try {
+          mainWindow.contentView.removeChildView(statusView);
+        } catch {
+          /* 视图可能已被窗口清理 */
+        }
+        statusView = null;
+      }
+    }
+
+    const sidebarW = sidebarOpen ? layout.sidebarW : 0;
+    const contentW = sidebarOpen ? layout.contentW : innerW;
     contentView.setBounds({
       x: CONTENT_INSET,
       y: BAR_HEIGHT + CONTENT_GAP,
-      width: Math.max(0, width - CONTENT_INSET * 2),
-      height: Math.max(0, height - BAR_HEIGHT - CONTENT_GAP - CONTENT_INSET),
+      width: contentW,
+      height: innerH,
     });
+
+    if (sidebarOpen && statusView) {
+      statusView.setBounds({
+        x: CONTENT_INSET + contentW + SIDEBAR_GAP,
+        y: BAR_HEIGHT + CONTENT_GAP,
+        width: Math.max(0, innerW - contentW - SIDEBAR_GAP),
+        height: innerH,
+      });
+    }
   }
 
-  // ---------- 状态广播(发给内容视图 + 服务状态窗口) ----------
+  // ---------- 状态广播(发给内容视图 + 右侧状态面板) ----------
   function broadcastStatus(status) {
     if (contentView && !contentView.webContents.isDestroyed()) {
       contentView.webContents.send("dsh:status", status);
     }
-    if (statusWindow && !statusWindow.isDestroyed()) {
-      statusWindow.webContents.send("dsh:status", status);
+    if (statusView && !statusView.webContents.isDestroyed()) {
+      statusView.webContents.send("dsh:status", status);
     }
   }
 
@@ -452,42 +504,57 @@ function main() {
     await startServer();
   }
 
-  // ---------- 「dsh 服务与版本」窗口(单例) ----------
-  function openStatusWindow() {
-    // 显示时机:用 did-finish-load 而非 ready-to-show。
-    // 实测(2026-08-19):本组合(show:false + 透明背景)下隐藏窗口不产出
-    // 首帧,ready-to-show 永远不触发——第一次点击只建窗、窗口永不显示,
-    // 第二次点击的 show() 才迫使首帧、窗口才出现(即「要点击两次」的根因)。
-    // did-finish-load 在隐藏状态下稳定触发,show() 后页面已就绪、无白闪。
-    if (statusWindow && !statusWindow.isDestroyed()) {
-      if (statusWindow.isMinimized()) statusWindow.restore();
-      statusWindow.show();
-      statusWindow.focus();
-      return statusWindow;
+  // ---------- 右侧「dsh 服务与版本」面板(顶栏按钮/菜单控制开关) ----------
+  /** @returns {{ open: boolean, canOpen: boolean }} 当前面板状态 */
+  function sidebarState() {
+    const layout = computeSidebar(currentInnerWidth());
+    return { open: sidebarOpen, canOpen: layout.canOpen };
+  }
+
+  function broadcastSidebarState() {
+    if (topBarView && !topBarView.webContents.isDestroyed()) {
+      topBarView.webContents.send("dsh:sidebar-state", sidebarState());
     }
-    statusWindow = new BrowserWindow({
-      title: "dsh 服务与版本",
-      width: 680,
-      height: 640,
-      minWidth: 560,
-      minHeight: 480,
-      show: false,
-      // 同主窗口:未聚焦时首次点击也交给内容
-      acceptFirstMouse: true,
-      // 隐藏标题栏但保留红绿灯,页面自带头部
-      ...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" } : {}),
-      // 内容全不透明,不用玻璃;用与页面 --bg 一致的实色,避免显示瞬间闪色
-      backgroundColor: nativeTheme.shouldUseDarkColors ? "#151517" : "#f9fafb",
-      webPreferences: VIEW_PRELOAD,
-    });
-    statusWindow.on("closed", () => {
-      statusWindow = null;
-    });
-    statusWindow.webContents.once("did-finish-load", () => {
-      if (statusWindow && !statusWindow.isDestroyed()) statusWindow.show();
-    });
-    statusWindow.loadFile(path.join(__dirname, "..", "renderer", "dsh-status.html"));
-    return statusWindow;
+  }
+
+  function openStatusSidebar() {
+    if (statusView) return true; // 已展开
+    if (!sidebarState().canOpen) return false; // 窗口太窄,不展开
+    sidebarOpen = true;
+    statusView = new WebContentsView({ webPreferences: VIEW_PRELOAD });
+    // 面板内容不透明,主题适配底色(页面自带同色背景,避免首帧闪色)
+    statusView.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#151517" : "#f9fafb");
+    statusView.setBorderRadius(CONTENT_RADIUS);
+    mainWindow.contentView.addChildView(statusView);
+    layoutViews();
+    // 每次打开都重建视图 → 进入面板必然重新查 npm(符合需求)
+    statusView.webContents.loadFile(path.join(__dirname, "..", "renderer", "dsh-status.html"));
+    broadcastSidebarState();
+    return true;
+  }
+
+  function closeStatusSidebar({ silent = false } = {}) {
+    if (!sidebarOpen && !statusView) return;
+    sidebarOpen = false;
+    if (statusView) {
+      try {
+        mainWindow?.contentView?.removeChildView(statusView);
+      } catch {
+        /* 视图可能已被窗口清理 */
+      }
+      statusView = null;
+    }
+    if (!silent) layoutViews();
+    broadcastSidebarState();
+  }
+
+  function toggleStatusSidebar() {
+    if (sidebarOpen) {
+      closeStatusSidebar();
+      return sidebarState();
+    }
+    openStatusSidebar();
+    return sidebarState();
   }
 
   // ---------- npm 更新检查(启动查一次 → 顶栏红点) ----------
@@ -560,11 +627,10 @@ function main() {
   });
   // 顶栏红点查询(启动时已静默查过一次)
   ipcMain.handle("dsh:get-update-flag", () => lastUpdateCheck ?? { hasUpdate: false });
-  // 打开「dsh 服务与版本」窗口(顶栏入口 / 菜单)
-  ipcMain.handle("dsh:open-status", () => {
-    openStatusWindow();
-    return true;
-  });
+  // 打开/关闭右侧「dsh 服务与版本」面板(顶栏按钮 / 菜单共用)
+  ipcMain.handle("dsh:toggle-sidebar", () => toggleStatusSidebar());
+  // 面板当前状态(顶栏按钮激活态/禁用与红点无关)
+  ipcMain.handle("dsh:get-sidebar", () => sidebarState());
   // 停止服务(状态页「停止」按钮);停止后加载页与状态页都显示「未运行」
   ipcMain.handle("dsh:stop", async () => {
     if (server) await server.stop();
@@ -635,7 +701,7 @@ function main() {
   function buildMenu() {
     appMenu = createAppMenu({
       onAbout: () => showAboutWindow({ parent: mainWindow }),
-      onOpenStatus: () => openStatusWindow(),
+      onOpenStatus: () => toggleStatusSidebar(),
     });
     Menu.setApplicationMenu(appMenu);
   }

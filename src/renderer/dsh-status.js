@@ -1,14 +1,15 @@
 "use strict";
 
 /**
- * dsh-status.js — 「dsh 服务与版本」页逻辑。
+ * dsh-status.js — 「dsh 服务与版本」右侧面板逻辑。
  *
+ * 面板由顶栏状态按钮(或菜单)开关,自身不提供关闭按钮。
  * 数据全部经 preload 桥(window.dsh.*):
  *   - 服务状态:getInfo() 拉一次 + onStatus 订阅主进程实时推送
  *     (状态机:starting | ready | error | stopped);
- *   - 版本列表:进入页面时 checkUpdates() 查一次 npm(registry JSON API),
- *     按发布时间倒序;每行带「最新 / 当前」徽标;比当前运行版本新的行
- *     显示「更新」按钮;
+ *   - 版本列表:每次打开面板(视图新建)时 checkUpdates() 查一次 npm
+ *     (registry JSON API),按发布时间倒序;每行带「最新 / 当前」徽标;
+ *     比当前运行版本新的行显示「更新」按钮;
  *   - 升级:upgrade(version) → 主进程 停服 → 下载/校验/原子替换 → 恢复。
  */
 
@@ -122,6 +123,10 @@ function renderVersionList(res) {
     const el = document.createElement("div");
     el.className = "vrow";
 
+    // 第一段:版本号 + 徽标 + 更新按钮(按钮靠右)
+    const top = document.createElement("div");
+    top.className = "vrow-top";
+
     const ver = document.createElement("span");
     ver.className = "v-version";
     ver.textContent = row.version;
@@ -141,11 +146,7 @@ function renderVersionList(res) {
       badges.appendChild(b);
     }
 
-    const date = document.createElement("span");
-    date.className = "v-date";
-    date.textContent = fmtDate(row.publishedAt);
-
-    el.append(ver, badges, date);
+    top.append(ver, badges);
 
     // 只有比当前运行版本新的版本才显示「更新」按钮
     if (row.hasUpdate) {
@@ -153,9 +154,15 @@ function renderVersionList(res) {
       btn.className = "btn btn-primary v-update";
       btn.textContent = "更新";
       btn.addEventListener("click", () => doUpgrade(row.version, btn));
-      el.appendChild(btn);
+      top.appendChild(btn);
     }
 
+    // 第二段:发布日期
+    const date = document.createElement("div");
+    date.className = "v-date";
+    date.textContent = fmtDate(row.publishedAt);
+
+    el.append(top, date);
     els.versionList.appendChild(el);
   }
 }

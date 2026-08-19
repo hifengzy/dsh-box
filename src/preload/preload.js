@@ -56,6 +56,16 @@ contextBridge.exposeInMainWorld("dsh", {
   /** 停止 dsh 服务(状态页「停止」按钮) */
   stopServer: () => ipcRenderer.invoke("dsh:stop"),
 
-  /** 打开「dsh 服务与版本」窗口(顶栏入口 / 菜单) */
-  openStatusPage: () => ipcRenderer.invoke("dsh:open-status"),
+  /** 切换右侧「dsh 服务与版本」面板开/关;返回 { open, canOpen } */
+  toggleSidebar: () => ipcRenderer.invoke("dsh:toggle-sidebar"),
+
+  /** 查询面板当前状态(顶栏按钮激活态 / 窗口太窄禁用) */
+  getSidebar: () => ipcRenderer.invoke("dsh:get-sidebar"),
+
+  /** 订阅面板状态变化(顶栏按钮实时刷新);返回取消订阅函数 */
+  onSidebar: (callback) => {
+    const listener = (_event, state) => callback(state);
+    ipcRenderer.on("dsh:sidebar-state", listener);
+    return () => ipcRenderer.removeListener("dsh:sidebar-state", listener);
+  },
 });

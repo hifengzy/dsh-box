@@ -10,9 +10,9 @@
     <link rel="stylesheet" href="./dsh-status.css" />
   </head>
   <body>
-    <!-- 头部:窗口为 hiddenInset(保留红绿灯),左侧留出红绿灯空间 -->
-    <header class="page-header">
-      <h1>dsh 服务与版本</h1>
+    <!-- 面板头部:位于窗口顶栏下方的面板顶部;不开/关按钮,开关由顶栏状态按钮控制 -->
+    <header class="panel-header">
+      <span class="panel-title">dsh 服务与版本</span>
       <div class="header-right">
         <span class="last-check" id="lastCheck"></span>
         <button class="btn btn-ghost" id="refreshBtn" type="button">刷新</button>
@@ -22,13 +22,10 @@
     <main class="content">
       <!-- 当前服务卡 -->
       <section class="card">
-        <div class="card-title-row">
-          <h2>当前服务</h2>
-          <span class="chip" id="versionChip"></span>
-        </div>
         <div class="status-row">
           <span class="dot" id="statusDot"></span>
           <span class="status-label" id="statusLabel"></span>
+          <span class="chip" id="versionChip"></span>
         </div>
         <div class="meta" id="metaLine"></div>
         <div class="meta mono" id="homeLine"></div>
@@ -49,7 +46,7 @@
       <section class="card">
         <div class="card-title-row">
           <h2>版本列表</h2>
-          <span class="source">来源: npm registry</span>
+          <span class="source">npm registry</span>
         </div>
         <div class="banner" id="updateBanner" hidden>
           <span>发现新版本</span><span class="banner-version" id="bannerVersion"></span>

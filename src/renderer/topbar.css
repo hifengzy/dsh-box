@@ -106,3 +106,18 @@ body {
   box-shadow: 0 0 0 1.5px light-dark(rgba(255, 255, 255, 0.85), rgba(20, 26, 36, 0.85));
   pointer-events: none;
 }
+
+/* 状态按钮激活态:面板展开时点亮(品牌蓝图标 + 淡色底),与红点互不干扰 */
+.status-btn.status-btn-active {
+  background-color: var(--bar-active);
+}
+
+.status-btn.status-btn-active .status-icon {
+  background-color: light-dark(rgb(65, 118, 230), rgb(103, 158, 254));
+}
+
+/* 窗口过窄无法展开面板时:置灰禁用 */
+.status-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

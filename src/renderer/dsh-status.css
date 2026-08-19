@@ -1,6 +1,8 @@
-/* dsh-status.css — 「dsh 服务与版本」页,延续 dsh WebUI 的设计体系:
- *   neutral-bluish 中性色(50~1000 梯度)+ DeepSeek 品牌蓝 + 状态色,
- *   浅色/深色各一套,经 light-dark() 自适应(nativeTheme 跟随 dsh UI 主题)。
+/* dsh-status.css — 「dsh 服务与版本」右侧面板,延续 dsh WebUI 的设计体系:
+ *   neutral-bluish 中性色 + DeepSeek 品牌蓝 + 状态色,浅色/深色各一套,
+ *   经 light-dark() 自适应(nativeTheme 跟随 dsh UI 主题)。
+ * 面板特性:竖排窄版(240~380px 宽),不带头部关闭按钮(开关只靠顶栏),
+ * 无独立窗口概念(不再为红绿灯留空间、无拖拽区)。
  * 数据来源全部走 IPC(preload 桥),本页不发起任何网络请求。 */
 
 :root {
@@ -30,8 +32,8 @@
   --warn: light-dark(rgb(221, 134, 41), rgb(245, 158, 11));
   --idle: light-dark(rgb(151, 157, 166), rgb(129, 133, 140));
 
-  --radius-lg: 12px;
-  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-md: 7px;
 }
 
 * {
@@ -53,97 +55,93 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font);
-  font-size: 13px;
+  font-size: 12px;
   -webkit-font-smoothing: antialiased;
   overflow-y: auto;
 }
 
-/* ---------- 头部(hiddenInset 窗口,左侧给红绿灯留位) ---------- */
-.page-header {
+/* ---------- 面板头部(窄条:标题 + 检查时间 + 刷新;无关闭按钮) ---------- */
+.panel-header {
   position: sticky;
   top: 0;
   z-index: 10;
-  height: 40px;
+  height: 36px;
   display: flex;
   align-items: center;
-  padding: 0 16px 0 78px;
+  gap: 8px;
+  padding: 0 10px;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
-  -webkit-app-region: drag;
   user-select: none;
 }
 
-.page-header h1 {
-  font-size: 13px;
+.panel-title {
+  font-size: 12px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .header-right {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 10px;
-  -webkit-app-region: no-drag;
+  gap: 8px;
 }
 
 .last-check {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 110px;
 }
 
 /* ---------- 内容 ---------- */
 .content {
-  padding: 16px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
 }
 
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 14px 16px;
+  padding: 10px 12px;
 }
 
 .card-title-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .card-title-row h2 {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
 }
 
 .source {
   margin-left: auto;
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-muted);
 }
 
 /* ---------- 当前服务卡 ---------- */
-.chip {
-  font-family: var(--mono);
-  font-size: 11px;
-  padding: 2px 9px;
-  border-radius: 999px;
-  background: var(--brand-weak);
-  color: var(--brand);
-}
-
 .status-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 2px 0 10px;
+  gap: 6px;
+  margin-bottom: 8px;
+  flex-wrap: wrap; /* 窄面板:版本 chip 放不下时自动折行 */
 }
 
 .dot {
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
   flex: none;
 }
@@ -176,46 +174,55 @@ body {
 }
 
 .status-label {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
 }
 
+.chip {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--brand-weak);
+  color: var(--brand);
+}
+
 .meta {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-secondary);
-  line-height: 1.8;
+  line-height: 1.7;
   word-break: break-all;
 }
 
 .meta.mono {
   font-family: var(--mono);
-  font-size: 11px;
-  line-height: 1.7;
+  font-size: 10px;
+  line-height: 1.6;
 }
 
 .error-box {
-  margin-top: 10px;
-  padding: 10px 12px;
+  margin-top: 8px;
+  padding: 8px 10px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--err) 8%, var(--surface));
 }
 
 .error-title {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--err);
-  margin-bottom: 4px;
+  margin-bottom: 3px;
 }
 
 .error-detail {
   font-family: var(--mono);
-  font-size: 11px;
-  line-height: 1.6;
+  font-size: 10px;
+  line-height: 1.5;
   color: var(--text-secondary);
   white-space: pre-wrap;
   word-break: break-all;
-  max-height: 140px;
+  max-height: 110px;
   overflow-y: auto;
   user-select: text;
 }
@@ -223,12 +230,13 @@ body {
 .actions-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 12px;
+  gap: 6px;
+  margin-top: 10px;
+  flex-wrap: wrap;
 }
 
 .hint {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-muted);
 }
 
@@ -236,8 +244,8 @@ body {
 .btn {
   appearance: none;
   font-family: var(--font);
-  font-size: 12px;
-  padding: 6px 14px;
+  font-size: 11px;
+  padding: 4px 10px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-strong);
   background: transparent;
@@ -269,17 +277,17 @@ body {
   border-color: transparent;
 }
 
-/* ---------- 版本列表卡 ---------- */
+/* ---------- 版本列表卡(窄版:每行两段,版本与操作同行、日期另起) ---------- */
 .banner {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-bottom: 10px;
-  padding: 8px 12px;
+  margin-bottom: 8px;
+  padding: 6px 10px;
   border-radius: var(--radius-md);
   background: var(--brand-weak);
   color: var(--brand);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .banner-version {
@@ -288,12 +296,12 @@ body {
 }
 
 .offline {
-  margin-bottom: 10px;
-  padding: 8px 12px;
+  margin-bottom: 8px;
+  padding: 6px 10px;
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--warn) 10%, var(--surface));
   color: var(--warn);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .version-table {
@@ -303,9 +311,9 @@ body {
 
 .vrow {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 4px;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 2px;
   border-top: 1px solid var(--border);
 }
 
@@ -313,21 +321,29 @@ body {
   border-top: none;
 }
 
+.vrow-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .v-version {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
-  min-width: 96px;
+  flex: none;
 }
 
 .v-badges {
   display: flex;
-  gap: 6px;
+  gap: 4px;
+  flex: none;
 }
 
 .badge {
-  font-size: 10px;
-  padding: 1px 7px;
+  font-size: 9px;
+  padding: 1px 6px;
   border-radius: 999px;
 }
 
@@ -341,12 +357,12 @@ body {
   color: var(--text-secondary);
 }
 
-.v-date {
+.v-update {
   margin-left: auto;
-  font-size: 11px;
-  color: var(--text-muted);
+  flex: none;
 }
 
-.v-update {
-  flex: none;
+.v-date {
+  font-size: 10px;
+  color: var(--text-muted);
 }
