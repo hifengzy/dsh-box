@@ -36,6 +36,7 @@ const { getRuntimeDshInfo } = require("./dsh-version");
 const npmCheck = require("./npm-check");
 const { upgradeDsh } = require("./dsh-upgrade");
 const { computeSidebar, SIDEBAR_GAP } = require("./sidebar-layout");
+const { SIDEBAR_ANIM_MS, easeSidebar } = require("./sidebar-anim");
 
 const APP_NAME = "DSH Box";
 const isMac = process.platform === "darwin";
@@ -120,6 +121,8 @@ function main() {
   let statusView = null;
   /** 面板是否展开(顶栏状态按钮的激活态来源) */
   let sidebarOpen = false;
+  /** 面板展开/收起动画句柄(帧驱动 setBounds);null = 无动画进行中 */
+  let sidebarAnim = null;
   /** 是否正在执行升级(防止并发升级) */
   let upgrading = false;
   /** 最近一次 npm 更新检查结果(顶栏红点用) */
@@ -294,6 +297,8 @@ function main() {
    */
   function layoutViews() {
     if (!mainWindow || mainWindow.isDestroyed() || !topBarView || !contentView) return;
+    // 缩放/全屏切换 = 快照布局,取消进行中的展开/收起动画
+    cancelSidebarAnimation();
     const { width, height } = mainWindow.getContentBounds();
     topBarView.setBounds({ x: 0, y: 0, width, height: BAR_HEIGHT });
 
@@ -301,7 +306,7 @@ function main() {
     const innerH = Math.max(0, height - BAR_HEIGHT - CONTENT_GAP - CONTENT_INSET);
     const layout = computeSidebar(innerW, { open: sidebarOpen });
 
-    // 窗口缩窄导致面板放不下(或内容区跌破保底)→ 自动收起(不受 toggle 触发)
+    // 窗口缩窄导致面板放不下(或内容区跌破保底)→ 自动收起(快照,不受 toggle 触发)
     if (sidebarOpen && layout.shouldClose) {
       sidebarOpen = false;
       if (statusView) {
@@ -312,6 +317,15 @@ function main() {
         }
         statusView = null;
       }
+    }
+    // 收起动画进行中遇到缩放 → 直接清理残留视图(动画帧已被取消)
+    if (!sidebarOpen && statusView) {
+      try {
+        mainWindow.contentView.removeChildView(statusView);
+      } catch {
+        /* 视图可能已被窗口清理 */
+      }
+      statusView = null;
     }
 
     const sidebarW = sidebarOpen ? layout.sidebarW : 0;
@@ -518,8 +532,80 @@ function main() {
     }
   }
 
+  /**
+   * 按给定面板宽度摆位(动画逐帧调用):dsh 内容区占左侧,面板占右侧。
+   * 宽度按当前窗口内宽钳制,避免动画帧超过可用范围。
+   * @param {number} w 面板目标宽度(px)
+   */
+  function applySidebarWidth(w) {
+    if (!mainWindow || mainWindow.isDestroyed() || !contentView) return;
+    const { width, height } = mainWindow.getContentBounds();
+    const innerW = currentInnerWidth();
+    const innerH = Math.max(0, height - BAR_HEIGHT - CONTENT_GAP - CONTENT_INSET);
+    const wClamped = Math.max(0, Math.min(w, innerW - SIDEBAR_GAP));
+    const contentW = Math.max(0, innerW - wClamped - SIDEBAR_GAP);
+    contentView.setBounds({
+      x: CONTENT_INSET,
+      y: BAR_HEIGHT + CONTENT_GAP,
+      width: contentW,
+      height: innerH,
+    });
+    if (statusView && !statusView.webContents.isDestroyed()) {
+      statusView.setBounds({
+        x: CONTENT_INSET + contentW + SIDEBAR_GAP,
+        y: BAR_HEIGHT + CONTENT_GAP,
+        width: wClamped,
+        height: innerH,
+      });
+    }
+  }
+
+  function cancelSidebarAnimation() {
+    sidebarAnim = null; // 帧回调按 identity 检查,置空即失效
+  }
+
+  /**
+   * 启动面板宽度动画(300ms,与 dsh 左侧边栏同款缓动 cubic-bezier(.4,0,.2,1))。
+   * @param {number} fromW 起始宽度
+   * @param {number} toW 目标宽度
+   * @param {() => void} [onDone] 动画结束回调(如收起后移除视图)
+   */
+  function startSidebarAnimation(fromW, toW, onDone) {
+    cancelSidebarAnimation();
+    if (Math.abs(toW - fromW) < 1) {
+      applySidebarWidth(toW);
+      onDone?.();
+      return;
+    }
+    const startAt = Date.now();
+    const anim = { startAt, fromW, toW, onDone };
+    sidebarAnim = anim;
+    const step = () => {
+      if (sidebarAnim !== anim) return; // 被新动画/取消/缩放顶替
+      const t = Math.min(1, (Date.now() - startAt) / SIDEBAR_ANIM_MS);
+      applySidebarWidth(Math.round(fromW + (toW - fromW) * easeSidebar(t)));
+      if (t < 1) {
+        setTimeout(step, 16);
+      } else {
+        sidebarAnim = null;
+        onDone?.();
+      }
+    };
+    step();
+  }
+
   function openStatusSidebar() {
-    if (statusView) return true; // 已展开
+    if (statusView) {
+      // 可能正处于「收起动画」中:取消收起,从当前宽度动画回目标
+      if (!sidebarOpen) {
+        const from = statusView.getBounds().width;
+        cancelSidebarAnimation();
+        sidebarOpen = true;
+        startSidebarAnimation(from, computeSidebar(currentInnerWidth(), { open: true }).sidebarW);
+        broadcastSidebarState();
+      }
+      return true;
+    }
     if (!sidebarState().canOpen) return false; // 窗口太窄,不展开
     sidebarOpen = true;
     statusView = new WebContentsView({ webPreferences: VIEW_PRELOAD });
@@ -527,26 +613,33 @@ function main() {
     statusView.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#151517" : "#f9fafb");
     statusView.setBorderRadius(CONTENT_RADIUS);
     mainWindow.contentView.addChildView(statusView);
-    layoutViews();
+    // 先按 0 宽摆位,再从 0 动画展开到目标宽度
+    applySidebarWidth(0);
     // 每次打开都重建视图 → 进入面板必然重新查 npm(符合需求)
     statusView.webContents.loadFile(path.join(__dirname, "..", "renderer", "dsh-status.html"));
     broadcastSidebarState();
+    startSidebarAnimation(0, computeSidebar(currentInnerWidth(), { open: true }).sidebarW);
     return true;
   }
 
-  function closeStatusSidebar({ silent = false } = {}) {
+  function closeStatusSidebar() {
     if (!sidebarOpen && !statusView) return;
     sidebarOpen = false;
-    if (statusView) {
-      try {
-        mainWindow?.contentView?.removeChildView(statusView);
-      } catch {
-        /* 视图可能已被窗口清理 */
-      }
-      statusView = null;
-    }
-    if (!silent) layoutViews();
     broadcastSidebarState();
+    if (statusView) {
+      const from = statusView.getBounds().width;
+      startSidebarAnimation(from, 0, () => {
+        // 动画结束:移除视图(期间窗口缩放会被 layoutViews 直接快照清理)
+        if (statusView) {
+          try {
+            mainWindow?.contentView?.removeChildView(statusView);
+          } catch {
+            /* 视图可能已被窗口清理 */
+          }
+          statusView = null;
+        }
+      });
+    }
   }
 
   function toggleStatusSidebar() {

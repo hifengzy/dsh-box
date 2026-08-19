@@ -108,4 +108,27 @@ console.log("[7] 宽度守恒与下限");
   }
 }
 
+console.log("[8] 展开/收起动画规格(与 dsh 左侧边栏一致)");
+{
+  const { SIDEBAR_ANIM_MS, easeSidebar } = require("../src/main/sidebar-anim");
+  assert(SIDEBAR_ANIM_MS === 300, `时长应为 300ms(与 dsh --ds-transition-duration-slow 一致),实际 ${SIDEBAR_ANIM_MS}`);
+  assert(easeSidebar(0) === 0 && easeSidebar(1) === 1, "缓动端点 0/1 正确");
+  // 单调性(101 个采样)
+  let monotonic = true;
+  let prev = -1;
+  for (let i = 0; i <= 100; i++) {
+    const v = easeSidebar(i / 100);
+    if (v < prev - 1e-9) monotonic = false;
+    prev = v;
+  }
+  assert(monotonic, "缓动应单调递增");
+  // 中点位与 cubic-bezier(.4,0,.2,1) 解析值一致(y(0.5)≈0.7756,前快后慢)
+  const mid = easeSidebar(0.5);
+  assert(Math.abs(mid - 0.7756) < 0.001, `ease(0.5) 应为 ≈0.7756(与解析值一致),实际 ${mid}`);
+  // 与 CSS 变量值同源:对比直接构造的 cubic-bezier
+  const { cubicBezier } = require("../src/main/sidebar-anim");
+  const ref = cubicBezier(0.4, 0, 0.2, 1);
+  assert(Math.abs(ref(0.5) - easeSidebar(0.5)) < 1e-12, "easeSidebar 即 cubic-bezier(.4,0,.2,1)");
+}
+
 console.log("\nPASS ✓ 面板宽度策略单测通过");
