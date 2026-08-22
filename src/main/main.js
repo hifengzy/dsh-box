@@ -623,6 +623,14 @@ function main() {
     // 面板内容不透明,主题适配底色(页面自带同色背景,避免首帧闪色)
     statusView.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#151517" : "#f9fafb");
     statusView.setBorderRadius(CONTENT_RADIUS);
+    // 面板里的链接(DSH 仓库 / 插件仓库)一律交系统默认浏览器,绝不在
+    // Electron 里开新窗口(target="_blank" 兜底拦截,与内容视图同策略)
+    statusView.webContents.setWindowOpenHandler(({ url }) => {
+      if (url.startsWith("http://") || url.startsWith("https://")) {
+        shell.openExternal(url);
+      }
+      return { action: "deny" };
+    });
     mainWindow.contentView.addChildView(statusView);
     // 先按 0 宽摆位,再从 0 动画展开到目标宽度
     applySidebarWidth(0);

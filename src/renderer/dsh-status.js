@@ -296,6 +296,18 @@ async function doUpgrade(version, btn) {
 
 // ---------- 事件 ----------
 
+/** 链接(DSH 仓库 / 插件仓库)用系统默认浏览器打开,不在 Electron 窗口内导航 */
+function bindExternalLink(el) {
+  el.addEventListener("click", (event) => {
+    event.preventDefault();
+    const href = el.getAttribute("href");
+    if (href) window.dsh.openExternal(href).catch(() => {});
+  });
+}
+
+bindExternalLink(els.dshVersionLink);
+bindExternalLink(els.pluginNameLink);
+
 els.startBtn.addEventListener("click", async () => {
   if (upgrading) return;
   els.startBtn.disabled = true;

@@ -69,6 +69,7 @@ let retried = false;
 let stopped = false;
 let toggledSidebar = 0;
 let toggledPluginPanel = null;
+let openedExternal = null;
 // 插件板块夹具:可变状态驱动各组断言
 let pluginInstalled = null; // null = 未安装
 let pluginLatest = "0.15.2";
@@ -123,6 +124,11 @@ ipcMain.handle("dsh:plugin-install", async (_e, v) => {
 ipcMain.handle("dsh:toggle-plugin-panel", (_e, which) => {
   toggledPluginPanel = which;
   return { ok: true };
+});
+// 链接 → 系统浏览器(记录 URL 供断言)
+ipcMain.handle("shell:open-external", (_e, url) => {
+  openedExternal = url;
+  return true;
 });
 
 const PRELOAD = {
@@ -538,7 +544,20 @@ app.whenReady().then(async () => {
     if (!linkRules.hoverRule) throw new Error(".row-link:hover 应有 text-decoration: underline 规则");
     if (linkRules.dshLink.deco !== "none") throw new Error("链接默认不应有下划线");
     if (linkRules.pluginLink.cursor !== "pointer") throw new Error("插件名链接应可点击(cursor:pointer)");
-    console.log("[11] 链接:DSH 版本 / 插件名 → 仓库链接 + hover 下划线规则 ✓");
+    // 点击 → 系统浏览器(openExternal),页面不导航
+    await win.webContents.executeJavaScript(`document.getElementById("dshVersionLink").click(); undefined;`);
+    await wait(100);
+    if (openedExternal !== "https://github.com/deepseek-ai/deepseek-harness/")
+      throw new Error(`DSH 版本链接应走 openExternal,实际 ${openedExternal}`);
+    const urlAfterDshClick = win.webContents.getURL();
+    await win.webContents.executeJavaScript(`document.getElementById("pluginNameLink").click(); undefined;`);
+    await wait(100);
+    if (openedExternal !== "https://github.com/omdsh-dev/DSH-better-sidebar")
+      throw new Error(`插件名链接应走 openExternal,实际 ${openedExternal}`);
+    const urlAfterPluginClick = win.webContents.getURL();
+    if (!urlAfterDshClick.startsWith("file:") || !urlAfterPluginClick.startsWith("file:"))
+      throw new Error("点击链接不应在 Electron 内导航(应保持 file:// 面板)");
+    console.log("[11] 链接:仓库链接 + hover 下划线 + 点击走系统浏览器(不导航) ✓");
 
     console.log("\nPASS ✓ 服务状态与版本面板回归通过");
     win.destroy();
