@@ -2,14 +2,15 @@
 "use strict";
 
 /**
- * regression-status.js — 「dsh 服务与版本」页 + 顶栏入口回归测试(真实 Electron):
- *   1. 运行中:绿色状态点 + dsh 版本 + 端口/PID;显示「停止/重启」而非「启动」;
- *   2. 版本列表:按发布时间倒序,「最新/当前」徽标正确,只给比当前新的版本
- *      显示「更新」按钮;有新版时横幅可见;
- *   3. 点「更新」→ 经桥发出 upgrade(目标版本);
- *   4. 启动失败:红色 + 失败原因 + 「启动服务」按钮;点击 → retry;
- *   5. 未运行:灰色 + 「启动服务」按钮;
- *   6. 顶栏:更新标志为真 → 入口红点可见;点入口 → openStatusPage。
+ * regression-status.js — 「服务状态 + DSH 版本」面板 + 顶栏入口回归测试(真实 Electron):
+ *   1. 运行中:「运行中」徽标(绿) + DSH 版本 + 端口/PID;不显示「启动服务」;
+ *   2. 版本列表:按发布时间倒序,首行标「最新」,当前版本标「当前」;
+ *      只给比当前新的版本显示「更新」按钮;
+ *   3. 默认只显示最近 10 条,「更多」按钮分页加载旧版本,到底隐藏;
+ *   4. 查询失败:「网络服务异常」+「重试」;
+ *   5. 点「更新」→ 经桥发出 upgrade(目标版本);
+ *   6. 停止:灰「停止」徽标 + 「启动服务」按钮(不显示停止/重启);点击 → retry;
+ *   7. 顶栏:更新标志为真 → 入口红点可见;点入口 → toggleSidebar。
  *
  * 用法: electron scripts/regression-status.js --no-sandbox
  * 说明:测试固定 nativeTheme=light,断言浅色 token 的具体值,结果确定。
@@ -33,15 +34,28 @@ const FIXTURE_INFO = {
   message: "服务运行中",
 };
 
+// 12 条版本 → 验证默认 10 条 + 「更多」分页(最后一条是最旧)
+const VERSIONS = [];
+for (let i = 12; i >= 1; i--) {
+  const isCurrent = i === 6;
+  const version = isCurrent ? "0.1.0-rc.6" : `0.1.0-rc.${i}`;
+  VERSIONS.push({
+    version,
+    // 越界日期(Date.UTC 自动进位:2026-07-32 → 2026-08-01),保证按序递增
+    publishedAt: new Date(Date.UTC(2026, 6, 20 + i)).toISOString(),
+    isLatest: i === 12,
+    isCurrent,
+    hasUpdate: i > 6,
+    tarball: null,
+    integrity: null,
+  });
+}
+
 const FIXTURE_VERSIONS = {
-  latest: "0.2.0",
+  latest: "0.1.0-rc.12",
   runtime: "0.1.0-rc.6",
   hasUpdate: true,
-  rows: [
-    { version: "0.2.0", publishedAt: "2026-08-20T00:00:00.000Z", isLatest: true, isCurrent: false, hasUpdate: true, tarball: null, integrity: null },
-    { version: "0.1.0", publishedAt: "2026-08-01T00:00:00.000Z", isLatest: false, isCurrent: false, hasUpdate: true, tarball: null, integrity: null },
-    { version: "0.1.0-rc.6", publishedAt: "2026-07-20T00:00:00.000Z", isLatest: false, isCurrent: true, hasUpdate: false, tarball: null, integrity: null },
-  ],
+  rows: VERSIONS,
   checkedAt: "2026-08-21T12:00:00.000Z",
   fromCache: false,
 };
@@ -68,7 +82,7 @@ ipcMain.handle("dsh:stop", async () => {
   state = "stopped";
   return { ...FIXTURE_INFO, state };
 });
-ipcMain.handle("dsh:get-update-flag", () => ({ hasUpdate: true, latest: "0.2.0" }));
+ipcMain.handle("dsh:get-update-flag", () => ({ hasUpdate: true, latest: "0.1.0-rc.12" }));
 ipcMain.handle("dsh:get-sidebar", () => ({ open: false, canOpen: true }));
 ipcMain.handle("dsh:toggle-sidebar", () => {
   toggledSidebar += 1;
@@ -90,124 +104,167 @@ app.whenReady().then(async () => {
   let win;
   try {
     nativeTheme.themeSource = "light"; // 固定浅色,断言浅色 token 确定值
-    // ========== 1. 状态页:运行中 ==========
+    // ========== 1. 面板:运行中 ==========
     win = new BrowserWindow({ width: 720, height: 680, show: false, webPreferences: PRELOAD });
     await win.loadFile(path.join(__dirname, "..", "src", "renderer", "dsh-status.html"));
     await wait(300); // 等初始化 IPC 往返
 
     const ready = await win.webContents.executeJavaScript(`(() => {
       const cs = (el) => el ? getComputedStyle(el) : null;
-      const dot = document.getElementById("statusDot");
+      const pill = document.getElementById("statePill");
       return {
-        label: document.getElementById("statusLabel").textContent,
-        chip: document.getElementById("versionChip").textContent,
+        label: document.getElementById("stateLabel").textContent,
+        versionLine: document.getElementById("versionLine").textContent,
         meta: document.getElementById("metaLine").textContent,
-        dotClass: dot.className,
-        dotBg: cs(dot).backgroundColor,
+        pillRunning: pill.classList.contains("state-running"),
+        pillColor: cs(pill).color,
         startHidden: document.getElementById("startBtn").hidden,
-        stopHidden: document.getElementById("stopBtn").hidden,
-        restartHidden: document.getElementById("restartBtn").hidden,
-        bannerHidden: document.getElementById("updateBanner").hidden,
-        bannerVersion: document.getElementById("bannerVersion").textContent,
       };
     })()`);
     if (ready.label !== "运行中") throw new Error(`运行中状态文案错误: ${ready.label}`);
-    if (ready.chip !== "dsh 0.1.0-rc.6") throw new Error(`版本 chip 错误: ${ready.chip}`);
+    if (ready.versionLine !== "DSH 0.1.0-rc.6") throw new Error(`版本号展示错误: ${ready.versionLine}`);
     if (!ready.meta.includes("端口 3260") || !ready.meta.includes("PID 4242"))
       throw new Error(`端口/PID 展示错误: ${ready.meta}`);
-    if (ready.dotClass !== "dot ok") throw new Error(`状态点类名错误: ${ready.dotClass}`);
-    if (ready.dotBg !== "rgb(34, 197, 94)") throw new Error(`运行中状态点应为绿色,实际 ${ready.dotBg}`);
-    if (!ready.startHidden || ready.stopHidden || ready.restartHidden)
-      throw new Error("运行中应显示「停止/重启」而不显示「启动」");
-    if (ready.bannerHidden || ready.bannerVersion !== "v0.2.0")
-      throw new Error("有新版时横幅应可见且显示 v0.2.0");
-    console.log("[1] 运行中:绿点 + 版本 + 端口/PID + 停止/重启按钮 + 新版横幅 ✓");
+    if (!ready.pillRunning) throw new Error("运行中徽标应带 state-running");
+    if (ready.pillColor !== "rgb(34, 197, 94)") throw new Error(`运行中徽标应为绿色,实际 ${ready.pillColor}`);
+    if (!ready.startHidden) throw new Error("运行中不应显示「启动服务」");
+    console.log("[1] 运行中:绿徽标 + DSH 版本 + 端口/PID,无启动按钮 ✓");
 
-    // ========== 2. 版本列表 ==========
+    // ========== 2. 版本列表:默认 10 条 + 徽标 + 更新按钮 ==========
     const list = await win.webContents.executeJavaScript(`(() => {
-      const rows = [...document.querySelectorAll(".vrow")];
+      const cards = [...document.querySelectorAll(".vcard")];
       return {
-        count: rows.length,
-        versions: rows.map((r) => r.querySelector(".v-version").textContent),
-        badges: rows.map((r) =>
-          [...r.querySelectorAll(".badge")].map((b) => b.textContent + ":" + b.className)
+        count: cards.length,
+        versions: cards.map((r) => r.querySelector(".v-version").textContent),
+        badges: cards.map((r) =>
+          [...r.querySelectorAll(".v-badge")].map((b) => b.textContent)
         ),
-        dates: rows.map((r) => r.querySelector(".v-date").textContent),
-        updates: rows.map((r) => r.querySelector(".v-update")?.textContent ?? null),
+        updates: cards.map((r) => r.querySelector(".v-update")?.textContent ?? null),
+        moreHidden: document.getElementById("moreBtn").hidden,
       };
     })()`);
-    if (list.count !== 3) throw new Error(`版本行数应为 3,实际 ${list.count}`);
-    if (JSON.stringify(list.versions) !== JSON.stringify(["0.2.0", "0.1.0", "0.1.0-rc.6"]))
-      throw new Error(`应按发布时间倒序,实际 ${list.versions}`);
-    if (list.badges[0].length !== 1 || !list.badges[0][0].includes("badge-latest"))
-      throw new Error(`0.2.0 应有「最新」徽标,实际 ${list.badges[0]}`);
-    if (list.badges[2].length !== 1 || !list.badges[2][0].includes("badge-current"))
-      throw new Error(`当前版本应有「当前」徽标,实际 ${list.badges[2]}`);
-    if (JSON.stringify(list.updates) !== JSON.stringify(["更新", "更新", null]))
-      throw new Error(`「更新」按钮应只出现在比当前新的行,实际 ${list.updates}`);
-    if (!list.dates[0].startsWith("2026-08-20")) throw new Error(`发布时间展示错误: ${list.dates}`);
-    console.log("[2] 版本列表:倒序 + 徽标 + 仅新版本有「更新」按钮 ✓");
+    if (list.count !== 10) throw new Error(`默认应显示 10 条版本,实际 ${list.count}`);
+    if (list.versions[0] !== "0.1.0-rc.12") throw new Error(`首行应为发布时间最新,实际 ${list.versions[0]}`);
+    if (list.badges[0].includes("最新") === false)
+      throw new Error(`首行应有「最新」徽标,实际 ${list.badges[0]}`);
+    const currentIdx = list.versions.indexOf("0.1.0-rc.6");
+    if (currentIdx < 0) throw new Error("列表中应有当前版本 0.1.0-rc.6");
+    if (!list.badges[currentIdx].includes("当前"))
+      throw new Error(`当前版本应有「当前」徽标,实际 ${list.badges[currentIdx]}`);
+    // 前 6 行(rc.12..rc.7,比当前新)应有「更新」,第 7 行(rc.6 当前)及以后无
+    for (let i = 0; i < 6; i++) {
+      if (list.updates[i] !== "更新") throw new Error(`第 ${i + 1} 行(比当前新)应有「更新」`);
+    }
+    if (list.updates[6] !== null) throw new Error("当前版本行不应有「更新」按钮");
+    if (list.moreHidden) throw new Error("共 12 条 > 10,应显示「更多」按钮");
+    console.log("[2] 版本列表:默认 10 条 + 首行「最新」 + 当前「当前」 + 仅新版可更新 ✓");
 
-    // ========== 3. 点「更新」→ upgrade(0.2.0) ==========
-    // 注:脚本完成值必须是可克隆的(不能是函数),否则 executeJavaScript 报
-    // "An object could not be cloned"
+    // ========== 3. 「更多」分页 ==========
+    await win.webContents.executeJavaScript(`document.getElementById("moreBtn").click()`);
+    await wait(150);
+    const more1 = await win.webContents.executeJavaScript(`(() => {
+      const cards = [...document.querySelectorAll(".vcard")];
+      return { count: cards.length, moreHidden: document.getElementById("moreBtn").hidden };
+    })()`);
+    if (more1.count !== 12) throw new Error(`点「更多」应显示 12 条,实际 ${more1.count}`);
+    if (!more1.moreHidden) throw new Error("已显示全部 12 条,「更多」应隐藏");
+    console.log("[3] 「更多」:加载到全部后隐藏按钮 ✓");
+
+    // ========== 4. 查询失败:「网络服务异常」+「重试」 ==========
+    // 单独开一个窗口并让 handler 返回错误 → 验证错误态;点「重试」后恢复
+    FIXTURE_VERSIONS.error = "fetch failed";
+    FIXTURE_VERSIONS.rows = [];
+    const errWin = new BrowserWindow({ width: 720, height: 680, show: false, webPreferences: PRELOAD });
+    errWin.loadFile(path.join(__dirname, "..", "src", "renderer", "dsh-status.html"));
+    await wait(300);
+    const errState = await errWin.webContents.executeJavaScript(`(() => {
+      return {
+        errHidden: document.getElementById("versionError").hidden,
+        errText: document.querySelector(".error-text").textContent,
+        retryText: document.getElementById("retryBtn").textContent,
+        listEmpty: document.getElementById("versionList").children.length === 0,
+        moreHidden: document.getElementById("moreBtn").hidden,
+      };
+    })()`);
+    if (errState.errHidden) throw new Error("查询失败应显示错误容器");
+    if (errState.errText !== "网络服务异常") throw new Error(`错误文案应为「网络服务异常」,实际 ${errState.errText}`);
+    if (errState.retryText !== "重试") throw new Error("应有「重试」按钮");
+    if (!errState.listEmpty || !errState.moreHidden) throw new Error("失败时不应有版本列表/更多按钮");
+    // 点「重试」→ handler 恢复正常 → 列表恢复、更多按钮出现
+    FIXTURE_VERSIONS.error = undefined;
+    FIXTURE_VERSIONS.rows = VERSIONS;
+    await errWin.webContents.executeJavaScript(`document.getElementById("retryBtn").click()`);
+    await wait(250);
+    const errRecover = await errWin.webContents.executeJavaScript(`(() => ({
+      errHidden: document.getElementById("versionError").hidden,
+      count: document.querySelectorAll(".vcard").length,
+      moreHidden: document.getElementById("moreBtn").hidden,
+    }))()`);
+    if (!errRecover.errHidden || errRecover.count !== 10 || errRecover.moreHidden)
+      throw new Error("重试后应恢复版本列表(10 条 + 更多按钮)");
+    errWin.destroy();
+    console.log("[4] 查询失败:「网络服务异常」+「重试」恢复 ✓");
+
+    // ========== 5. 点「更新」→ upgrade(首行) ==========
     await win.webContents.executeJavaScript(`window.confirm = () => true; undefined;`);
     await win.webContents.executeJavaScript(`(() => {
-      const row = [...document.querySelectorAll(".vrow")]
-        .find((r) => r.querySelector(".v-version").textContent === "0.2.0");
-      row.querySelector(".v-update").click();
+      const card = document.querySelector(".vcard");
+      card.querySelector(".v-update").click();
     })()`);
     await wait(250);
-    if (upgradedVersion !== "0.2.0") throw new Error(`点「更新」应请求升级 0.2.0,实际 ${upgradedVersion}`);
-    console.log("[3] 点「更新」→ upgrade(0.2.0) ✓");
+    if (upgradedVersion !== "0.1.0-rc.12") throw new Error(`点「更新」应请求升级 0.1.0-rc.12,实际 ${upgradedVersion}`);
+    console.log("[5] 点「更新」→ upgrade(0.1.0-rc.12) ✓");
 
-    // ========== 4. 启动失败:红点 + 失败原因 + 启动服务 ==========
-    state = "error";
-    win.webContents.send("dsh:status", { state: "error", message: "EADDRINUSE: 端口 3260 被占用" });
-    await wait(150);
-    const failed = await win.webContents.executeJavaScript(`(() => {
-      const cs = (el) => el ? getComputedStyle(el) : null;
-      const dot = document.getElementById("statusDot");
-      return {
-        label: document.getElementById("statusLabel").textContent,
-        dotBg: cs(dot).backgroundColor,
-        errHidden: document.getElementById("errorBox").hidden,
-        errText: document.getElementById("errorDetail").textContent,
-        startHidden: document.getElementById("startBtn").hidden,
-      };
-    })()`);
-    if (failed.label !== "启动失败") throw new Error(`失败状态文案错误: ${failed.label}`);
-    if (failed.dotBg !== "rgb(236, 19, 19)") throw new Error(`失败状态点应为红色,实际 ${failed.dotBg}`);
-    if (failed.errHidden || !failed.errText.includes("EADDRINUSE"))
-      throw new Error(`失败原因未展示: ${failed.errText}`);
-    if (failed.startHidden) throw new Error("启动失败应显示「启动服务」按钮");
-    await win.webContents.executeJavaScript(`document.getElementById("startBtn").click()`);
-    await wait(150);
-    if (!retried) throw new Error("点「启动服务」应触发 retry");
-    console.log("[4] 启动失败:红点 + 失败原因 + 启动服务→retry ✓");
-
-    // ========== 5. 未运行:灰点 + 启动服务 ==========
+    // ========== 6. 停止:灰「停止」+「启动服务」(无停止/重启按钮) ==========
     state = "stopped";
     win.webContents.send("dsh:status", { state: "stopped", message: "服务已停止" });
     await wait(150);
     const stoppedState = await win.webContents.executeJavaScript(`(() => {
       const cs = (el) => el ? getComputedStyle(el) : null;
-      const dot = document.getElementById("statusDot");
+      const pill = document.getElementById("statePill");
       return {
-        label: document.getElementById("statusLabel").textContent,
-        dotBg: cs(dot).backgroundColor,
+        label: document.getElementById("stateLabel").textContent,
+        pillRunning: pill.classList.contains("state-running"),
+        pillColor: cs(pill).color,
+        meta: document.getElementById("metaLine").textContent,
         startHidden: document.getElementById("startBtn").hidden,
-        stopHidden: document.getElementById("stopBtn").hidden,
+        startText: document.getElementById("startBtn").textContent,
+        hasStopBtn: !!document.getElementById("stopBtn"),
+        hasRestartBtn: !!document.getElementById("restartBtn"),
       };
     })()`);
-    if (stoppedState.label !== "未运行") throw new Error(`未运行文案错误: ${stoppedState.label}`);
-    if (stoppedState.dotBg !== "rgb(151, 157, 166)")
-      throw new Error(`未运行状态点应为灰色,实际 ${stoppedState.dotBg}`);
-    if (stoppedState.startHidden || !stoppedState.stopHidden)
-      throw new Error("未运行应显示「启动服务」且不显示「停止」");
-    console.log("[5] 未运行:灰点 + 启动服务按钮 ✓");
+    if (stoppedState.label !== "停止") throw new Error(`停止状态文案错误: ${stoppedState.label}`);
+    if (stoppedState.pillRunning) throw new Error("停止时不应带 state-running");
+    if (stoppedState.pillColor !== "rgb(129, 133, 140)")
+      throw new Error(`停止徽标应为灰色,实际 ${stoppedState.pillColor}`);
+    if (!stoppedState.meta.includes("端口 -") || !stoppedState.meta.includes("PID -"))
+      throw new Error(`停止时端口/PID 应为 - ,实际 ${stoppedState.meta}`);
+    if (stoppedState.startHidden || stoppedState.startText !== "启动服务")
+      throw new Error("停止时应显示「启动服务」按钮");
+    if (stoppedState.hasStopBtn || stoppedState.hasRestartBtn)
+      throw new Error("新设计下不应存在停止/重启按钮");
+    await win.webContents.executeJavaScript(`document.getElementById("startBtn").click()`);
+    await wait(150);
+    if (!retried) throw new Error("点「启动服务」应触发 retry");
+    console.log("[6] 停止:灰徽标 + 端口/PID 为 - + 仅「启动服务」→ retry ✓");
 
-    // ========== 6. 顶栏:红点可见 + 入口点击开/关面板(同窗口换页) ==========
+    // ========== 7. 版本号超长截断 ==========
+    state = "ready";
+    win.webContents.send("dsh:status", { state: "ready", message: "服务运行中" });
+    await wait(100);
+    const trunc = await win.webContents.executeJavaScript(`(() => {
+      const el = document.getElementById("versionLine");
+      return {
+        css: getComputedStyle(el),
+        title: el.title,
+      };
+    })()`);
+    if (trunc.css.textOverflow !== "ellipsis" || trunc.css.whiteSpace !== "nowrap" || trunc.css.overflow !== "hidden")
+      throw new Error("版本号应配置超长截断(ellipsis)");
+    if (trunc.title !== "DSH 0.1.0-rc.6") throw new Error("版本号完整值应放入 title");
+    console.log("[7] 版本号超长截断(ellipsis + title) ✓");
+
+    // ========== 8. 顶栏:红点可见 + 入口点击开/关面板(同窗口换页) ==========
     await win.loadFile(path.join(__dirname, "..", "src", "renderer", "topbar.html"));
     await wait(150);
     const tb = await win.webContents.executeJavaScript(`(() => {
@@ -225,13 +282,13 @@ app.whenReady().then(async () => {
     await win.webContents.executeJavaScript(`document.getElementById("statusBtn").click()`);
     await wait(100);
     if (toggledSidebar !== 1) throw new Error("点顶栏状态入口应触发 toggle-sidebar(面板开关)");
-    console.log("[6] 顶栏:红点可见 + 点击入口 toggle-sidebar ✓");
+    console.log("[8] 顶栏:红点可见 + 点击入口 toggle-sidebar ✓");
 
-    console.log("\nPASS ✓ 服务与版本页回归通过");
+    console.log("\nPASS ✓ 服务状态与版本面板回归通过");
     win.destroy();
     app.quit();
   } catch (err) {
-    console.error("\nFAIL ✗ 服务与版本页回归:", err.message);
+    console.error("\nFAIL ✗ 服务状态与版本面板回归:", err.message);
     if (win && !win.isDestroyed()) win.destroy();
     app.exit(1);
   }

@@ -1,9 +1,12 @@
-/* dsh-status.css — 「dsh 服务与版本」右侧面板,延续 dsh WebUI 的设计体系:
- *   neutral-bluish 中性色 + DeepSeek 品牌蓝 + 状态色,浅色/深色各一套,
- *   经 light-dark() 自适应(nativeTheme 跟随 dsh UI 主题)。
- * 面板特性:竖排窄版(240~380px 宽),不带头部关闭按钮(开关只靠顶栏),
- * 无独立窗口概念(不再为红绿灯留空间、无拖拽区)。
- * 数据来源全部走 IPC(preload 桥),本页不发起任何网络请求。 */
+/* dsh-status.css — 「服务状态 + DSH 版本」右侧面板。
+ *
+ * 布局与组件样式按设计稿(正常/停止/查询失败三态)实现,配色走 dsh 原生
+ * 设计体系(neutral-bluish 中性色 + 反白主按钮),浅色/深色各一套,
+ * 经 light-dark() 自适应(nativeTheme 跟随 dsh UI 主题)。
+ *
+ * 面板特性:竖排窄版(240~480px 宽),状态只有「运行中 / 停止」两态,
+ * 仅停止时显示「启动服务」;版本列表默认 10 条 + 「更多」分页,
+ * 查询失败显示「网络服务异常」+「重试」。开关仍只靠顶栏按钮,面板无关闭钮。 */
 
 :root {
   color-scheme: light dark;
@@ -15,25 +18,32 @@
   --bg: light-dark(rgb(249, 250, 251), rgb(21, 21, 23));
   --surface: light-dark(#ffffff, rgb(27, 27, 28));
   --surface-2: light-dark(rgb(235, 238, 242), rgb(53, 54, 56));
-  --border: light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.08));
-  --border-strong: light-dark(rgba(0, 0, 0, 0.12), rgba(255, 255, 255, 0.16));
+  --border: light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.12));
+  --border-weak: light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.08));
   --text: light-dark(rgb(15, 17, 21), rgb(249, 250, 251));
   --text-secondary: light-dark(rgb(97, 102, 107), rgb(207, 211, 214));
-  --text-muted: light-dark(rgb(151, 157, 166), rgb(129, 133, 140));
+  --text-muted: light-dark(rgb(129, 133, 140), rgb(173, 178, 184));
 
-  /* DeepSeek 品牌蓝 */
+  /* 主操作按钮:反白(浅色近黑底 / 深色近白底),dsh 内部 primary 的同一逻辑 */
+  --primary-fill: light-dark(rgb(15, 17, 21), rgb(249, 250, 251));
+  --primary-fg: light-dark(#ffffff, rgb(15, 17, 21));
+  --primary-hover: light-dark(rgb(67, 69, 74), rgb(235, 238, 242));
+
+  /* DeepSeek 品牌蓝(进行中 / 强调 / 链接) */
   --brand: light-dark(rgb(65, 118, 230), rgb(103, 158, 254));
   --brand-hover: light-dark(rgb(57, 100, 205), rgb(124, 172, 255));
   --brand-weak: light-dark(rgba(65, 118, 230, 0.1), rgba(103, 158, 254, 0.16));
 
-  /* 状态色 */
+  /* 状态语义色 */
   --ok: light-dark(rgb(34, 197, 94), rgb(78, 209, 126));
+  --ok-weak: light-dark(rgba(34, 197, 94, 0.1), rgba(78, 209, 126, 0.16));
   --err: light-dark(rgb(236, 19, 19), rgb(242, 90, 90));
   --warn: light-dark(rgb(221, 134, 41), rgb(245, 158, 11));
-  --idle: light-dark(rgb(151, 157, 166), rgb(129, 133, 140));
+  --idle: light-dark(rgb(129, 133, 140), rgb(173, 178, 184));
+  --idle-weak: light-dark(rgba(129, 133, 140, 0.1), rgba(173, 178, 184, 0.16));
 
-  --radius-lg: 10px;
-  --radius-md: 7px;
+  --radius-lg: 10px; /* 版本卡片 */
+  --radius-md: 5px; /* 状态/最新/当前 徽标 */
 }
 
 * {
@@ -56,206 +66,152 @@ body {
   color: var(--text);
   font-family: var(--font);
   font-size: 12px;
+  line-height: 18px;
   -webkit-font-smoothing: antialiased;
   overflow-y: auto;
-}
-
-/* ---------- 面板头部(窄条:标题 + 检查时间 + 刷新;无关闭按钮) ---------- */
-.panel-header {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 10px;
-  background: var(--bg);
-  border-bottom: 1px solid var(--border);
   user-select: none;
 }
 
-.panel-title {
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.header-right {
-  margin-left: auto;
+.content {
+  padding: 16px;
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 24px;
 }
 
-.last-check {
-  font-size: 10px;
+/* ---------- 区块标题(「服务状态」/「DSH 版本」) ---------- */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.section-title {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 22px;
+  color: var(--text);
+}
+
+/* ---------- 服务状态区 ---------- */
+.status-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.status-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 版本号:超长截断为 ... */
+.version-line {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meta-line {
+  font-size: 12px;
+  line-height: 18px;
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 110px;
 }
 
-/* ---------- 内容 ---------- */
-.content {
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 10px 12px;
-}
-
-.card-title-row {
+.status-side {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
 }
 
-.card-title-row h2 {
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.source {
-  margin-left: auto;
-  font-size: 10px;
-  color: var(--text-muted);
-}
-
-/* ---------- 当前服务卡 ---------- */
-.status-row {
-  display: flex;
+/* 状态徽标:圆点 + 小圆角标签(运行中=绿 / 停止=灰) */
+.state-pill {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-bottom: 8px;
-  flex-wrap: wrap; /* 窄面板:版本 chip 放不下时自动折行 */
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius-md);
+  background: var(--idle-weak);
+  color: var(--idle);
+  white-space: nowrap;
 }
 
-.dot {
-  width: 9px;
-  height: 9px;
+.state-pill.state-running {
+  background: var(--ok-weak);
+  color: var(--ok);
+}
+
+.state-dot {
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
+  background: currentColor;
   flex: none;
 }
 
-.dot.ok {
-  background: var(--ok);
-}
-
-.dot.err {
-  background: var(--err);
-}
-
-.dot.busy {
-  background: var(--brand);
-  animation: pulse 1.1s ease-in-out infinite;
-}
-
-.dot.idle {
-  background: var(--idle);
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
-}
-
-.status-label {
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.chip {
-  font-family: var(--mono);
-  font-size: 10px;
-  padding: 1px 8px;
-  border-radius: 999px;
-  background: var(--brand-weak);
-  color: var(--brand);
-}
-
-.meta {
+.state-label {
   font-size: 11px;
-  color: var(--text-secondary);
-  line-height: 1.7;
-  word-break: break-all;
+  line-height: 16px;
 }
 
-.meta.mono {
-  font-family: var(--mono);
-  font-size: 10px;
-  line-height: 1.6;
-}
-
-.error-box {
-  margin-top: 8px;
-  padding: 8px 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--err) 8%, var(--surface));
-}
-
-.error-title {
+.hint-line {
   font-size: 11px;
-  font-weight: 600;
-  color: var(--err);
-  margin-bottom: 3px;
-}
-
-.error-detail {
-  font-family: var(--mono);
-  font-size: 10px;
-  line-height: 1.5;
-  color: var(--text-secondary);
-  white-space: pre-wrap;
-  word-break: break-all;
-  max-height: 110px;
-  overflow-y: auto;
-  user-select: text;
-}
-
-.actions-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 10px;
-  flex-wrap: wrap;
-}
-
-.hint {
-  font-size: 11px;
+  line-height: 16px;
   color: var(--text-muted);
+  word-break: break-all;
 }
 
 /* ---------- 按钮 ---------- */
 .btn {
   appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-family: var(--font);
-  font-size: 11px;
-  padding: 4px 10px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-strong);
-  background: transparent;
-  color: var(--text);
+  font-size: 12px;
+  line-height: 18px;
+  height: 28px;
+  padding: 0 14px;
+  border-radius: 100px; /* 胶囊 */
+  border: none;
   cursor: pointer;
-  transition: background-color 0.15s ease;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, border-color 0.15s ease,
+    opacity 0.15s ease;
 }
 
-.btn:hover {
+/* 主按钮(启动服务 / 更新):反白 */
+.btn-primary {
+  background: var(--primary-fill);
+  color: var(--primary-fg);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+/* 次按钮(更多 / 重试):透明 + 描边 */
+.btn-outline {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.btn-outline:hover:not(:disabled) {
   background: var(--surface-2);
+  color: var(--text-secondary);
 }
 
 .btn:disabled {
@@ -263,65 +219,31 @@ body {
   cursor: default;
 }
 
-.btn-primary {
-  background: var(--brand);
-  border-color: transparent;
-  color: #ffffff;
+.btn:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
 }
 
-.btn-primary:hover {
-  background: var(--brand-hover);
-}
-
-.btn-ghost {
-  border-color: transparent;
-}
-
-/* ---------- 版本列表卡(窄版:每行两段,版本与操作同行、日期另起) ---------- */
-.banner {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 8px;
-  padding: 6px 10px;
-  border-radius: var(--radius-md);
-  background: var(--brand-weak);
-  color: var(--brand);
-  font-size: 11px;
-}
-
-.banner-version {
-  font-weight: 600;
-  font-family: var(--mono);
-}
-
-.offline {
-  margin-bottom: 8px;
-  padding: 6px 10px;
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--warn) 10%, var(--surface));
-  color: var(--warn);
-  font-size: 11px;
-}
-
-.version-table {
+/* ---------- 版本列表 ---------- */
+.version-list {
   display: flex;
   flex-direction: column;
+  gap: 8px;
 }
 
-.vrow {
+/* 单条版本卡片 */
+.vcard {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: 10px 12px;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 8px 2px;
-  border-top: 1px solid var(--border);
+  min-width: 0;
 }
 
-.vrow:first-child {
-  border-top: none;
-}
-
-.vrow-top {
+.vcard-top {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -329,10 +251,13 @@ body {
 }
 
 .v-version {
-  font-family: var(--mono);
-  font-size: 11px;
-  font-weight: 600;
-  flex: none;
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 400;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .v-badges {
@@ -341,28 +266,78 @@ body {
   flex: none;
 }
 
-.badge {
-  font-size: 9px;
-  padding: 1px 6px;
-  border-radius: 999px;
+/* 最新 / 当前 徽标:小圆角描边标签 */
+.v-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
-.badge-latest {
-  background: var(--brand);
-  color: #ffffff;
-}
-
-.badge-current {
-  background: var(--surface-2);
-  color: var(--text-secondary);
-}
-
+/* 更新按钮:靠右 */
 .v-update {
   margin-left: auto;
   flex: none;
+  height: 28px;
+  padding: 0 12px;
 }
 
 .v-date {
-  font-size: 10px;
+  font-size: 12px;
+  line-height: 18px;
   color: var(--text-muted);
+}
+
+/* 更多按钮:底部居中 */
+.btn-more {
+  align-self: center;
+  margin-top: 4px;
+  padding: 0 18px;
+}
+
+/* ---------- 查询失败 / 缓存回退 ---------- */
+.version-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 0;
+}
+
+.error-text {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-muted);
+}
+
+.cache-note {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--warn);
+  text-align: center;
+}
+
+/* ---------- 滚动条(dsh 全局规格:8px / thumb 4px) ---------- */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background: var(--border);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }

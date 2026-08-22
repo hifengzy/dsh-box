@@ -11,6 +11,9 @@ out/
 # 运行时数据(冒烟测试的临时 DSH_HOME 等)
 .runtime/
 
+# UI 设计系统分析临时产物(从 node_modules 拷贝的研究素材)
+.dsh-ui-src/
+
 # 日志
 *.log
 logs/
@@ -24,3 +27,6 @@ logs/
 
 # QA 报告产物
 .gstack/
+
+# demo
+demo/
