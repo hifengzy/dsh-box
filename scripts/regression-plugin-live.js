@@ -101,13 +101,13 @@ app.whenReady().then(async () => {
   try {
     // ---------- 1+2. 准备隔离 home(缺插件先装)+ 启动 dsh web ----------
     fs.mkdirSync(E2E_HOME, { recursive: true });
-    if (!pluginManager.getInstalledVersion(E2E_HOME)) {
+    if (!pluginManager.getInstalledVersion(E2E_HOME, "dsh-better-sidebar")) {
       console.log("[e2e] 隔离 home 缺 dsh-better-sidebar,联网安装(仅首次)…");
-      const installed = await pluginManager.installPlugin(E2E_HOME, null);
+      const installed = await pluginManager.installPlugin(E2E_HOME, "dsh-better-sidebar", null);
       if (!installed.ok) throw new Error(`插件安装失败: ${installed.error}`);
       console.log("[e2e] 插件已安装");
     }
-    console.log(`[e2e] 已装插件版本: ${pluginManager.getInstalledVersion(E2E_HOME)}`);
+    console.log(`[e2e] 已装插件版本: ${pluginManager.getInstalledVersion(E2E_HOME, "dsh-better-sidebar")}`);
 
     dshProcess = spawnWeb();
     const url = `http://127.0.0.1:${PORT}`;
