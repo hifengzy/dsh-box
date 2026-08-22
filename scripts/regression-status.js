@@ -10,7 +10,10 @@
  *   4. 查询失败:「网络服务异常」+「重试」;
  *   5. 点「更新」→ 经桥发出 upgrade(目标版本);
  *   6. 停止:灰「停止」徽标 + 「启动服务」按钮(不显示停止/重启);点击 → retry;
- *   7. 顶栏:更新标志为真 → 入口红点可见;点入口 → toggleSidebar。
+ *   7. 顶栏:更新标志为真 → 入口红点可见;点入口 → toggleSidebar;
+ *   8. 顶栏插件按钮:未安装禁用;状态上报后启用+高亮;点击 → toggle-plugin-panel;
+ *   9. 侧边栏插件板块:未安装→「安装」;已装无更新→无按钮;有更新→「更新」;
+ *      查询失败→「网络服务异常」+「重试」;点「安装/更新」→install 闭环。
  *
  * 用法: electron scripts/regression-status.js --no-sandbox
  * 说明:测试固定 nativeTheme=light,断言浅色 token 的具体值,结果确定。
@@ -65,6 +68,23 @@ let upgradedVersion = null;
 let retried = false;
 let stopped = false;
 let toggledSidebar = 0;
+let toggledPluginPanel = null;
+// 插件板块夹具:可变状态驱动各组断言
+let pluginInstalled = null; // null = 未安装
+let pluginLatest = "0.15.1";
+let pluginError = null;
+
+/** 版本号大小比较(简单实现,夹具只用于 0.15.x) */
+function verLt(a, b) {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const va = pa[i] || 0;
+    const vb = pb[i] || 0;
+    if (va !== vb) return va < vb;
+  }
+  return false;
+}
 
 // 模拟主进程处理器(不真正启动/下载/打开)
 ipcMain.handle("dsh:get-info", () => ({ ...FIXTURE_INFO, state }));
@@ -87,6 +107,22 @@ ipcMain.handle("dsh:get-sidebar", () => ({ open: false, canOpen: true }));
 ipcMain.handle("dsh:toggle-sidebar", () => {
   toggledSidebar += 1;
   return { open: true, canOpen: true };
+});
+// 侧边栏插件:查询(可变夹具)/安装(记录并更新已装版本)/顶栏面板切换
+ipcMain.handle("dsh:plugin-info", () => ({
+  name: "dsh-better-sidebar",
+  installed: pluginInstalled,
+  latest: pluginLatest,
+  hasUpdate: pluginInstalled !== null && pluginLatest !== null && verLt(pluginInstalled, pluginLatest),
+  error: pluginError,
+}));
+ipcMain.handle("dsh:plugin-install", async (_e, v) => {
+  pluginInstalled = v ?? "0.15.1";
+  return { ok: true, installed: pluginInstalled, previouslyInstalled: null, restarted: true };
+});
+ipcMain.handle("dsh:toggle-plugin-panel", (_e, which) => {
+  toggledPluginPanel = which;
+  return { ok: true };
 });
 
 const PRELOAD = {
@@ -283,6 +319,149 @@ app.whenReady().then(async () => {
     await wait(100);
     if (toggledSidebar !== 1) throw new Error("点顶栏状态入口应触发 toggle-sidebar(面板开关)");
     console.log("[8] 顶栏:红点可见 + 点击入口 toggle-sidebar ✓");
+
+    // ========== 9. 顶栏插件按钮:未安装禁用 → 状态上报启用+高亮 → 点击转发 ==========
+    const tbp = await win.webContents.executeJavaScript(`(() => {
+      const side = document.getElementById("pluginSideBtn");
+      const bottom = document.getElementById("pluginBottomBtn");
+      return {
+        sideDisabled: side.disabled,
+        bottomDisabled: bottom.disabled,
+        sideActive: side.classList.contains("panel-btn-active"),
+      };
+    })()`);
+    if (!tbp.sideDisabled || !tbp.bottomDisabled)
+      throw new Error("插件未安装时顶栏面板按钮应禁用");
+    if (tbp.sideActive) throw new Error("初始不应有激活态");
+    // 主进程广播 plugin-panels 状态:两个按钮启用,侧栏展开 → 侧栏按钮高亮
+    win.webContents.send("dsh:plugin-panels", { installed: true, active: true, side: true, bottom: false });
+    await wait(100);
+    const tbp2 = await win.webContents.executeJavaScript(`(() => {
+      const side = document.getElementById("pluginSideBtn");
+      const bottom = document.getElementById("pluginBottomBtn");
+      return {
+        sideDisabled: side.disabled,
+        bottomDisabled: bottom.disabled,
+        sideActive: side.classList.contains("panel-btn-active"),
+        bottomActive: bottom.classList.contains("panel-btn-active"),
+        sidePressed: side.getAttribute("aria-pressed"),
+        sideTitle: side.title,
+      };
+    })()`);
+    if (tbp2.sideDisabled || tbp2.bottomDisabled) throw new Error("插件已装时应启用两个按钮");
+    if (!tbp2.sideActive) throw new Error("侧栏展开时侧栏按钮应高亮");
+    if (tbp2.bottomActive) throw new Error("底栏折叠时底栏按钮不应高亮");
+    if (tbp2.sidePressed !== "true") throw new Error("aria-pressed 应同步为 true");
+    if (tbp2.sideTitle !== "折叠侧边栏") throw new Error(`侧栏展开时标题应为「折叠侧边栏」,实际 ${tbp2.sideTitle}`);
+    // 点侧栏按钮 → toggle-plugin-panel("side")
+    await win.webContents.executeJavaScript(`document.getElementById("pluginSideBtn").click()`);
+    await wait(100);
+    if (toggledPluginPanel !== "side") throw new Error("点侧栏按钮应触发 toggle-plugin-panel('side')");
+    // 状态闭合 → 高亮取消
+    win.webContents.send("dsh:plugin-panels", { installed: true, active: true, side: false, bottom: false });
+    await wait(100);
+    const tbp3 = await win.webContents.executeJavaScript(
+      `document.getElementById("pluginSideBtn").classList.contains("panel-btn-active")`
+    );
+    if (tbp3) throw new Error("侧栏闭合后按钮高亮应取消");
+    console.log("[9] 顶栏插件按钮:禁用→启用+高亮→点击转发→闭合取消 ✓");
+
+    // ========== 10. 侧边栏插件板块:状态机四态 + 安装/更新闭环 ==========
+    // 重新加载面板页(干净的插件板块)
+    await win.loadFile(path.join(__dirname, "..", "src", "renderer", "dsh-status.html"));
+    await wait(250);
+
+    // 10a. 未安装:名称 + 「未安装 · 最新」 + 「安装」
+    pluginInstalled = null;
+    pluginLatest = "0.15.1";
+    pluginError = null;
+    await win.webContents.executeJavaScript(`document.getElementById("pluginHint"); undefined;`);
+    await wait(100); // 等 loadPluginInfo 的 IPC 往返
+    const pi1 = await win.webContents.executeJavaScript(`(() => {
+      const card = document.getElementById("pluginCard");
+      return {
+        name: card.querySelector(".plugin-name")?.textContent ?? null,
+        meta: [...card.querySelectorAll(".plugin-meta")].map((m) => m.textContent).join(" "),
+        buttons: [...card.querySelectorAll("button")].map((b) => b.textContent),
+      };
+    })()`);
+    if (!pi1.name.includes("dsh-better-sidebar")) throw new Error(`插件卡片应有名称,实际 ${pi1.name}`);
+    if (pi1.meta !== "未安装 · 最新 0.15.1") throw new Error(`未安装态版本行错误: ${pi1.meta}`);
+    if (pi1.buttons.length !== 1 || pi1.buttons[0] !== "安装") throw new Error(`未安装应只有「安装」按钮,实际 ${pi1.buttons}`);
+
+    // 10b. 点「安装」→ install 闭环(确认框置真),安装后 → 已装最新 + 无按钮
+    await win.webContents.executeJavaScript(`window.confirm = () => true; undefined;`);
+    await win.webContents.executeJavaScript(`[...document.querySelectorAll("#pluginCard button")][0].click(); undefined;`);
+    await wait(250);
+    const pi2 = await win.webContents.executeJavaScript(`(() => {
+      const card = document.getElementById("pluginCard");
+      return {
+        meta: [...card.querySelectorAll(".plugin-meta")].map((m) => m.textContent).join(" "),
+        buttons: [...card.querySelectorAll("button")].map((b) => b.textContent),
+      };
+    })()`);
+    if (pluginInstalled !== "0.15.1") throw new Error(`点「安装」应 install 0.15.1,实际 ${pluginInstalled}`);
+    if (!pi2.meta.includes("已装 0.15.1")) throw new Error(`安装后应显示已装版本,实际 ${pi2.meta}`);
+    if (pi2.buttons.length !== 0) throw new Error(`已装且无更新应无按钮,实际 ${pi2.buttons}`);
+
+    // 10c. 已有新版本:显示「更新」;点「更新」→ install 最新 → 无按钮
+    pluginInstalled = "0.15.0";
+    pluginLatest = "0.15.1";
+    pluginError = null;
+    await win.loadFile(path.join(__dirname, "..", "src", "renderer", "dsh-status.html")); // 重载触发重新查询
+    await wait(250);
+    const pi3 = await win.webContents.executeJavaScript(`(() => {
+      const card = document.getElementById("pluginCard");
+      return {
+        meta: [...card.querySelectorAll(".plugin-meta")].map((m) => m.textContent).join(" "),
+        buttons: [...card.querySelectorAll("button")].map((b) => b.textContent),
+      };
+    })()`);
+    if (!pi3.meta.includes("已装 0.15.0 · 最新 0.15.1"))
+      throw new Error(`有更新时版本行应含已装+最新,实际 ${pi3.meta}`);
+    if (pi3.buttons.length !== 1 || pi3.buttons[0] !== "更新")
+      throw new Error(`有更新应只有「更新」按钮,实际 ${pi3.buttons}`);
+    // 10c 重载过页面 → confirm 又变回原生对话框,必须重新置真
+    await win.webContents.executeJavaScript(`window.confirm = () => true; undefined;`);
+    await win.webContents.executeJavaScript(`[...document.querySelectorAll("#pluginCard button")][0].click(); undefined;`);
+    await wait(250);
+    if (pluginInstalled !== "0.15.1") throw new Error(`点「更新」应 install 最新,实际 ${pluginInstalled}`);
+    const pi4 = await win.webContents.executeJavaScript(
+      `document.querySelectorAll("#pluginCard button").length`
+    );
+    if (pi4 !== 0) throw new Error("更新到最新后应无按钮");
+
+    // 10d. 查询失败(未安装):「网络服务异常」+「重试」;点重试恢复
+    pluginInstalled = null;
+    pluginError = "fetch failed";
+    await win.loadFile(path.join(__dirname, "..", "src", "renderer", "dsh-status.html")); // 重载触发重新查询
+    await wait(250);
+    const pi5 = await win.webContents.executeJavaScript(`(() => {
+      const card = document.getElementById("pluginCard");
+      return {
+        errText: card.querySelector(".error-text")?.textContent ?? null,
+        retryText: [...card.querySelectorAll("button")].map((b) => b.textContent),
+        installBtn: [...card.querySelectorAll("button")].some((b) => b.textContent === "安装"),
+      };
+    })()`);
+    if (pi5.errText !== "网络服务异常") throw new Error(`失败态应有「网络服务异常」,实际 ${pi5.errText}`);
+    if (pi5.retryText.length !== 1 || pi5.retryText[0] !== "重试")
+      throw new Error(`失败态应只有「重试」,实际 ${pi5.retryText}`);
+    if (pi5.installBtn) throw new Error("失败态不应有「安装」按钮");
+    pluginError = null;
+    pluginLatest = "0.15.1";
+    await win.webContents.executeJavaScript(`[...document.querySelectorAll("#pluginCard button")][0].click()`);
+    await wait(250);
+    const pi6 = await win.webContents.executeJavaScript(`(() => {
+      const card = document.getElementById("pluginCard");
+      return {
+        meta: [...card.querySelectorAll(".plugin-meta")].map((m) => m.textContent).join(" "),
+        installBtn: [...card.querySelectorAll("button")].some((b) => b.textContent === "安装"),
+      };
+    })()`);
+    if (pi6.installBtn !== true || !pi6.meta.includes("未安装 · 最新 0.15.1"))
+      throw new Error("重试后应恢复「未安装 + 安装」态");
+    console.log("[10] 侧边栏插件板块:未安装/安装闭环/有更新/网络失败重试 ✓");
 
     console.log("\nPASS ✓ 服务状态与版本面板回归通过");
     win.destroy();

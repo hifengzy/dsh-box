@@ -12,8 +12,9 @@
   <body>
     <!--
       自定义顶栏:整条可拖动窗口。左侧约 80px 留给 macOS 红绿灯,
-      不要在那里放可交互元素。右侧 .actions 放功能入口(当前:GitHub 仓库
-      按钮),已加 no-drag,保证可点击。应用名不在顶栏展示(红绿灯右侧留白)。
+      不要在那里放可交互元素。右侧 .actions 放功能入口(服务状态入口 /
+      侧边栏插件两个面板开关 / GitHub 仓库按钮),已加 no-drag,保证可点击。
+      应用名不在顶栏展示(红绿灯右侧留白)。
     -->
     <div class="bar">
       <div class="actions">
@@ -27,6 +28,28 @@
         >
           <span class="status-icon" aria-hidden="true"></span>
           <span class="status-dot" id="updateDot" hidden aria-hidden="true"></span>
+        </button>
+        <!-- 侧边栏插件(dsh-better-sidebar)的两个面板开关:经桥切换页面内的侧栏/底栏;
+             插件未安装时禁用,开合状态随页面实时回显 -->
+        <button
+          class="panel-btn"
+          id="pluginSideBtn"
+          type="button"
+          aria-label="展开/折叠侧边栏"
+          title="展开/折叠侧边栏"
+          disabled
+        >
+          <span class="panel-icon panel-icon-side" aria-hidden="true"></span>
+        </button>
+        <button
+          class="panel-btn"
+          id="pluginBottomBtn"
+          type="button"
+          aria-label="展开/折叠底部面板"
+          title="展开/折叠底部面板"
+          disabled
+        >
+          <span class="panel-icon panel-icon-bottom" aria-hidden="true"></span>
         </button>
         <button
           class="github-btn"

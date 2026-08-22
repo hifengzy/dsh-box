@@ -224,6 +224,54 @@ body {
   outline-offset: 2px;
 }
 
+/* ---------- 侧边栏插件卡片 ---------- */
+.plugin-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.plugin-name {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 版本行:未安装 / 已装 + 最新 / 网络异常提示 */
+.plugin-meta {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.plugin-meta.plugin-meta-warn {
+  color: var(--warn);
+}
+
+/* 安装/更新按钮:靠右 */
+.plugin-action {
+  align-self: flex-start;
+  margin-top: 4px;
+  height: 28px;
+  padding: 0 14px;
+}
+
+/* 插件未安装时的错误态复用 DSH 版本的错误布局 */
+.plugin-card .version-error {
+  padding: 8px 0 4px;
+}
+
 /* ---------- 版本列表 ---------- */
 .version-list {
   display: flex;

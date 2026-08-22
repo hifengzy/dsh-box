@@ -68,4 +68,23 @@ contextBridge.exposeInMainWorld("dsh", {
     ipcRenderer.on("dsh:sidebar-state", listener);
     return () => ipcRenderer.removeListener("dsh:sidebar-state", listener);
   },
+
+  /** 查询侧边栏插件信息(本地版本 + registry 最新);进入状态页时调用 */
+  getPluginInfo: () => ipcRenderer.invoke("dsh:plugin-info"),
+
+  /** 安装(version=null)或更新(version=最新版)侧边栏插件;成功后自动重启服务 */
+  installPlugin: (version) => ipcRenderer.invoke("dsh:plugin-install", version ?? null),
+
+  /** 顶栏「侧栏/底栏」切换:经桥模拟点击插件自己的 toggle 按钮 */
+  togglePluginPanel: (which) => ipcRenderer.invoke("dsh:toggle-plugin-panel", which),
+
+  /** 订阅插件面板开合状态(顶栏按钮高亮/灰显);返回取消订阅函数 */
+  onPluginPanels: (callback) => {
+    const listener = (_event, state) => callback(state);
+    ipcRenderer.on("dsh:plugin-panels", listener);
+    return () => ipcRenderer.removeListener("dsh:plugin-panels", listener);
+  },
+
+  /** 内容页里注入的桥脚本上报插件面板状态(仅内容视图实际调用) */
+  reportPluginPanels: (state) => ipcRenderer.send("shell:plugin-panels", state),
 });

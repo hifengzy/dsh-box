@@ -37,6 +37,8 @@ const npmCheck = require("./npm-check");
 const { upgradeDsh } = require("./dsh-upgrade");
 const { computeSidebar, SIDEBAR_GAP } = require("./sidebar-layout");
 const { SIDEBAR_ANIM_MS, easeSidebar } = require("./sidebar-anim");
+const pluginManager = require("./plugin-manager");
+const { PLUGIN_BRIDGE_JS, PLUGIN_HIDE_CSS } = require("./plugin-ui-inject");
 
 const APP_NAME = "DSH Box";
 const isMac = process.platform === "darwin";
@@ -127,6 +129,10 @@ function main() {
   let upgrading = false;
   /** 最近一次 npm 更新检查结果(顶栏红点用) */
   let lastUpdateCheck = null;
+  /** 最近一次插件检查结果(侧边栏插件板块 + 红点) */
+  let lastPluginCheck = null;
+  /** 是否正在安装/更新插件(防止并发) */
+  let pluginInstalling = false;
 
   const port = Number(process.env.DSH_APP_PORT) || DEFAULT_PORT;
 
@@ -478,6 +484,8 @@ function main() {
       if (!server || !isServerOrigin(wc.getURL(), server.url)) return;
       wc.executeJavaScript(POINTER_DUP_GUARD_JS, true).catch(() => {});
       wc.executeJavaScript(THEME_WATCHER_JS, true).catch(() => {});
+      wc.executeJavaScript(PLUGIN_BRIDGE_JS, true).catch(() => {});
+      wc.insertCSS(PLUGIN_HIDE_CSS).catch(() => {});
       const css = readCustomCss();
       if (css) wc.insertCSS(css).catch(() => {});
     });
@@ -658,9 +666,20 @@ function main() {
   }
 
   // ---------- npm 更新检查(启动查一次 → 顶栏红点) ----------
+  /** 当前红点标志 = dsh 本体更新 或 侧边栏插件更新,任一为真即亮 */
+  function currentUpdateFlag() {
+    return {
+      ...(lastUpdateCheck ?? { hasUpdate: false }),
+      hasUpdate: !!(lastUpdateCheck?.hasUpdate || lastPluginCheck?.hasUpdate),
+      plugin: lastPluginCheck
+        ? { hasUpdate: lastPluginCheck.hasUpdate, installed: lastPluginCheck.installed, latest: lastPluginCheck.latest }
+        : null,
+    };
+  }
+
   function broadcastUpdateFlag() {
     if (topBarView && !topBarView.webContents.isDestroyed()) {
-      topBarView.webContents.send("dsh:update-flag", lastUpdateCheck);
+      topBarView.webContents.send("dsh:update-flag", currentUpdateFlag());
     }
   }
 
@@ -675,6 +694,25 @@ function main() {
     } catch {
       return lastUpdateCheck;
     }
+  }
+
+  // ---------- 侧边栏插件检查(服务状态页板块 + 红点) ----------
+  /** 查一次插件(本地版本 + registry 最新),刷新红点并广播;永远不抛错。 */
+  async function refreshPluginCheck() {
+    const dshHome = appDshHome();
+    try {
+      lastPluginCheck = await pluginManager.checkPlugin(dshHome);
+    } catch {
+      lastPluginCheck = {
+        name: pluginManager.PLUGIN_NAME,
+        installed: pluginManager.getInstalledVersion(dshHome),
+        latest: null,
+        hasUpdate: false,
+        error: "插件检查失败",
+      };
+    }
+    broadcastUpdateFlag();
+    return lastPluginCheck;
   }
 
   // ---------- 升级编排:停服 → 换文件 → 恢复服务 → 刷新红点 ----------
@@ -694,6 +732,53 @@ function main() {
     if (wasReady) await startServer();
     await refreshUpdateFlag();
     return result;
+  }
+
+  // ---------- 插件安装/更新编排:停服 → dsh plugin add → 恢复服务 ----------
+  /**
+   * 安装(version=null)或更新(version=最新版)侧边栏插件。
+   * 服务运行中则先停后启,让新 bundle 在启动时加载;服务未运行时不动它。
+   * 安装成功后写入 openByDefault 偏好(与浏览器 WebUI 对齐)。
+   */
+  async function performPluginInstall(version = null) {
+    const dshHome = appDshHome();
+    const wasReady = server?.ready ?? false;
+    const installedBefore = pluginManager.getInstalledVersion(dshHome);
+    const label = installedBefore ? "更新" : "安装";
+    broadcastStatus({
+      state: "starting",
+      message: `正在${label}侧边栏插件${version ? ` ${version}` : ""}…`,
+    });
+    if (server) await server.stop();
+    serviceState = "stopped";
+    const result = await pluginManager.installPlugin(dshHome, version);
+    if (!result.ok) {
+      if (wasReady) await startServer();
+      return { ...result, previouslyInstalled: installedBefore };
+    }
+    const installed = pluginManager.getInstalledVersion(dshHome) || version || "unknown";
+    pluginManager.ensureOpenByDefault(dshHome);
+    if (wasReady) {
+      try {
+        await startServer();
+      } catch (error) {
+        console.error("[app] 插件安装后重启服务失败:", error);
+        return {
+          ok: true,
+          installed,
+          previouslyInstalled: installedBefore,
+          restarted: false,
+          restartError: error.message || String(error),
+        };
+      }
+    }
+    await refreshPluginCheck();
+    return { ok: true, installed, previouslyInstalled: installedBefore, restarted: wasReady };
+  }
+
+  /** DSH_HOME:继承环境变量,否则 App 自己的隔离目录(与启动 dsh 一致) */
+  function appDshHome() {
+    return process.env.DSH_HOME || path.join(app.getPath("userData"), "dsh-home");
   }
 
   // ---------- IPC(preload 桥) ----------
@@ -725,8 +810,8 @@ function main() {
     if (!result) return { error: "无法获取 npm 版本信息", hasUpdate: false, rows: [] };
     return result;
   });
-  // 顶栏红点查询(启动时已静默查过一次)
-  ipcMain.handle("dsh:get-update-flag", () => lastUpdateCheck ?? { hasUpdate: false });
+  // 顶栏红点查询(启动时已静默查过一次;含插件更新)
+  ipcMain.handle("dsh:get-update-flag", () => currentUpdateFlag());
   // 打开/关闭右侧「dsh 服务与版本」面板(顶栏按钮 / 菜单共用)
   ipcMain.handle("dsh:toggle-sidebar", () => toggleStatusSidebar());
   // 面板当前状态(顶栏按钮激活态/禁用与红点无关)
@@ -753,6 +838,57 @@ function main() {
       return { ok: false, error: error.message || String(error) };
     } finally {
       upgrading = false;
+    }
+  });
+
+  // ---------- 侧边栏插件(dsh-better-sidebar) ----------
+  // 服务状态页的「侧边栏插件」板块:每次进入查一次(本地版本 + registry 最新)
+  ipcMain.handle("dsh:plugin-info", async () => {
+    const info = await refreshPluginCheck();
+    return info ?? { name: pluginManager.PLUGIN_NAME, error: "无法获取插件信息" };
+  });
+  // 安装(version=null) / 更新(version=最新版):单飞,成功后自动重启服务
+  ipcMain.handle("dsh:plugin-install", async (_event, version) => {
+    if (pluginInstalling) return { ok: false, error: "已有插件安装/更新任务进行中,请稍候" };
+    if (version != null && (typeof version !== "string" || !/^\d+\.\d+\.\d+(?:[-+].*)?$/.test(version))) {
+      return { ok: false, error: "版本号格式不正确" };
+    }
+    pluginInstalling = true;
+    try {
+      return await performPluginInstall(version ?? null);
+    } catch (error) {
+      console.error("[app] 插件安装失败:", error);
+      return { ok: false, error: error.message || String(error) };
+    } finally {
+      pluginInstalling = false;
+    }
+  });
+  // 顶栏「侧栏/底栏」切换按钮 → 桥 → 模拟点击插件自己的 toggle 按钮
+  ipcMain.handle("dsh:toggle-plugin-panel", async (_event, which) => {
+    if (which !== "side" && which !== "bottom") return { ok: false, error: "参数错误" };
+    if (!contentView || contentView.webContents.isDestroyed()) {
+      return { ok: false, error: "内容视图不可用" };
+    }
+    try {
+      const res = await contentView.webContents.executeJavaScript(
+        `window.__dshBoxPluginBridge && window.__dshBoxPluginBridge.toggle(${JSON.stringify(which)})`,
+        true
+      );
+      if (res && res.ok) return res;
+      return { ok: false, error: (res && res.error) || "插件未挂载" };
+    } catch (error) {
+      return { ok: false, error: error.message || String(error) };
+    }
+  });
+  // 桥上报的面板开合状态 → 转发给顶栏(按钮高亮/灰显)
+  ipcMain.on("shell:plugin-panels", (_event, state) => {
+    if (
+      topBarView &&
+      !topBarView.webContents.isDestroyed() &&
+      state &&
+      typeof state === "object"
+    ) {
+      topBarView.webContents.send("dsh:plugin-panels", state);
     }
   });
 
@@ -842,6 +978,8 @@ function main() {
 
     // 启动时自动查一次 npm(非阻塞,失败静默):有新版 → 顶栏入口红点
     refreshUpdateFlag().catch(() => {});
+    // 启动时静默查一次侧边栏插件(本地 + registry):插件有新版同样亮红点
+    refreshPluginCheck().catch(() => {});
 
     // 测试钩子:冒烟测试模式 — 就绪后打印标记并退出(CI / 自检用)
     if (process.env.DSH_SMOKE === "1") {

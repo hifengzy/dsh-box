@@ -18,6 +18,11 @@
  *     直到全部查完隐藏「更多」;
  *   - 网络查询失败 → 「网络服务异常」+「重试」;有缓存时回退展示并提示;
  *   - 比当前运行版本新的行显示「更新」按钮(升级链路不变)。
+ *
+ * 侧边栏插件(dsh-better-sidebar):
+ *   - 未安装 → 「安装」;已装无更新 → 无按钮;已装有更新 → 「更新」;
+ *   - 网络查询失败 → 「网络服务异常」+「重试」;
+ *   - 安装/更新由主进程完成(停服 → dsh plugin add → 恢复服务)。
  */
 
 const $ = (id) => document.getElementById(id);
@@ -30,6 +35,9 @@ const els = {
   stateLabel: $("stateLabel"),
   startBtn: $("startBtn"),
   serviceHint: $("serviceHint"),
+  // 侧边栏插件
+  pluginCard: $("pluginCard"),
+  pluginHint: $("pluginHint"),
   // DSH 版本
   versionList: $("versionList"),
   versionError: $("versionError"),
@@ -41,6 +49,7 @@ const els = {
 
 let currentInfo = null;
 let upgrading = false;
+let pluginInstalling = false;
 
 /** 版本分页:每页条数 / 当前展示条数 / 全部行缓存 */
 const PAGE_SIZE = 10;
@@ -229,6 +238,122 @@ async function doUpgrade(version, btn) {
   }
 }
 
+// ---------- 侧边栏插件(dsh-better-sidebar) ----------
+// 状态机:未安装 →「安装」;已装无更新 → 无按钮;已装有更新 →「更新」;
+// 网络查询失败 →「网络服务异常」+「重试」(已装时保留版本信息)。
+
+/** 渲染插件卡片(info = getPluginInfo 结果) */
+function renderPluginCard(info) {
+  const card = els.pluginCard;
+  card.textContent = "";
+  const isInstalled = !!info.installed;
+  const failed = !!info.error;
+
+  // 名称行
+  const name = document.createElement("div");
+  name.className = "plugin-name";
+  name.textContent = "dsh-better-sidebar";
+  card.appendChild(name);
+
+  // 未安装 + 网络失败 → 错误态(复用版本区样式)
+  if (failed && !isInstalled) {
+    const err = document.createElement("div");
+    err.className = "version-error";
+    const p = document.createElement("p");
+    p.className = "error-text";
+    p.textContent = "网络服务异常";
+    const retry = document.createElement("button");
+    retry.className = "btn btn-outline";
+    retry.textContent = "重试";
+    retry.addEventListener("click", () => loadPluginInfo());
+    err.append(p, retry);
+    card.appendChild(err);
+    return;
+  }
+
+  // 版本行:未安装 / 已装(±最新)
+  const meta = document.createElement("div");
+  meta.className = "plugin-meta";
+  const latestSuffix =
+    info.latest && !info.hasUpdate && isInstalled ? " · 已是最新" : "";
+  if (!isInstalled) {
+    meta.textContent = info.latest ? `未安装 · 最新 ${info.latest}` : "未安装";
+  } else {
+    meta.textContent = info.hasUpdate
+      ? `已装 ${info.installed} · 最新 ${info.latest}`
+      : `已装 ${info.installed}${latestSuffix}`;
+  }
+  card.appendChild(meta);
+
+  // 已装但网络失败 → 额外警示行 + 重试(不提供更新按钮,无法判断)
+  if (failed && isInstalled) {
+    const warn = document.createElement("div");
+    warn.className = "plugin-meta plugin-meta-warn";
+    warn.textContent = "网络异常,无法检查更新";
+    card.appendChild(warn);
+    const retry = document.createElement("button");
+    retry.className = "btn btn-outline plugin-action";
+    retry.textContent = "重试";
+    retry.addEventListener("click", () => loadPluginInfo());
+    card.appendChild(retry);
+    return;
+  }
+
+  // 操作按钮:未安装 → 安装;已装有更新 → 更新;已装无更新 → 无按钮
+  if (!isInstalled || info.hasUpdate) {
+    const btn = document.createElement("button");
+    btn.className = "btn btn-primary plugin-action";
+    const isInstall = !isInstalled;
+    btn.textContent = isInstall ? "安装" : "更新";
+    btn.addEventListener("click", () => doPluginInstall(info.latest, btn, isInstall));
+    card.appendChild(btn);
+  }
+}
+
+/** 查一次插件(本地 + registry)并渲染;每次进入面板都查 */
+async function loadPluginInfo() {
+  els.pluginHint.hidden = false;
+  els.pluginHint.textContent = "正在检查…";
+  try {
+    const info = await window.dsh.getPluginInfo();
+    renderPluginCard(info);
+    els.pluginHint.hidden = true;
+  } catch (error) {
+    els.pluginHint.hidden = true;
+    renderPluginCard({ error: String(error), installed: null });
+  }
+}
+
+/** 安装/更新(主进程负责停服 → dsh plugin add → 恢复服务) */
+async function doPluginInstall(version, btn, isInstall) {
+  if (pluginInstalling) return;
+  const verb = isInstall ? "安装" : "更新";
+  const question = isInstall
+    ? `确定安装 dsh-better-sidebar ${version} 吗?\n\n需要联网下载,完成后 dsh 服务会自动重启以加载插件。`
+    : `确定将 dsh-better-sidebar 更新到 ${version} 吗?\n\n完成后 dsh 服务会自动重启以加载新版本。`;
+  if (!confirm(question)) return;
+  pluginInstalling = true;
+  btn.disabled = true;
+  btn.textContent = `${verb}中…`;
+  els.pluginHint.hidden = false;
+  els.pluginHint.textContent = `正在${verb} dsh-better-sidebar ${version},请稍候…`;
+  try {
+    const res = await window.dsh.installPlugin(version);
+    if (res.ok) {
+      els.pluginHint.textContent = res.unchanged
+        ? `当前已是 ${res.installed}`
+        : `已${verb}到 ${res.installed}${res.restarted ? ",服务已重启" : ",启动服务后生效"}`;
+      await loadPluginInfo();
+    } else {
+      els.pluginHint.textContent = `${verb}失败: ${res.error}`;
+    }
+  } catch (error) {
+    els.pluginHint.textContent = `${verb}失败: ${error}`;
+  } finally {
+    pluginInstalling = false;
+  }
+}
+
 // ---------- 事件 ----------
 
 els.startBtn.addEventListener("click", async () => {
@@ -264,6 +389,7 @@ window.dsh.onStatus((status) => {
   }
 });
 
-// 进入页面:拉一次服务信息 + 查一次 npm 版本
+// 进入页面:拉一次服务信息 + 查一次 npm 版本 + 查一次插件
 refreshInfo();
 loadVersions();
+loadPluginInfo();

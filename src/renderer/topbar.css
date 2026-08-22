@@ -42,10 +42,11 @@ body {
   -webkit-app-region: no-drag;
 }
 
-/* GitHub / dsh 状态入口:28×28 无背景按钮(适配 40px 顶栏),悬停才显示背景色,
+/* GitHub / dsh 状态 / 插件面板 入口:28×28 无背景按钮(适配 40px 顶栏),悬停才显示背景色,
  * 图标 20×20 居中。 */
 .github-btn,
-.status-btn {
+.status-btn,
+.panel-btn {
   position: relative;
   width: 28px;
   height: 28px;
@@ -61,24 +62,28 @@ body {
 }
 
 .github-btn:hover,
-.status-btn:hover {
+.status-btn:hover,
+.panel-btn:hover:not(:disabled) {
   background-color: var(--bar-hover);
 }
 
 .github-btn:active,
-.status-btn:active {
+.status-btn:active,
+.panel-btn:active:not(:disabled) {
   background-color: var(--bar-active);
 }
 
 .github-btn:focus-visible,
-.status-btn:focus-visible {
+.status-btn:focus-visible,
+.panel-btn:focus-visible {
   outline: 1px solid var(--bar-text);
   outline-offset: -1px;
 }
 
 /* 图标:mask 把 svg 镂空成纯色,随 light/dark 自动变色 */
 .github-icon,
-.status-icon {
+.status-icon,
+.panel-icon {
   width: 20px;
   height: 20px;
   background-color: var(--bar-text);
@@ -92,6 +97,17 @@ body {
 .status-icon {
   -webkit-mask: url("../../assets/dsh-status.svg") no-repeat center / contain;
   mask: url("../../assets/dsh-status.svg") no-repeat center / contain;
+}
+
+/* 侧边栏插件两个面板开关:右侧栏 / 底部面板(复刻插件自己的 16px glyph,放大到 20) */
+.panel-icon-side {
+  -webkit-mask: url("../../assets/panel-right.svg") no-repeat center / contain;
+  mask: url("../../assets/panel-right.svg") no-repeat center / contain;
+}
+
+.panel-icon-bottom {
+  -webkit-mask: url("../../assets/panel-bottom.svg") no-repeat center / contain;
+  mask: url("../../assets/panel-bottom.svg") no-repeat center / contain;
 }
 
 /* 更新红点:有可升级版本时,状态入口右上角亮起(红色,带一圈与玻璃适配的描边) */
@@ -114,6 +130,21 @@ body {
 
 .status-btn.status-btn-active .status-icon {
   background-color: light-dark(rgb(65, 118, 230), rgb(103, 158, 254));
+}
+
+/* 插件面板按钮激活态:对应面板在页面内展开时点亮(品牌蓝图标 + 淡色底) */
+.panel-btn.panel-btn-active {
+  background-color: var(--bar-active);
+}
+
+.panel-btn.panel-btn-active .panel-icon {
+  background-color: light-dark(rgb(65, 118, 230), rgb(103, 158, 254));
+}
+
+/* 插件未安装/未挂载:置灰禁用 */
+.panel-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 /* 窗口过窄无法展开面板时:置灰禁用 */
