@@ -1,13 +1,14 @@
 "use strict";
 
 /**
- * plugin-manager.js — DSH Box 对 dsh-better-sidebar 插件的生命周期管理。
+ * plugin-manager.js — DSH Box 对第三方 Cordis 插件的生命周期管理。
  *
- * dsh-better-sidebar 是 Cordis web 插件(npm 包),安装在 dsh web profile:
- *   <DSH_HOME>/profiles/web/node_modules/dsh-better-sidebar
+ * 当前托管两个插件,均为 npm 包、装在 dsh web profile:
+ *   dsh-better-sidebar(侧边栏)  → <DSH_HOME>/profiles/web/node_modules/dsh-better-sidebar
+ *   dshmarket(插件市场)          → <DSH_HOME>/profiles/web/node_modules/dshmarket
  *
  * 安装 / 更新走 dsh CLI(转发 pnpm):
- *   dsh plugin --profile web add dsh-better-sidebar[@version]
+ *   dsh plugin --profile web add <name>[@version]
  *
  * 本模块只做「检测 + 查询 + 触发安装/更新 + 写入开屏偏好」,
  * 不停/启 dsh 服务 —— 由主进程(main.js)编排(先停服务再动包,
@@ -21,26 +22,37 @@ const semver = require("semver");
 const { resolveDsh } = require("./dsh-server");
 const npmCheck = require("./npm-check");
 
-const PLUGIN_NAME = "dsh-better-sidebar";
 const PROFILE = "web";
+
+/** 托管插件清单:包名(npm 注册名)→ 安装后是否写入 openByDefault 开屏偏好 */
+const MANAGED_PLUGINS = {
+  "dsh-better-sidebar": { openByDefault: true },
+  dshmarket: { openByDefault: false },
+};
+
+function isManaged(name) {
+  return Object.prototype.hasOwnProperty.call(MANAGED_PLUGINS, name);
+}
 const FETCH_TIMEOUT_MS = 10_000;
 /** pnpm 安装可能较慢(下载依赖),放宽到 5 分钟 */
 const INSTALL_TIMEOUT_MS = 5 * 60_000;
 
 /** 插件在 profile 里的安装目录 */
-function pluginDir(dshHome) {
-  return path.join(dshHome, "profiles", PROFILE, "node_modules", PLUGIN_NAME);
+function pluginDir(dshHome, name) {
+  return path.join(dshHome, "profiles", PROFILE, "node_modules", name);
 }
 
 /**
  * 读取已安装版本;未安装返回 null。
  * @param {string} dshHome DSH_HOME 目录
+ * @param {string} name 包名(如 dsh-better-sidebar / dshmarket)
  * @returns {string|null}
  */
-function getInstalledVersion(dshHome) {
+function getInstalledVersion(dshHome, name) {
+  if (!isManaged(name)) return null;
   try {
     const pkg = JSON.parse(
-      fs.readFileSync(path.join(pluginDir(dshHome), "package.json"), "utf8")
+      fs.readFileSync(path.join(pluginDir(dshHome, name), "package.json"), "utf8")
     );
     return typeof pkg.version === "string" && pkg.version ? pkg.version : null;
   } catch {
@@ -49,8 +61,8 @@ function getInstalledVersion(dshHome) {
 }
 
 /** 查询 npm registry 的 latest 版本号 */
-async function fetchLatest() {
-  const url = `${npmCheck.registryBase()}/${PLUGIN_NAME}/latest`;
+async function fetchLatest(name) {
+  const url = `${npmCheck.registryBase()}/${encodeURIComponent(name)}/latest`;
   const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`npm registry 请求失败 (HTTP ${res.status})`);
   const data = await res.json();
@@ -60,14 +72,15 @@ async function fetchLatest() {
 /**
  * 综合检查:本地版本 + registry 最新版 + 是否有更新(失败不抛,error 字段记录)。
  * @param {string} dshHome
+ * @param {string} name 包名(如 dsh-better-sidebar / dshmarket)
  * @returns {Promise<{name: string, installed: string|null, latest: string|null, hasUpdate: boolean, error: string|null}>}
  */
-async function checkPlugin(dshHome) {
-  const installed = getInstalledVersion(dshHome);
+async function checkPlugin(dshHome, name) {
+  const installed = getInstalledVersion(dshHome, name);
   let latest = null;
   let error = null;
   try {
-    latest = await fetchLatest();
+    latest = await fetchLatest(name);
   } catch (e) {
     error = e.message || String(e);
   }
@@ -75,7 +88,7 @@ async function checkPlugin(dshHome) {
   if (installed && latest && semver.valid(installed) && semver.valid(latest)) {
     hasUpdate = semver.gt(latest, installed);
   }
-  return { name: PLUGIN_NAME, installed, latest, hasUpdate, error };
+  return { name, installed, latest, hasUpdate, error };
 }
 
 /**
@@ -150,16 +163,18 @@ function runDshCli(dshHome, args) {
 /**
  * 安装或更新插件到指定版本。
  * @param {string} dshHome
+ * @param {string} name 包名(如 dsh-better-sidebar / dshmarket)
  * @param {string} [version] 目标版本;缺省装 latest
  */
-async function installPlugin(dshHome, version = null) {
-  const spec = version ? `${PLUGIN_NAME}@${version}` : PLUGIN_NAME;
+async function installPlugin(dshHome, name, version = null) {
+  if (!isManaged(name)) return { ok: false, error: `未托管的插件包: ${name}` };
+  const spec = version ? `${name}@${version}` : name;
   return runDshCli(dshHome, ["plugin", "--profile", PROFILE, "add", spec]);
 }
 
 /**
- * 写入开屏偏好:<DSH_HOME>/settings.yaml 的 dsh-better-sidebar.openByDefault = true。
- * 只用文本级合并(项目无 yaml 依赖),不覆盖文件里其它配置。
+ * 写入开屏偏好:<DSH_HOME>/settings.yaml 的 dsh-better-sidebar.openByDefault = true
+ * (仅侧边栏插件声明)。只用文本级合并(项目无 yaml 依赖),不覆盖文件里其它配置。
  * @param {string} dshHome
  * @returns {boolean} 写入成功与否
  */
@@ -219,8 +234,9 @@ function ensureOpenByDefault(dshHome) {
 }
 
 module.exports = {
-  PLUGIN_NAME,
   PROFILE,
+  MANAGED_PLUGINS,
+  isManaged,
   pluginDir,
   getInstalledVersion,
   checkPlugin,

@@ -55,13 +55,30 @@ const els = {
   pluginError: $("pluginError"),
   pluginRetryBtn: $("pluginRetryBtn"),
   pluginHint: $("pluginHint"),
+  // 插件市场
+  marketRow: $("marketRow"),
+  marketName: $("marketName"),
+  marketVersionBadge: $("marketVersionBadge"),
+  marketActionBtn: $("marketActionBtn"),
+  marketInstalledLabel: $("marketInstalledLabel"),
+  marketDesc: $("marketDesc"),
+  marketSwitchRow: $("marketSwitchRow"),
+  marketSwitch: $("marketSwitch"),
+  marketError: $("marketError"),
+  marketRetryBtn: $("marketRetryBtn"),
+  marketHint: $("marketHint"),
 };
 
 let currentInfo = null;
 let upgrading = false;
 let pluginInstalling = false;
+let marketInstalling = false;
 /** 最近一次插件查询信息(供安装/更新成功后刷新对照) */
 let lastPluginInfo = null;
+/** 最近一次插件市场查询信息 */
+let lastMarketInfo = null;
+/** 侧边栏入口开关状态(默认关) */
+let marketSwitchOn = false;
 
 // ---------- 服务状态 ----------
 
@@ -264,6 +281,128 @@ async function doPluginInstall(version, btn, isInstall) {
   }
 }
 
+// ---------- 插件市场(dsh-market) ----------
+// 状态机:未安装 →「安装」+ 说明文案;已装 == 最新 →「已安装」(绿字);
+// 已装 < 最新 →「更新」;已装后显示「侧边栏入口」开关;失败 → 错误+重试。
+
+/** 渲染开关(aria + 样式),不触发 IPC */
+function renderMarketSwitch(on) {
+  marketSwitchOn = on;
+  els.marketSwitch.classList.toggle("switch-on", on);
+  els.marketSwitch.setAttribute("aria-checked", String(on));
+}
+
+/** 渲染插件市场板块(info = getMarketInfo 结果) */
+function renderMarket(info) {
+  lastMarketInfo = info;
+  const installed = info.installed;
+  const failed = !!info.error;
+  const latest = info.latest;
+
+  els.marketRow.hidden = false;
+  const badgeText = failed ? (installed || latest) : (latest || installed);
+  if (badgeText) {
+    els.marketVersionBadge.textContent = badgeText;
+    els.marketVersionBadge.hidden = false;
+  } else {
+    els.marketVersionBadge.hidden = true;
+  }
+
+  // 未安装 + 查询失败:隐藏行,只显示错误态
+  if (failed && !installed) {
+    els.marketRow.hidden = true;
+    els.marketDesc.hidden = true;
+    els.marketSwitchRow.hidden = true;
+    els.marketError.hidden = false;
+    els.marketError.querySelector(".error-text").textContent = "网络服务异常";
+    return;
+  }
+
+  // 已安装 + 查询失败:显示本地已装版本 + 警示 + 重试
+  if (failed && installed) {
+    els.marketDesc.hidden = true;
+    els.marketSwitchRow.hidden = true;
+    els.marketError.hidden = false;
+    els.marketError.querySelector(".error-text").textContent = "网络异常,无法检查更新";
+    els.marketActionBtn.hidden = true;
+    els.marketInstalledLabel.hidden = true;
+    return;
+  }
+
+  els.marketError.hidden = true;
+
+  // 动作区:未安装 → 安装(显示说明文案);已装 < 最新 → 更新;已装 → 已安装(绿字)
+  const isInstall = !installed;
+  const hasUpdate = installed && latest && installed !== latest;
+  if (isInstall || hasUpdate) {
+    els.marketActionBtn.hidden = false;
+    els.marketActionBtn.disabled = false;
+    els.marketActionBtn.textContent = isInstall ? "安装" : "更新";
+    els.marketInstalledLabel.hidden = true;
+  } else {
+    els.marketActionBtn.hidden = true;
+    els.marketInstalledLabel.hidden = false;
+  }
+
+  // 说明文案只在未安装时显示;已安装显示开关行
+  els.marketDesc.hidden = !isInstall;
+  els.marketSwitchRow.hidden = isInstall;
+}
+
+/** 查一次插件市场(本地 + registry)并渲染;每次进入面板都查 */
+async function loadMarketInfo() {
+  els.marketHint.hidden = false;
+  els.marketHint.textContent = "正在检查…";
+  try {
+    renderMarket(await window.dsh.getMarketInfo());
+    els.marketHint.hidden = true;
+  } catch (error) {
+    els.marketHint.hidden = true;
+    renderMarket({ error: String(error), installed: null });
+  }
+  // 已安装状态下同步一次侧边栏入口开关
+  if (lastMarketInfo?.installed) {
+    try {
+      const res = await window.dsh.getMarketSwitch();
+      renderMarketSwitch(!!(res && res.ok && res.enabled));
+    } catch {
+      /* 读开关失败保持现状 */
+    }
+  } else {
+    renderMarketSwitch(false);
+  }
+}
+
+/** 安装/更新插件市场(主进程负责停服 → dsh plugin add → 恢复服务) */
+async function doMarketInstall(version, btn, isInstall) {
+  if (marketInstalling) return;
+  const verb = isInstall ? "安装" : "更新";
+  const question = isInstall
+    ? `确定安装插件市场 ${version} 吗?\n\n需要联网下载,完成后 dsh 服务会自动重启以加载插件。`
+    : `确定将插件市场更新到 ${version} 吗?\n\n完成后 dsh 服务会自动重启以加载新版本。`;
+  if (!confirm(question)) return;
+  marketInstalling = true;
+  btn.disabled = true;
+  btn.textContent = `${verb}中…`;
+  els.marketHint.hidden = false;
+  els.marketHint.textContent = `正在${verb}插件市场 ${version},请稍候…`;
+  try {
+    const res = await window.dsh.installMarket(version);
+    if (res.ok) {
+      els.marketHint.textContent = res.unchanged
+        ? `当前已是 ${res.installed}`
+        : `已${verb}到 ${res.installed}${res.restarted ? ",服务已重启" : ",启动服务后生效"}`;
+      await loadMarketInfo();
+    } else {
+      els.marketHint.textContent = `${verb}失败: ${res.error}`;
+    }
+  } catch (error) {
+    els.marketHint.textContent = `${verb}失败: ${error}`;
+  } finally {
+    marketInstalling = false;
+  }
+}
+
 // ---------- 应用内升级(DSH 本体,链路不变) ----------
 
 async function doUpgrade(version, btn) {
@@ -334,6 +473,34 @@ els.pluginRetryBtn.addEventListener("click", () => {
   loadPluginInfo();
 });
 
+els.marketRetryBtn.addEventListener("click", () => {
+  loadMarketInfo();
+});
+
+els.marketActionBtn.addEventListener("click", () => {
+  doMarketInstall(lastMarketInfo?.latest ?? null, els.marketActionBtn, !lastMarketInfo?.installed);
+});
+
+// 侧边栏入口开关:点击翻转 → 持久化 + 注入层即时生效
+els.marketSwitch.addEventListener("click", async () => {
+  const next = !marketSwitchOn;
+  renderMarketSwitch(next); // 先本地翻转(响应快)
+  try {
+    const res = await window.dsh.setMarketSwitch(next);
+    if (res && res.ok) renderMarketSwitch(!!res.enabled);
+    else renderMarketSwitch(!next); // 失败回滚
+  } catch {
+    renderMarketSwitch(!next);
+  }
+});
+// 键盘可达性(role=switch)
+els.marketSwitch.addEventListener("keydown", (event) => {
+  if (event.key === " " || event.key === "Enter") {
+    event.preventDefault();
+    els.marketSwitch.click();
+  }
+});
+
 els.pluginActionBtn.addEventListener("click", () => {
   doPluginInstall(lastPluginInfo?.latest ?? null, els.pluginActionBtn, !lastPluginInfo?.installed);
 });
@@ -349,7 +516,8 @@ window.dsh.onStatus((status) => {
   }
 });
 
-// 进入页面:拉一次服务信息 + 查一次 npm 版本 + 查一次插件
+// 进入页面:拉一次服务信息 + 查一次 npm 版本 + 查一次插件 + 查一次插件市场
 refreshInfo();
 loadVersions();
 loadPluginInfo();
+loadMarketInfo();

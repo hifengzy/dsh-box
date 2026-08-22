@@ -312,6 +312,69 @@ body {
   word-break: break-word;
 }
 
+/* 行内名称(插件市场等,无链接的纯文本) */
+.row-name {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- 开关(「在 DSH 侧边栏显示插件市场入口」) ---------- */
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 2px;
+  cursor: pointer;
+}
+
+.switch-label {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-secondary);
+}
+
+/* 开关本体:33×18 胶囊,开 = 反白填充 + 白点右;关 = 描边 + 灰点左 */
+.switch {
+  position: relative;
+  flex: none;
+  width: 33px;
+  height: 18px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.switch-knob {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: left 0.15s ease, background-color 0.15s ease;
+}
+
+.switch.switch-on {
+  background: var(--primary-fill);
+  border-color: var(--primary-fill);
+}
+
+.switch.switch-on .switch-knob {
+  left: 16px;
+  background: var(--primary-fg);
+}
+
+.switch:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
 /* ---------- 查询失败 / 缓存回退 ---------- */
 .version-error {
   display: flex;

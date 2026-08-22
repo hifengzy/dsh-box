@@ -13,7 +13,9 @@
  *   9. 顶栏插件按钮:未安装禁用;状态上报后启用+高亮;点击 → toggle-plugin-panel;
  *   10. 侧边栏板块:未安装→「安装」;已装==最新→「已安装」;已装<最新→「更新」;
  *      查询失败→「网络服务异常」+「重试」;安装/更新闭环;版本徽标 = 最新版本;
- *   11. 链接:DSH 版本号 / 插件名 → 仓库链接,悬停下划线(hover 规则存在)。
+ *   11. 链接:DSH 版本号 / 插件名 → 仓库链接,悬停下划线(hover 规则存在);
+ *   12. 插件市场板块:未安装→说明+「安装」;已装→「已安装」+「侧边栏入口」开关
+ *      (默认关,点击翻转持久化);有更新→「更新」;失败→「网络服务异常」+「重试」。
  *
  * 用法: electron scripts/regression-status.js --no-sandbox
  * 说明:测试固定 nativeTheme=light,断言浅色 token 的具体值,结果确定。
@@ -70,6 +72,10 @@ let stopped = false;
 let toggledSidebar = 0;
 let toggledPluginPanel = null;
 let openedExternal = null;
+let marketInstalled = null; // null = 未安装
+let marketLatest = "1.18.1";
+let marketError = null;
+let marketSwitchOn = false;
 // 插件板块夹具:可变状态驱动各组断言
 let pluginInstalled = null; // null = 未安装
 let pluginLatest = "0.15.2";
@@ -124,6 +130,23 @@ ipcMain.handle("dsh:plugin-install", async (_e, v) => {
 ipcMain.handle("dsh:toggle-plugin-panel", (_e, which) => {
   toggledPluginPanel = which;
   return { ok: true };
+});
+// 插件市场:查询(可变夹具)/安装/侧边栏入口开关
+ipcMain.handle("dsh:market-info", () => ({
+  name: "dshmarket",
+  installed: marketInstalled,
+  latest: marketLatest,
+  hasUpdate: marketInstalled !== null && marketLatest !== null && verLt(marketInstalled, marketLatest),
+  error: marketError,
+}));
+ipcMain.handle("dsh:market-install", async (_e, v) => {
+  marketInstalled = v ?? marketLatest;
+  return { ok: true, installed: marketInstalled, previouslyInstalled: null, restarted: true };
+});
+ipcMain.handle("dsh:market-switch", (_e, next) => {
+  if (next === undefined) return { ok: true, enabled: marketSwitchOn };
+  marketSwitchOn = !!next;
+  return { ok: true, enabled: marketSwitchOn };
 });
 // 链接 → 系统浏览器(记录 URL 供断言)
 ipcMain.handle("shell:open-external", (_e, url) => {
@@ -558,6 +581,145 @@ app.whenReady().then(async () => {
     if (!urlAfterDshClick.startsWith("file:") || !urlAfterPluginClick.startsWith("file:"))
       throw new Error("点击链接不应在 Electron 内导航(应保持 file:// 面板)");
     console.log("[11] 链接:仓库链接 + hover 下划线 + 点击走系统浏览器(不导航) ✓");
+
+    // ========== 12. 插件市场板块:四态 + 安装闭环 + 开关 ==========
+    await win.loadFile(path.join(__dirname, "..", "src", "renderer", "dsh-status.html"));
+    await wait(300);
+
+    // 12a. 未安装:名称 + 版本徽标 + 说明 + 「安装」;无开关行
+    marketInstalled = null;
+    marketLatest = "1.18.1";
+    marketError = null;
+    marketSwitchOn = false;
+    await win.webContents.executeJavaScript(`document.getElementById("marketHint"); undefined;`);
+    await wait(120);
+    const mk1 = await win.webContents.executeJavaScript(`(() => {
+      const row = document.getElementById("marketRow");
+      return {
+        rowHidden: row.hidden,
+        name: document.getElementById("marketName").textContent,
+        badge: document.getElementById("marketVersionBadge").textContent,
+        badgeHidden: document.getElementById("marketVersionBadge").hidden,
+        actionText: document.getElementById("marketActionBtn").textContent,
+        actionHidden: document.getElementById("marketActionBtn").hidden,
+        installedHidden: document.getElementById("marketInstalledLabel").hidden,
+        descHidden: document.getElementById("marketDesc").hidden,
+        desc: document.getElementById("marketDesc").textContent,
+        switchHidden: document.getElementById("marketSwitchRow").hidden,
+      };
+    })()`);
+    if (mk1.rowHidden) throw new Error("插件市场行应显示");
+    if (mk1.name !== "dsh-market") throw new Error(`名称应为 dsh-market,实际 ${mk1.name}`);
+    if (mk1.badge !== "1.18.1" || mk1.badgeHidden)
+      throw new Error(`版本徽标应显示最新 1.18.1,实际 ${mk1.badge}`);
+    if (mk1.actionHidden || mk1.actionText !== "安装")
+      throw new Error("未安装应显示「安装」按钮");
+    if (!mk1.installedHidden) throw new Error("未安装不应显示「已安装」");
+    if (mk1.descHidden || !mk1.desc.includes("浏览、搜索、安装、更新、卸载"))
+      throw new Error(`未安装应显示说明文案,实际 ${mk1.desc}`);
+    if (!mk1.switchHidden) throw new Error("未安装不应显示开关行");
+    console.log("[12a] 插件市场:未安装 → 名称+徽标 1.18.1+说明+「安装」,无开关 ✓");
+
+    // 12b. 点「安装」→ 已安装(绿字)+ 开关行(默认关);点开关 → 持久化 on
+    await win.webContents.executeJavaScript(`window.confirm = () => true; undefined;`);
+    await win.webContents.executeJavaScript(`document.getElementById("marketActionBtn").click(); undefined;`);
+    await wait(280);
+    if (marketInstalled !== "1.18.1") throw new Error(`点「安装」应 install 1.18.1,实际 ${marketInstalled}`);
+    const mk2 = await win.webContents.executeJavaScript(`(() => {
+      const sw = document.getElementById("marketSwitch");
+      return {
+        badge: document.getElementById("marketVersionBadge").textContent,
+        actionHidden: document.getElementById("marketActionBtn").hidden,
+        installedText: document.getElementById("marketInstalledLabel").textContent,
+        installedHidden: document.getElementById("marketInstalledLabel").hidden,
+        installedColor: getComputedStyle(document.getElementById("marketInstalledLabel")).color,
+        descHidden: document.getElementById("marketDesc").hidden,
+        switchHidden: document.getElementById("marketSwitchRow").hidden,
+        switchChecked: sw.getAttribute("aria-checked"),
+        switchOn: sw.classList.contains("switch-on"),
+      };
+    })()`);
+    if (!mk2.actionHidden || mk2.installedHidden || mk2.installedText !== "已安装")
+      throw new Error("装完应显示「已安装」且无按钮");
+    if (mk2.installedColor !== "rgb(34, 197, 94)") throw new Error("「已安装」应为绿色");
+    if (!mk2.descHidden) throw new Error("已安装后应隐藏说明文案");
+    if (mk2.switchHidden) throw new Error("已安装后应显示开关行");
+    if (mk2.switchChecked !== "false" || mk2.switchOn)
+      throw new Error("开关应默认关闭");
+    // 点击开关 → on
+    await win.webContents.executeJavaScript(`document.getElementById("marketSwitch").click(); undefined;`);
+    await wait(150);
+    if (marketSwitchOn !== true) throw new Error("点开关应 setMarketSwitch(true)");
+    const mk2b = await win.webContents.executeJavaScript(`(() => {
+      const sw = document.getElementById("marketSwitch");
+      return { checked: sw.getAttribute("aria-checked"), on: sw.classList.contains("switch-on") };
+    })()`);
+    if (mk2b.checked !== "true" || !mk2b.on) throw new Error("开关点击后应呈现开态");
+    console.log("[12b] 插件市场:安装闭环 → 「已安装」+ 开关(默认关,点击开) ✓");
+
+    // 12c. 已装但低于最新 → 「更新」;点更新 → 装完已安装
+    marketInstalled = "1.17.0";
+    marketLatest = "1.18.0";
+    await win.loadFile(path.join(__dirname, "..", "src", "renderer", "dsh-status.html")); // 重载触发重新查询
+    await wait(300);
+    const mk3 = await win.webContents.executeJavaScript(`(() => ({
+      badge: document.getElementById("marketVersionBadge").textContent,
+      actionHidden: document.getElementById("marketActionBtn").hidden,
+      actionText: document.getElementById("marketActionBtn").textContent,
+      installedHidden: document.getElementById("marketInstalledLabel").hidden,
+      switchHidden: document.getElementById("marketSwitchRow").hidden,
+    }))()`);
+    if (mk3.badge !== "1.18.0") throw new Error(`版本徽标应显示最新 1.18.0,实际 ${mk3.badge}`);
+    if (mk3.actionHidden || mk3.actionText !== "更新")
+      throw new Error("有更新应显示「更新」按钮");
+    if (!mk3.installedHidden) throw new Error("有更新不应显示「已安装」");
+    if (mk3.switchHidden) throw new Error("已装态应显示开关行");
+    await win.webContents.executeJavaScript(`window.confirm = () => true; undefined;`);
+    await win.webContents.executeJavaScript(`document.getElementById("marketActionBtn").click(); undefined;`);
+    await wait(280);
+    if (marketInstalled !== "1.18.0") throw new Error(`点「更新」应 install 最新,实际 ${marketInstalled}`);
+    const mk4 = await win.webContents.executeJavaScript(`(() => ({
+      actionHidden: document.getElementById("marketActionBtn").hidden,
+      installedHidden: document.getElementById("marketInstalledLabel").hidden,
+    }))()`);
+    if (!mk4.actionHidden || mk4.installedHidden) throw new Error("更新后应「已安装」");
+    console.log("[12c] 插件市场:已装 1.17.0 < 最新 1.18.0 → 「更新」 → 装完「已安装」 ✓");
+
+    // 12d. 查询失败:未装→错误+重试;已装→警示+重试;恢复
+    marketInstalled = null;
+    marketError = "fetch failed";
+    await win.loadFile(path.join(__dirname, "..", "src", "renderer", "dsh-status.html"));
+    await wait(300);
+    const mk5 = await win.webContents.executeJavaScript(`(() => ({
+      rowHidden: document.getElementById("marketRow").hidden,
+      errText: document.querySelector("#marketError .error-text").textContent,
+      retryBtns: [...document.querySelectorAll("#marketError button")].map((b) => b.textContent),
+    }))()`);
+    if (!mk5.rowHidden || mk5.errText !== "网络服务异常" || mk5.retryBtns[0] !== "重试")
+      throw new Error("未装+失败应显示错误+重试");
+    marketInstalled = "1.17.0";
+    marketError = "fetch failed";
+    await win.loadFile(path.join(__dirname, "..", "src", "renderer", "dsh-status.html"));
+    await wait(300);
+    const mk5b = await win.webContents.executeJavaScript(`(() => ({
+      badge: document.getElementById("marketVersionBadge").textContent,
+      errText: document.querySelector("#marketError .error-text").textContent,
+      actionHidden: document.getElementById("marketActionBtn").hidden,
+    }))()`);
+    if (mk5b.badge !== "1.17.0" || mk5b.errText !== "网络异常,无法检查更新" || !mk5b.actionHidden)
+      throw new Error("已装+失败应回退本地版本+警示");
+    marketError = null;
+    marketLatest = "1.18.1";
+    await win.webContents.executeJavaScript(`document.getElementById("marketRetryBtn").click(); undefined;`);
+    await wait(250);
+    const mk6 = await win.webContents.executeJavaScript(`(() => ({
+      errHidden: document.getElementById("marketError").hidden,
+      actionText: document.getElementById("marketActionBtn").textContent,
+      actionHidden: document.getElementById("marketActionBtn").hidden,
+    }))()`);
+    if (!mk6.errHidden || mk6.actionHidden || mk6.actionText !== "更新")
+      throw new Error("重试后应恢复「更新」态");
+    console.log("[12d] 插件市场:查询失败(未装/已装)+ 重试恢复 ✓");
 
     console.log("\nPASS ✓ 服务状态与版本面板回归通过");
     win.destroy();

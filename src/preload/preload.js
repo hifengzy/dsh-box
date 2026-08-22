@@ -87,4 +87,16 @@ contextBridge.exposeInMainWorld("dsh", {
 
   /** 内容页里注入的桥脚本上报插件面板状态(仅内容视图实际调用) */
   reportPluginPanels: (state) => ipcRenderer.send("shell:plugin-panels", state),
+
+  /** 查询插件市场信息(本地版本 + registry 最新);进入状态页时调用 */
+  getMarketInfo: () => ipcRenderer.invoke("dsh:market-info"),
+
+  /** 安装(version=null)或更新(version=最新版)插件市场;成功后自动重启服务 */
+  installMarket: (version) => ipcRenderer.invoke("dsh:market-install", version ?? null),
+
+  /** 读「在 DSH 侧边栏显示插件市场入口」开关(返回 { ok, enabled }) */
+  getMarketSwitch: () => ipcRenderer.invoke("dsh:market-switch"),
+
+  /** 写开关(true/false):持久化到 settings.yaml + 注入层即时生效 */
+  setMarketSwitch: (enabled) => ipcRenderer.invoke("dsh:market-switch", !!enabled),
 });

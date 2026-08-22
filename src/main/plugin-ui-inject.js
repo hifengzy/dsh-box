@@ -93,4 +93,154 @@ const PLUGIN_HIDE_CSS = `
 }
 `;
 
-module.exports = { PLUGIN_BRIDGE_JS, PLUGIN_HIDE_CSS };
+/**
+ * MARKET_BRIDGE_JS_FN — 插件市场(dshmarket)外壳定制注入体:
+ *
+ *   1) 设置弹窗导航里「插件市场」标签页按钮:隐藏 dsh 默认齿轮图标,
+ *      替换为 chajian.svg(方块网格,currentColor 16px);
+ *   2) DSH 左侧边栏底部「设置」按钮上方注入「插件」入口按钮
+ *      (chajian 图标 + 文本),点击 = 打开设置并激活插件市场页;
+ *      显隐受 `marketEntry` 开关控制(由主进程注入时写入)。
+ *
+ * 定位锚点全部是 dsh 公开 UI(文本 / data-slot),不依赖哈希类名
+ * (VOzbGW_* 等会随 dsh 构建变化),也不触碰 dsh / dshmarket 源码。
+ *
+ * @param {boolean} marketEntry 开关:是否在侧边栏显示「插件」入口
+ */
+function MARKET_BRIDGE_JS_FN(marketEntry) {
+  const enabled = !!marketEntry;
+  // chajian.svg 内联(页面是 http 域,不能引用 file:// 资源;currentColor 随主题)
+  const CHAJIAN_SVG = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><g fill="currentColor"><rect x="1.96" y="3.36" width="3.3" height="3.3" rx="0.53"></rect><rect x="5.71" y="3.36" width="3.3" height="3.3" rx="0.53"></rect><rect x="1.96" y="7.11" width="3.3" height="3.3" rx="0.53"></rect><rect x="5.71" y="7.11" width="3.3" height="3.3" rx="0.53"></rect><rect x="9.46" y="7.11" width="3.3" height="3.3" rx="0.53"></rect><rect x="1.96" y="10.86" width="3.3" height="3.3" rx="0.53"></rect><rect x="5.71" y="10.86" width="3.3" height="3.3" rx="0.53"></rect><rect x="9.46" y="10.86" width="3.3" height="3.3" rx="0.53"></rect></g><rect x="10.74" y="2.09" width="3.3" height="3.3" rx="0.53" fill="currentColor" transform="rotate(9 12.39 3.74)"></rect></svg>';
+
+  return `(() => {
+    if (window.__dshBoxMarketBridge) return;
+    let marketEntry = ${JSON.stringify(enabled)};
+    let entryBtn = null;
+
+    const makeEntry = () => {
+      // 在 sidebar.settings 槽位前插入「插件」按钮(结构仿 dsh 侧栏项)
+      const anchor = document.querySelector('[data-slot="sidebar.settings"]');
+      if (!anchor) return null;
+      if (document.querySelector('[data-slot="sidebar.market"]')) return null;
+      const wrap = document.createElement('div');
+      wrap.setAttribute('data-slot', 'sidebar.market');
+      wrap.style.cssText = 'padding:2px 6px;';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'dshbox-market-entry';
+      btn.setAttribute('aria-label', '插件');
+      btn.title = '插件市场';
+      btn.innerHTML = '${CHAJIAN_SVG.replace(/\\u0027/g, "&#39;")}<span class="dshbox-market-label">插件</span>';
+      btn.addEventListener('click', () => {
+        // 打开设置 → 激活插件市场页(复用 dsh 自有交互,不调内部 API)
+        const settingsBtn = document.querySelector('[data-slot="sidebar.settings"] button');
+        if (settingsBtn) settingsBtn.click();
+        setTimeout(() => {
+          const navBtns = [...document.querySelectorAll('nav button, [role="dialog"] button')];
+          const market = navBtns.find((b) => (b.textContent || '').trim() === '插件市场');
+          if (market) market.click();
+        }, 350);
+      });
+      wrap.appendChild(btn);
+      anchor.parentElement ? anchor.parentElement.insertBefore(wrap, anchor) : null;
+      return btn;
+    };
+
+    const removeEntry = () => {
+      const old = document.querySelector('[data-slot="sidebar.market"]');
+      if (old) old.remove();
+      entryBtn = null;
+    };
+
+    const syncEntry = () => {
+      if (!marketEntry) { removeEntry(); return; }
+      if (!document.querySelector('[data-slot="sidebar.market"]')) {
+        entryBtn = makeEntry();
+      }
+    };
+
+    // 1) 设置弹窗导航图标替换(观察 body 子级变化,幂等)
+    const patchNavIcon = () => {
+      const navBtns = [...document.querySelectorAll('nav button, [role="dialog"] button')];
+      const market = navBtns.find((b) => (b.textContent || '').trim() === '插件市场');
+      if (!market) return false;
+      if (market.querySelector('.dshbox-market-icon')) return true;
+      const icon = market.querySelector('svg');
+      if (icon) icon.remove();
+      const holder = document.createElement('span');
+      holder.className = 'dshbox-market-icon';
+      holder.style.cssText = 'display:inline-flex;';
+      holder.innerHTML = '${CHAJIAN_SVG.replace(/\\u0027/g, "&#39;")}';
+      market.insertBefore(holder, market.firstChild);
+      return true;
+    };
+
+    // 观察器:设置弹窗 / 侧边栏结构动态出现
+    const observer = new MutationObserver(() => {
+      patchNavIcon();
+      syncEntry();
+    });
+    const start = () => {
+      if (!document.body) { setTimeout(start, 100); return; }
+      observer.observe(document.body, { childList: true, subtree: true });
+      patchNavIcon();
+      syncEntry();
+    };
+    start();
+    // 插件 market 挂载晚于页面加载:延迟补查几次
+    let tries = 0;
+    const timer = setInterval(() => {
+      patchNavIcon();
+      syncEntry();
+      if (++tries >= 10) clearInterval(timer);
+    }, 800);
+
+    window.__dshBoxMarketBridge = {
+      setEnabled(v) {
+        marketEntry = !!v;
+        syncEntry();
+      },
+      refresh() { patchNavIcon(); syncEntry(); },
+    };
+  })()`;
+}
+
+/** 侧边栏「插件」入口按钮样式(仿 dsh 侧栏项,用页面内的 --dsw-alias 变量) */
+const MARKET_INJECT_CSS = `
+.dshbox-market-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, inherit);
+  font: inherit;
+  font-size: 13px;
+  line-height: 22px;
+  cursor: pointer;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+.dshbox-market-entry:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(0, 0, 0, 0.06));
+  color: var(--dsw-alias-label-primary, inherit);
+}
+.dshbox-market-entry:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary, #4f6ef7);
+  outline-offset: -1px;
+}
+.dshbox-market-entry svg {
+  flex: none;
+}
+`;
+
+module.exports = {
+  PLUGIN_BRIDGE_JS,
+  PLUGIN_HIDE_CSS,
+  MARKET_BRIDGE_JS_FN,
+  MARKET_INJECT_CSS,
+};

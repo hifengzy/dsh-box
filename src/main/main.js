@@ -38,7 +38,13 @@ const { upgradeDsh } = require("./dsh-upgrade");
 const { computeSidebar, SIDEBAR_GAP } = require("./sidebar-layout");
 const { SIDEBAR_ANIM_MS, easeSidebar } = require("./sidebar-anim");
 const pluginManager = require("./plugin-manager");
-const { PLUGIN_BRIDGE_JS, PLUGIN_HIDE_CSS } = require("./plugin-ui-inject");
+const { readSettingBool, writeSettingBool } = require("./box-settings");
+const {
+  PLUGIN_BRIDGE_JS,
+  PLUGIN_HIDE_CSS,
+  MARKET_BRIDGE_JS_FN,
+  MARKET_INJECT_CSS,
+} = require("./plugin-ui-inject");
 
 const APP_NAME = "DSH Box";
 const isMac = process.platform === "darwin";
@@ -133,6 +139,12 @@ function main() {
   let lastPluginCheck = null;
   /** 是否正在安装/更新插件(防止并发) */
   let pluginInstalling = false;
+  /** 插件市场(dshmarket)最近一次检查结果 */
+  let lastMarketCheck = null;
+  /** 是否正在安装/更新插件市场 */
+  let marketInstalling = false;
+  /** 「在 DSH 侧边栏显示插件市场入口」开关(启动时读 settings.yaml) */
+  let marketSidebarEntry = false;
 
   const port = Number(process.env.DSH_APP_PORT) || DEFAULT_PORT;
 
@@ -485,7 +497,9 @@ function main() {
       wc.executeJavaScript(POINTER_DUP_GUARD_JS, true).catch(() => {});
       wc.executeJavaScript(THEME_WATCHER_JS, true).catch(() => {});
       wc.executeJavaScript(PLUGIN_BRIDGE_JS, true).catch(() => {});
+      wc.executeJavaScript(MARKET_BRIDGE_JS_FN(marketSidebarEntry), true).catch(() => {});
       wc.insertCSS(PLUGIN_HIDE_CSS).catch(() => {});
+      wc.insertCSS(MARKET_INJECT_CSS).catch(() => {});
       const css = readCustomCss();
       if (css) wc.insertCSS(css).catch(() => {});
     });
@@ -678,9 +692,16 @@ function main() {
   function currentUpdateFlag() {
     return {
       ...(lastUpdateCheck ?? { hasUpdate: false }),
-      hasUpdate: !!(lastUpdateCheck?.hasUpdate || lastPluginCheck?.hasUpdate),
+      hasUpdate: !!(
+        lastUpdateCheck?.hasUpdate ||
+        lastPluginCheck?.hasUpdate ||
+        lastMarketCheck?.hasUpdate
+      ),
       plugin: lastPluginCheck
         ? { hasUpdate: lastPluginCheck.hasUpdate, installed: lastPluginCheck.installed, latest: lastPluginCheck.latest }
+        : null,
+      market: lastMarketCheck
+        ? { hasUpdate: lastMarketCheck.hasUpdate, installed: lastMarketCheck.installed, latest: lastMarketCheck.latest }
         : null,
     };
   }
@@ -709,11 +730,11 @@ function main() {
   async function refreshPluginCheck() {
     const dshHome = appDshHome();
     try {
-      lastPluginCheck = await pluginManager.checkPlugin(dshHome);
+      lastPluginCheck = await pluginManager.checkPlugin(dshHome, "dsh-better-sidebar");
     } catch {
       lastPluginCheck = {
-        name: pluginManager.PLUGIN_NAME,
-        installed: pluginManager.getInstalledVersion(dshHome),
+        name: "dsh-better-sidebar",
+        installed: pluginManager.getInstalledVersion(dshHome, "dsh-better-sidebar"),
         latest: null,
         hasUpdate: false,
         error: "插件检查失败",
@@ -723,54 +744,52 @@ function main() {
     return lastPluginCheck;
   }
 
-  // ---------- 升级编排:停服 → 换文件 → 恢复服务 → 刷新红点 ----------
-  async function performUpgrade(version) {
-    const wasReady = server?.ready ?? false;
-    broadcastStatus({ state: "starting", message: `正在升级 dsh 至 ${version}…` });
-    if (server) await server.stop();
-    serviceState = "stopped";
-    const result = await upgradeDsh(version, {
-      cacheDir: path.join(app.getPath("userData"), "cache"),
-      log: console,
-    });
-    if (!result.ok) {
-      if (wasReady) await startServer();
-      return result;
+  // ---------- 插件市场(dshmarket)检查 + 侧边栏入口开关 ----------
+  /** 查一次插件市场(本地版本 + registry 最新),刷新红点并广播;永远不抛错。 */
+  async function refreshMarketCheck() {
+    const dshHome = appDshHome();
+    try {
+      lastMarketCheck = await pluginManager.checkPlugin(dshHome, "dshmarket");
+    } catch {
+      lastMarketCheck = {
+        name: "dshmarket",
+        installed: pluginManager.getInstalledVersion(dshHome, "dshmarket"),
+        latest: null,
+        hasUpdate: false,
+        error: "插件检查失败",
+      };
     }
-    if (wasReady) await startServer();
-    await refreshUpdateFlag();
-    return result;
+    broadcastUpdateFlag();
+    return lastMarketCheck;
   }
 
-  // ---------- 插件安装/更新编排:停服 → dsh plugin add → 恢复服务 ----------
   /**
-   * 安装(version=null)或更新(version=最新版)侧边栏插件。
+   * 安装(version=null)或更新(version=最新版)插件市场。
    * 服务运行中则先停后启,让新 bundle 在启动时加载;服务未运行时不动它。
-   * 安装成功后写入 openByDefault 偏好(与浏览器 WebUI 对齐)。
+   * 插件市场无「开屏偏好」配置,不写 openByDefault。
    */
-  async function performPluginInstall(version = null) {
+  async function performMarketInstall(version = null) {
     const dshHome = appDshHome();
     const wasReady = server?.ready ?? false;
-    const installedBefore = pluginManager.getInstalledVersion(dshHome);
+    const installedBefore = pluginManager.getInstalledVersion(dshHome, "dshmarket");
     const label = installedBefore ? "更新" : "安装";
     broadcastStatus({
       state: "starting",
-      message: `正在${label}侧边栏插件${version ? ` ${version}` : ""}…`,
+      message: `正在${label}插件市场${version ? ` ${version}` : ""}…`,
     });
     if (server) await server.stop();
     serviceState = "stopped";
-    const result = await pluginManager.installPlugin(dshHome, version);
+    const result = await pluginManager.installPlugin(dshHome, "dshmarket", version);
     if (!result.ok) {
       if (wasReady) await startServer();
       return { ...result, previouslyInstalled: installedBefore };
     }
-    const installed = pluginManager.getInstalledVersion(dshHome) || version || "unknown";
-    pluginManager.ensureOpenByDefault(dshHome);
+    const installed = pluginManager.getInstalledVersion(dshHome, "dshmarket") || version || "unknown";
     if (wasReady) {
       try {
         await startServer();
       } catch (error) {
-        console.error("[app] 插件安装后重启服务失败:", error);
+        console.error("[app] 插件市场安装后重启服务失败:", error);
         return {
           ok: true,
           installed,
@@ -780,7 +799,7 @@ function main() {
         };
       }
     }
-    await refreshPluginCheck();
+    await refreshMarketCheck();
     return { ok: true, installed, previouslyInstalled: installedBefore, restarted: wasReady };
   }
 
@@ -900,6 +919,48 @@ function main() {
     }
   });
 
+  // ---------- 插件市场(dshmarket) ----------
+  // 服务状态页「插件市场」板块:每次进入查一次(本地版本 + registry 最新)
+  ipcMain.handle("dsh:market-info", async () => {
+    const info = await refreshMarketCheck();
+    return info ?? { name: "dshmarket", error: "无法获取插件市场信息" };
+  });
+  // 安装(version=null) / 更新(version=最新版):单飞,成功后自动重启服务
+  ipcMain.handle("dsh:market-install", async (_event, version) => {
+    if (marketInstalling) return { ok: false, error: "已有插件市场安装/更新任务进行中,请稍候" };
+    if (version != null && (typeof version !== "string" || !/^\d+\.\d+\.\d+(?:[-+].*)?$/.test(version))) {
+      return { ok: false, error: "版本号格式不正确" };
+    }
+    marketInstalling = true;
+    try {
+      return await performMarketInstall(version ?? null);
+    } catch (error) {
+      console.error("[app] 插件市场安装失败:", error);
+      return { ok: false, error: error.message || String(error) };
+    } finally {
+      marketInstalling = false;
+    }
+  });
+  // 「在 DSH 侧边栏显示插件市场入口」开关:读(返回当前值)/写(持久化 + 注入层即时生效)
+  ipcMain.handle("dsh:market-switch", (_event, next) => {
+    if (next === undefined) {
+      return { ok: true, enabled: marketSidebarEntry };
+    }
+    if (typeof next !== "boolean") return { ok: false, error: "参数错误" };
+    marketSidebarEntry = next;
+    writeSettingBool(appDshHome(), "marketSidebarEntry", next);
+    // 通知注入层即时移除/插入侧边栏入口(Spa 重载后由注入参数兜底)
+    if (contentView && !contentView.webContents.isDestroyed()) {
+      contentView.webContents
+        .executeJavaScript(
+          `window.__dshBoxMarketBridge && window.__dshBoxMarketBridge.setEnabled(${next ? "true" : "false"})`,
+          true
+        )
+        .catch(() => {});
+    }
+    return { ok: true, enabled: marketSidebarEntry };
+  });
+
   // ---------- 主题同步(dsh UI → 外壳) ----------
   // dsh UI 在设置里切换外观(浅色/深色/跟随系统)时,dsh 前端会在
   // document.body 上设置/移除 data-ds-dark-theme;注入脚本把解析结果
@@ -988,6 +1049,9 @@ function main() {
     refreshUpdateFlag().catch(() => {});
     // 启动时静默查一次侧边栏插件(本地 + registry):插件有新版同样亮红点
     refreshPluginCheck().catch(() => {});
+    // 启动时读「侧边栏显示插件市场入口」开关(注入参数用);并静默查插件市场
+    marketSidebarEntry = readSettingBool(appDshHome(), "marketSidebarEntry");
+    refreshMarketCheck().catch(() => {});
 
     // 测试钩子:冒烟测试模式 — 就绪后打印标记并退出(CI / 自检用)
     if (process.env.DSH_SMOKE === "1") {

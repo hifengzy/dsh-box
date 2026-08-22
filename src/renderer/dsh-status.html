@@ -107,6 +107,39 @@
 
         <div class="hint-line" id="pluginHint" hidden></div>
       </section>
+    <!-- ---------- 插件市场(dsh-market) ---------- -->
+      <section class="section" id="marketSection">
+        <h1 class="section-title">插件市场</h1>
+
+        <!-- 正常:名称 + 版本徽标 + 安装/更新按钮或已安装文案 -->
+        <div class="row-line" id="marketRow" hidden>
+          <span class="row-name" id="marketName">dsh-market</span>
+          <span class="v-badge" id="marketVersionBadge">0.15.2</span>
+          <button class="btn btn-primary plugin-action" id="marketActionBtn" type="button" hidden>安装</button>
+          <span class="state-current" id="marketInstalledLabel" hidden>已安装</span>
+        </div>
+
+        <!-- 说明文案:未安装时显示 -->
+        <p class="plugin-desc" id="marketDesc" hidden>
+          浏览、搜索、安装、更新、卸载社区插件。
+        </p>
+
+        <!-- 开关行:已安装后显示,控制侧边栏「插件」入口 -->
+        <label class="switch-row" id="marketSwitchRow" hidden>
+          <span class="switch-label">在 DSH 侧边栏显示插件市场入口</span>
+          <span class="switch" id="marketSwitch" role="switch" aria-checked="false" tabindex="0">
+            <span class="switch-knob"></span>
+          </span>
+        </label>
+
+        <!-- 查询失败:错误文案 + 重试 -->
+        <div class="version-error" id="marketError" hidden>
+          <p class="error-text">网络服务异常</p>
+          <button class="btn btn-outline" id="marketRetryBtn" type="button">重试</button>
+        </div>
+
+        <div class="hint-line" id="marketHint" hidden></div>
+      </section>
     </main>
 
     <script src="./dsh-status.js"></script>

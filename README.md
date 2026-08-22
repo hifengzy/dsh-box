@@ -62,11 +62,13 @@ npm start
   - **展开/收起动画**:与 dsh 左侧边栏同款规格(实测其主框架 `transition: grid-template-columns 0.3s cubic-bezier(.4,0,.2,1)`):面板宽度以 **300ms + cubic-bezier(.4,0,.2,1)** 逐帧动画(主进程按帧 setBounds 两个视图),dsh 内容区同步平滑重排;窗口缩放/全屏切换时为快照布局(取消动画);动画期间快速切换可反向(开→关→开)不卡死。
   - 上卡 = 服务状态:只展示 DSH 版本号、端口、PID;**状态只有「运行中(绿)/ 停止(灰)」两态**,仅停止时显示「启动服务」按钮;版本号过长自动截断为 …,完整值悬停可见;
   - 中卡 = 侧边栏(dsh-better-sidebar):插件名(链接,悬停下划线)+ 最新版本徽标 + 说明文案;**状态机:未安装 →「安装」;已装且版本 == 最新 →「已安装」绿色文案;已装但低于最新 →「更新」;查询失败 →「网络服务异常」+「重试」(已装时徽标回退本地版本并警示)**。安装/更新由主进程执行 `dsh plugin --profile web add dsh-better-sidebar@<版本>`(`src/main/plugin-manager.js`),成功后**自动重启 dsh 服务**让新 bundle 生效,并写入 `openByDefault: true`(与浏览器 WebUI 对齐,可在插件设置页改回)。安装/更新失败不阻塞,可重试。
+  - 下卡 = 插件市场(dshmarket):名称 `dsh-market` + 最新版本徽标 + 说明文案「浏览、搜索、安装、更新、卸载社区插件。」;**状态机:未安装 →「安装」;已装且版本 == 最新 →「已安装」绿色文案;已装但低于最新 →「更新」;查询失败 →「网络服务异常」+「重试」**。已安装后显示**「在 DSH 侧边栏显示插件市场入口」开关**(默认关),开关状态持久化到 `settings.yaml` 的 `dsh-box.marketSidebarEntry` 自定义域,即时控制左侧边栏「插件」入口的显隐。安装/更新与侧边栏插件同链路(`dsh plugin --profile web add dshmarket@<版本>`)
   - 下卡 = DSH:只展示**最新一条版本**(版本号链接 `deepseek-harness` 仓库,悬停下划线)+「最新」徽标 + 发布日期;**当前运行版本 < 最新 →「更新」按钮;一致 →「当前」绿色文案**;查询失败显示「网络服务异常」+「重试」(有缓存回退展示并提示)。每次打开面板(视图重建)自动查一次 npm registry(`https://registry.npmjs.org/@deepseek-ai/dsh` JSON API,非网页);
   - 每次启动应用也会静默查一次 npm 和插件 registry,有新版 → 顶栏入口红点(本体或插件任一有更新即亮);面板展开时顶栏按钮呈激活态(品牌蓝),再点一次收起、dsh 内容区恢复整宽;
   - 升级链路(`src/main/dsh-upgrade.js`):下载 tarball → **sha512 校验**(registry 的 `dist.integrity`)→ 系统 tar 解压 → 停服 → **原子替换**(旧包留 `.bak` 备份)→ 启服;任何一步失败自动回滚,不留下半截状态。升级会短暂停止服务,完成后自动恢复。
   - 离线/查询失败回退到上次缓存结果(userData/cache)并提示;中国网络可用 `DSH_NPM_REGISTRY` 切换镜像(如 `https://registry.npmmirror.com`)。
   - **实机验收指引(侧栏插件)**:1) 首次进入「服务状态」面板 → 侧边栏插件卡 → 点「安装」(联网,约 30-60s)→ 自动重启 dsh;2) 在 dsh 里打开/新建一个**活跃会话**(插件侧栏 per-session,无会话时顶栏按钮禁用):3) 点顶栏两个面板开关(在状态入口与 GitHub 之间)→ dsh 页面内右侧栏/底部面板展开收起,按钮随面板开合高亮;4) 插件自带的页面右上角两个小按钮已被隐藏;5) 插件有新版时「服务状态」面板显示「更新」按钮,顶栏红点也会亮起(本体或插件任一有更新)。
+- **插件市场外壳定制**(`src/main/plugin-ui-inject.js` 的 `MARKET_BRIDGE_JS_FN` + `MARKET_INJECT_CSS`,与侧边栏桥同一注入层):1) **设置弹窗导航图标替换**——dsh 设置弹窗左侧导航里「插件市场」标签页按钮的默认齿轮图标替换为 `demo/0.3.0/chajian.svg`(方块网格,currentColor);2) **左侧边栏「插件」入口**——DSH 侧边栏底部「设置」按钮上方注入「插件」按钮(chajian 图标+文本),点击打开设置并直接激活插件市场页。两者都经文本/data-slot 定位(`插件市场` label / `sidebar.settings` 槽位),不依赖 dsh 的哈希类名,**不修改 dsh 与 dshmarket 任何源码**——dsh 或插件迭代只会让注入项降级失效,不影响本体。
 - **内容视图** 显示加载页,就绪后加载 dsh WebUI;窗口层内缩 4px + 圆角 10px,**不碰页面布局**,不会产生滚动条。
 
 ### 窗口外观
@@ -94,8 +96,9 @@ src/
     npm-check.js     npm registry 版本查询:缓存 / 离线降级 / semver 比较
     dsh-upgrade.js   应用内升级:下载 → sha512 → 解压 → 原子替换 → 回滚
     sidebar-layout.js 右侧面板宽度策略纯函数(内容优先 + 面板拿剩余)
-    plugin-manager.js 侧边栏插件(dsh-better-sidebar)生命周期:本地版本 / registry 查询 / dsh plugin add / openByDefault 写入
-    plugin-ui-inject.js 注入桥(PLUGIN_BRIDGE_JS,模拟点击插件 toggle + 状态上报)与隐藏 CSS(PLUGIN_HIDE_CSS)
+    plugin-manager.js 第三方插件生命周期(参数化:侧边栏插件 / 插件市场):本地版本 / registry 查询 / dsh plugin add / openByDefault 写入
+    plugin-ui-inject.js 注入桥(PLUGIN_BRIDGE_JS 侧栏 toggle / MARKET_BRIDGE_JS_FN 市场图标+侧边栏入口)与样式(PLUGIN_HIDE_CSS / MARKET_INJECT_CSS)
+    box-settings.js    DSH Box 自定义设置持久化(settings.yaml 的 dsh-box 域,文本级读写)
   preload/
     preload.js       contextBridge 最小桥(getInfo / onStatus / retry / checkUpdates / upgrade / toggleSidebar / getPluginInfo / installPlugin / togglePluginPanel / …)
   renderer/
@@ -103,7 +106,7 @@ src/
     renderer.js      启动页逻辑(状态渲染、重试)
     style.css
     about.html       关于弹窗页面(about.css / about.js 配套)
-    dsh-status.html  「dsh 服务与版本」右侧面板(状态卡 + DSH 最新版本 + 侧边栏插件,窄版竖排)
+    dsh-status.html  「dsh 服务与版本」右侧面板(状态卡 + DSH 最新版本 + 侧边栏 + 插件市场,窄版竖排)
     dsh-status.js
     dsh-status.css
     topbar.html      自定义顶栏(GitHub / dsh 状态入口 + 红点 / 侧栏插件两个面板开关)
@@ -127,7 +130,7 @@ docs/
 npm run doctor    # 环境体检:Node / dsh / Electron / 端口
 npm run smoke     # 核心链路冒烟测试(纯 Node,不弹窗口)
 npm run smoke:e2e # 完整 E2E:启动真实 App → 拉起 dsh → 加载 WebUI → 退出
-npm run test:regression # 回归套件:面板宽度策略 / URL 信任边界 / 重开窗口 / 加载页可见性 / 端口冲突 / 崩溃反馈 / 菜单栏 Tray / 应用菜单与关于弹窗 / 顶栏 / 服务与版本面板 / 升级链路 / 侧边栏插件真实环境 e2e
+npm run test:regression # 回归套件:面板宽度策略 / URL 信任边界 / 重开窗口 / 加载页可见性 / 端口冲突 / 崩溃反馈 / 菜单栏 Tray / 应用菜单与关于弹窗 / 顶栏 / 服务与版本面板 / 升级链路 / 侧边栏插件真实环境 e2e / 插件市场真实环境 e2e
 ```
 
 > `smoke:e2e` 会短暂弹出应用窗口,并把临时数据放到 `.runtime/`(已 gitignore)。`--no-sandbox` 只用于测试环境(沙箱受限的 CI/容器)。
