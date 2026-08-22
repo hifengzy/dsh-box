@@ -294,6 +294,11 @@ class DshServer extends EventEmitter {
       });
     });
     this.child = null;
+    // 关键复位:ready 必须置 false —— main.js 的 startServer() 用
+    // `if (server.ready || server.child) return;` 做防重入短路,若停止后
+    // 不复位,安装/更新插件后、升级 dsh 后的「自动重启」会被该短路直接
+    // 跳过(服务停着但不再拉起)。
+    this.ready = false;
     this.stopping = false;
     console.log("[dsh] 已停止");
   }

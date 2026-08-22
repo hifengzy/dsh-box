@@ -130,7 +130,7 @@ docs/
 npm run doctor    # 环境体检:Node / dsh / Electron / 端口
 npm run smoke     # 核心链路冒烟测试(纯 Node,不弹窗口)
 npm run smoke:e2e # 完整 E2E:启动真实 App → 拉起 dsh → 加载 WebUI → 退出
-npm run test:regression # 回归套件:面板宽度策略 / URL 信任边界 / 重开窗口 / 加载页可见性 / 端口冲突 / 崩溃反馈 / 菜单栏 Tray / 应用菜单与关于弹窗 / 顶栏 / 服务与版本面板 / 升级链路 / 侧边栏插件真实环境 e2e / 插件市场真实环境 e2e
+npm run test:regression # 回归套件:dsh 服务 stop→start 语义 / 面板宽度策略 / URL 信任边界 / 重开窗口 / 加载页可见性 / 端口冲突 / 崩溃反馈 / 菜单栏 Tray / 应用菜单与关于弹窗 / 顶栏 / 服务与版本面板 / 升级链路 / 侧边栏插件真实环境 e2e / 插件市场真实环境 e2e
 ```
 
 > `smoke:e2e` 会短暂弹出应用窗口,并把临时数据放到 `.runtime/`(已 gitignore)。`--no-sandbox` 只用于测试环境(沙箱受限的 CI/容器)。
