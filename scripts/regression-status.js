@@ -2,18 +2,18 @@
 "use strict";
 
 /**
- * regression-status.js — 「服务状态 + DSH 版本」面板 + 顶栏入口回归测试(真实 Electron):
+ * regression-status.js — 「服务状态 + DSH + 侧边栏」面板 + 顶栏入口回归测试(真实 Electron):
  *   1. 运行中:「运行中」徽标(绿) + DSH 版本 + 端口/PID;不显示「启动服务」;
- *   2. 版本列表:按发布时间倒序,首行标「最新」,当前版本标「当前」;
- *      只给比当前新的版本显示「更新」按钮;
- *   3. 默认只显示最近 10 条,「更多」按钮分页加载旧版本,到底隐藏;
+ *   2. DSH 板块:只展示最新一条版本(版本链接 + 「最新」徽标 + 发布日期),
+ *      当前版本 < 最新 → 「更新」按钮;一致 → 「当前」文案;
  *   4. 查询失败:「网络服务异常」+「重试」;
- *   5. 点「更新」→ 经桥发出 upgrade(目标版本);
+ *   5. 点「更新」→ 经桥发出 upgrade(最新版本);
  *   6. 停止:灰「停止」徽标 + 「启动服务」按钮(不显示停止/重启);点击 → retry;
- *   7. 顶栏:更新标志为真 → 入口红点可见;点入口 → toggleSidebar;
- *   8. 顶栏插件按钮:未安装禁用;状态上报后启用+高亮;点击 → toggle-plugin-panel;
- *   9. 侧边栏插件板块:未安装→「安装」;已装无更新→无按钮;有更新→「更新」;
- *      查询失败→「网络服务异常」+「重试」;点「安装/更新」→install 闭环。
+ *   8. 顶栏:更新标志为真 → 入口红点可见;点入口 → toggleSidebar;
+ *   9. 顶栏插件按钮:未安装禁用;状态上报后启用+高亮;点击 → toggle-plugin-panel;
+ *   10. 侧边栏板块:未安装→「安装」;已装==最新→「已安装」;已装<最新→「更新」;
+ *      查询失败→「网络服务异常」+「重试」;安装/更新闭环;版本徽标 = 最新版本;
+ *   11. 链接:DSH 版本号 / 插件名 → 仓库链接,悬停下划线(hover 规则存在)。
  *
  * 用法: electron scripts/regression-status.js --no-sandbox
  * 说明:测试固定 nativeTheme=light,断言浅色 token 的具体值,结果确定。
@@ -37,14 +37,14 @@ const FIXTURE_INFO = {
   message: "服务运行中",
 };
 
-// 12 条版本 → 验证默认 10 条 + 「更多」分页(最后一条是最旧)
+// 版本行(发布时间倒序):首行 = rc.12 = 最新;rc.6 为当前运行版本
 const VERSIONS = [];
 for (let i = 12; i >= 1; i--) {
   const isCurrent = i === 6;
   const version = isCurrent ? "0.1.0-rc.6" : `0.1.0-rc.${i}`;
   VERSIONS.push({
     version,
-    // 越界日期(Date.UTC 自动进位:2026-07-32 → 2026-08-01),保证按序递增
+    // 越界日期(Date.UTC 自动进位),保证按序递增;首行 rc.12 → 2026-08-01
     publishedAt: new Date(Date.UTC(2026, 6, 20 + i)).toISOString(),
     isLatest: i === 12,
     isCurrent,
@@ -71,7 +71,7 @@ let toggledSidebar = 0;
 let toggledPluginPanel = null;
 // 插件板块夹具:可变状态驱动各组断言
 let pluginInstalled = null; // null = 未安装
-let pluginLatest = "0.15.1";
+let pluginLatest = "0.15.2";
 let pluginError = null;
 
 /** 版本号大小比较(简单实现,夹具只用于 0.15.x) */
@@ -117,7 +117,7 @@ ipcMain.handle("dsh:plugin-info", () => ({
   error: pluginError,
 }));
 ipcMain.handle("dsh:plugin-install", async (_e, v) => {
-  pluginInstalled = v ?? "0.15.1";
+  pluginInstalled = v ?? pluginLatest;
   return { ok: true, installed: pluginInstalled, previouslyInstalled: null, restarted: true };
 });
 ipcMain.handle("dsh:toggle-plugin-panel", (_e, which) => {
@@ -166,87 +166,93 @@ app.whenReady().then(async () => {
     if (!ready.startHidden) throw new Error("运行中不应显示「启动服务」");
     console.log("[1] 运行中:绿徽标 + DSH 版本 + 端口/PID,无启动按钮 ✓");
 
-    // ========== 2. 版本列表:默认 10 条 + 徽标 + 更新按钮 ==========
-    const list = await win.webContents.executeJavaScript(`(() => {
-      const cards = [...document.querySelectorAll(".vcard")];
+    // ========== 2. DSH 板块:仅最新一条 + 最新徽标 + 更新按钮 ==========
+    const dsh = await win.webContents.executeJavaScript(`(() => {
+      const link = document.getElementById("dshVersionLink");
       return {
-        count: cards.length,
-        versions: cards.map((r) => r.querySelector(".v-version").textContent),
-        badges: cards.map((r) =>
-          [...r.querySelectorAll(".v-badge")].map((b) => b.textContent)
-        ),
-        updates: cards.map((r) => r.querySelector(".v-update")?.textContent ?? null),
-        moreHidden: document.getElementById("moreBtn").hidden,
+        rowHidden: document.getElementById("dshRow").hidden,
+        version: link.textContent,
+        linkHref: link.getAttribute("href"),
+        badges: [...document.querySelectorAll("#dshRow .v-badge")].map((b) => b.textContent),
+        updateHidden: document.getElementById("dshUpdateBtn").hidden,
+        updateText: document.getElementById("dshUpdateBtn").textContent,
+        currentHidden: document.getElementById("dshCurrentLabel").hidden,
+        date: document.getElementById("dshDate").textContent,
+        dateHidden: document.getElementById("dshDate").hidden,
       };
     })()`);
-    if (list.count !== 10) throw new Error(`默认应显示 10 条版本,实际 ${list.count}`);
-    if (list.versions[0] !== "0.1.0-rc.12") throw new Error(`首行应为发布时间最新,实际 ${list.versions[0]}`);
-    if (list.badges[0].includes("最新") === false)
-      throw new Error(`首行应有「最新」徽标,实际 ${list.badges[0]}`);
-    const currentIdx = list.versions.indexOf("0.1.0-rc.6");
-    if (currentIdx < 0) throw new Error("列表中应有当前版本 0.1.0-rc.6");
-    if (!list.badges[currentIdx].includes("当前"))
-      throw new Error(`当前版本应有「当前」徽标,实际 ${list.badges[currentIdx]}`);
-    // 前 6 行(rc.12..rc.7,比当前新)应有「更新」,第 7 行(rc.6 当前)及以后无
-    for (let i = 0; i < 6; i++) {
-      if (list.updates[i] !== "更新") throw new Error(`第 ${i + 1} 行(比当前新)应有「更新」`);
-    }
-    if (list.updates[6] !== null) throw new Error("当前版本行不应有「更新」按钮");
-    if (list.moreHidden) throw new Error("共 12 条 > 10,应显示「更多」按钮");
-    console.log("[2] 版本列表:默认 10 条 + 首行「最新」 + 当前「当前」 + 仅新版可更新 ✓");
+    if (dsh.rowHidden) throw new Error("DSH 板块应显示版本行");
+    if (dsh.version !== "0.1.0-rc.12") throw new Error(`应只展示最新版本,实际 ${dsh.version}`);
+    if (dsh.linkHref !== "https://github.com/deepseek-ai/deepseek-harness/")
+      throw new Error(`DSH 版本链接错误: ${dsh.linkHref}`);
+    if (dsh.badges.length !== 1 || dsh.badges[0] !== "最新")
+      throw new Error(`应有「最新」徽标,实际 ${dsh.badges}`);
+    if (dsh.updateHidden || dsh.updateText !== "更新")
+      throw new Error("当前版本低于最新时应显示「更新」按钮");
+    if (!dsh.currentHidden) throw new Error("有更新时不应显示「当前」");
+    if (dsh.date !== "2026-08-01") throw new Error(`发布日期应为最新行日期,实际 ${dsh.date}`);
+    if (dsh.dateHidden) throw new Error("应显示发布日期");
+    console.log("[2] DSH 板块:只展示最新版本 0.1.0-rc.12 + 「最新」徽标 + 「更新」按钮 + 日期 ✓");
 
-    // ========== 3. 「更多」分页 ==========
-    await win.webContents.executeJavaScript(`document.getElementById("moreBtn").click()`);
-    await wait(150);
-    const more1 = await win.webContents.executeJavaScript(`(() => {
-      const cards = [...document.querySelectorAll(".vcard")];
-      return { count: cards.length, moreHidden: document.getElementById("moreBtn").hidden };
-    })()`);
-    if (more1.count !== 12) throw new Error(`点「更多」应显示 12 条,实际 ${more1.count}`);
-    if (!more1.moreHidden) throw new Error("已显示全部 12 条,「更多」应隐藏");
-    console.log("[3] 「更多」:加载到全部后隐藏按钮 ✓");
-
-    // ========== 4. 查询失败:「网络服务异常」+「重试」 ==========
-    // 单独开一个窗口并让 handler 返回错误 → 验证错误态;点「重试」后恢复
-    FIXTURE_VERSIONS.error = "fetch failed";
-    FIXTURE_VERSIONS.rows = [];
-    const errWin = new BrowserWindow({ width: 720, height: 680, show: false, webPreferences: PRELOAD });
-    errWin.loadFile(path.join(__dirname, "..", "src", "renderer", "dsh-status.html"));
+    // ========== 3. DSH 板块:「当前」态(运行版本 == 最新) ==========
+    FIXTURE_VERSIONS.latest = "0.1.0-rc.6";
+    FIXTURE_VERSIONS.hasUpdate = false;
+    await win.loadFile(path.join(__dirname, "..", "src", "renderer", "dsh-status.html")); // 重载触发重新查询
     await wait(300);
-    const errState = await errWin.webContents.executeJavaScript(`(() => {
+    const dshCur = await win.webContents.executeJavaScript(`(() => {
+      const link = document.getElementById("dshVersionLink");
       return {
-        errHidden: document.getElementById("versionError").hidden,
-        errText: document.querySelector(".error-text").textContent,
-        retryText: document.getElementById("retryBtn").textContent,
-        listEmpty: document.getElementById("versionList").children.length === 0,
-        moreHidden: document.getElementById("moreBtn").hidden,
+        version: link.textContent,
+        updateHidden: document.getElementById("dshUpdateBtn").hidden,
+        currentText: document.getElementById("dshCurrentLabel").textContent,
+        currentHidden: document.getElementById("dshCurrentLabel").hidden,
+        currentColor: getComputedStyle(document.getElementById("dshCurrentLabel")).color,
+        badges: [...document.querySelectorAll("#dshRow .v-badge")].map((b) => b.textContent),
+      };
+    })()`);
+    if (dshCur.version !== "0.1.0-rc.6") throw new Error(`无更新时仍展示最新版本,实际 ${dshCur.version}`);
+    if (!dshCur.updateHidden) throw new Error("一致时不应显示「更新」按钮");
+    if (dshCur.currentHidden || dshCur.currentText !== "当前")
+      throw new Error(`一致时应显示「当前」,实际 ${dshCur.currentText}`);
+    if (dshCur.currentColor !== "rgb(34, 197, 94)")
+      throw new Error(`「当前」应为绿色,实际 ${dshCur.currentColor}`);
+    if (dshCur.badges[0] !== "最新") throw new Error("「最新」徽标始终显示");
+    console.log("[3] DSH 「当前」态:版本一致 → 绿色「当前」文案,无更新按钮 ✓");
+
+    // ========== 4. DSH 查询失败:「网络服务异常」+「重试」 ==========
+    FIXTURE_VERSIONS.error = "fetch failed";
+    FIXTURE_VERSIONS.latest = "0.1.0-rc.12";
+    FIXTURE_VERSIONS.hasUpdate = true;
+    FIXTURE_VERSIONS.rows = [];
+    await win.loadFile(path.join(__dirname, "..", "src", "renderer", "dsh-status.html"));
+    await wait(300);
+    const errState = await win.webContents.executeJavaScript(`(() => {
+      return {
+        errHidden: document.getElementById("dshError").hidden,
+        errText: document.querySelector("#dshError .error-text").textContent,
+        retryText: document.getElementById("dshRetryBtn").textContent,
+        rowHidden: document.getElementById("dshRow").hidden,
       };
     })()`);
     if (errState.errHidden) throw new Error("查询失败应显示错误容器");
     if (errState.errText !== "网络服务异常") throw new Error(`错误文案应为「网络服务异常」,实际 ${errState.errText}`);
     if (errState.retryText !== "重试") throw new Error("应有「重试」按钮");
-    if (!errState.listEmpty || !errState.moreHidden) throw new Error("失败时不应有版本列表/更多按钮");
-    // 点「重试」→ handler 恢复正常 → 列表恢复、更多按钮出现
+    if (!errState.rowHidden) throw new Error("失败时不应显示版本行");
     FIXTURE_VERSIONS.error = undefined;
     FIXTURE_VERSIONS.rows = VERSIONS;
-    await errWin.webContents.executeJavaScript(`document.getElementById("retryBtn").click()`);
+    await win.webContents.executeJavaScript(`document.getElementById("dshRetryBtn").click(); undefined;`);
     await wait(250);
-    const errRecover = await errWin.webContents.executeJavaScript(`(() => ({
-      errHidden: document.getElementById("versionError").hidden,
-      count: document.querySelectorAll(".vcard").length,
-      moreHidden: document.getElementById("moreBtn").hidden,
+    const errRecover = await win.webContents.executeJavaScript(`(() => ({
+      errHidden: document.getElementById("dshError").hidden,
+      version: document.getElementById("dshVersionLink").textContent,
     }))()`);
-    if (!errRecover.errHidden || errRecover.count !== 10 || errRecover.moreHidden)
-      throw new Error("重试后应恢复版本列表(10 条 + 更多按钮)");
-    errWin.destroy();
-    console.log("[4] 查询失败:「网络服务异常」+「重试」恢复 ✓");
+    if (!errRecover.errHidden || errRecover.version !== "0.1.0-rc.12")
+      throw new Error("重试后应恢复最新版本展示");
+    console.log("[4] DSH 查询失败:「网络服务异常」+「重试」恢复 ✓");
 
-    // ========== 5. 点「更新」→ upgrade(首行) ==========
+    // ========== 5. 点「更新」→ upgrade(最新版本) ==========
     await win.webContents.executeJavaScript(`window.confirm = () => true; undefined;`);
-    await win.webContents.executeJavaScript(`(() => {
-      const card = document.querySelector(".vcard");
-      card.querySelector(".v-update").click();
-    })()`);
+    await win.webContents.executeJavaScript(`document.getElementById("dshUpdateBtn").click(); undefined;`);
     await wait(250);
     if (upgradedVersion !== "0.1.0-rc.12") throw new Error(`点「更新」应请求升级 0.1.0-rc.12,实际 ${upgradedVersion}`);
     console.log("[5] 点「更新」→ upgrade(0.1.0-rc.12) ✓");
@@ -279,12 +285,12 @@ app.whenReady().then(async () => {
       throw new Error("停止时应显示「启动服务」按钮");
     if (stoppedState.hasStopBtn || stoppedState.hasRestartBtn)
       throw new Error("新设计下不应存在停止/重启按钮");
-    await win.webContents.executeJavaScript(`document.getElementById("startBtn").click()`);
+    await win.webContents.executeJavaScript(`document.getElementById("startBtn").click(); undefined;`);
     await wait(150);
     if (!retried) throw new Error("点「启动服务」应触发 retry");
     console.log("[6] 停止:灰徽标 + 端口/PID 为 - + 仅「启动服务」→ retry ✓");
 
-    // ========== 7. 版本号超长截断 ==========
+    // ========== 7. 版本号超长截断(服务状态区) ==========
     state = "ready";
     win.webContents.send("dsh:status", { state: "ready", message: "服务运行中" });
     await wait(100);
@@ -315,7 +321,7 @@ app.whenReady().then(async () => {
     })()`);
     if (!tb.hasDot || tb.dotHidden) throw new Error("有更新时顶栏红点应可见");
     if (!tb.hasIcon) throw new Error("顶栏缺少 dsh 状态入口按钮");
-    await win.webContents.executeJavaScript(`document.getElementById("statusBtn").click()`);
+    await win.webContents.executeJavaScript(`document.getElementById("statusBtn").click(); undefined;`);
     await wait(100);
     if (toggledSidebar !== 1) throw new Error("点顶栏状态入口应触发 toggle-sidebar(面板开关)");
     console.log("[8] 顶栏:红点可见 + 点击入口 toggle-sidebar ✓");
@@ -353,8 +359,7 @@ app.whenReady().then(async () => {
     if (tbp2.bottomActive) throw new Error("底栏折叠时底栏按钮不应高亮");
     if (tbp2.sidePressed !== "true") throw new Error("aria-pressed 应同步为 true");
     if (tbp2.sideTitle !== "折叠侧边栏") throw new Error(`侧栏展开时标题应为「折叠侧边栏」,实际 ${tbp2.sideTitle}`);
-    // 点侧栏按钮 → toggle-plugin-panel("side")
-    await win.webContents.executeJavaScript(`document.getElementById("pluginSideBtn").click()`);
+    await win.webContents.executeJavaScript(`document.getElementById("pluginSideBtn").click(); undefined;`);
     await wait(100);
     if (toggledPluginPanel !== "side") throw new Error("点侧栏按钮应触发 toggle-plugin-panel('side')");
     // 状态闭合 → 高亮取消
@@ -366,102 +371,174 @@ app.whenReady().then(async () => {
     if (tbp3) throw new Error("侧栏闭合后按钮高亮应取消");
     console.log("[9] 顶栏插件按钮:禁用→启用+高亮→点击转发→闭合取消 ✓");
 
-    // ========== 10. 侧边栏插件板块:状态机四态 + 安装/更新闭环 ==========
-    // 重新加载面板页(干净的插件板块)
+    // ========== 10. 侧边栏板块:四态 + 安装/更新闭环 + 版本徽标 ==========
     await win.loadFile(path.join(__dirname, "..", "src", "renderer", "dsh-status.html"));
-    await wait(250);
+    await wait(300);
 
-    // 10a. 未安装:名称 + 「未安装 · 最新」 + 「安装」
+    // 10a. 未安装:名称 + 版本徽标(最新)+ 说明 + 「安装」
     pluginInstalled = null;
-    pluginLatest = "0.15.1";
+    pluginLatest = "0.15.2";
     pluginError = null;
     await win.webContents.executeJavaScript(`document.getElementById("pluginHint"); undefined;`);
-    await wait(100); // 等 loadPluginInfo 的 IPC 往返
+    await wait(120);
     const pi1 = await win.webContents.executeJavaScript(`(() => {
-      const card = document.getElementById("pluginCard");
+      const row = document.getElementById("pluginRow");
       return {
-        name: card.querySelector(".plugin-name")?.textContent ?? null,
-        meta: [...card.querySelectorAll(".plugin-meta")].map((m) => m.textContent).join(" "),
-        buttons: [...card.querySelectorAll("button")].map((b) => b.textContent),
+        rowHidden: row.hidden,
+        name: document.getElementById("pluginNameLink").textContent,
+        nameHref: document.getElementById("pluginNameLink").getAttribute("href"),
+        badge: document.getElementById("pluginVersionBadge").textContent,
+        badgeHidden: document.getElementById("pluginVersionBadge").hidden,
+        actionHidden: document.getElementById("pluginActionBtn").hidden,
+        actionText: document.getElementById("pluginActionBtn").textContent,
+        installedHidden: document.getElementById("pluginInstalledLabel").hidden,
+        descHidden: document.getElementById("pluginDesc").hidden,
+        desc: document.getElementById("pluginDesc").textContent,
       };
     })()`);
-    if (!pi1.name.includes("dsh-better-sidebar")) throw new Error(`插件卡片应有名称,实际 ${pi1.name}`);
-    if (pi1.meta !== "未安装 · 最新 0.15.1") throw new Error(`未安装态版本行错误: ${pi1.meta}`);
-    if (pi1.buttons.length !== 1 || pi1.buttons[0] !== "安装") throw new Error(`未安装应只有「安装」按钮,实际 ${pi1.buttons}`);
+    if (pi1.rowHidden) throw new Error("插件行应显示");
+    if (pi1.name !== "dsh-better-sidebar") throw new Error(`插件名错误: ${pi1.name}`);
+    if (pi1.nameHref !== "https://github.com/omdsh-dev/DSH-better-sidebar")
+      throw new Error(`插件名链接错误: ${pi1.nameHref}`);
+    if (pi1.badge !== "0.15.2" || pi1.badgeHidden)
+      throw new Error(`版本徽标应显示最新版本 0.15.2,实际 ${pi1.badge}`);
+    if (pi1.actionHidden || pi1.actionText !== "安装")
+      throw new Error(`未安装应显示「安装」按钮,实际 hidden=${pi1.actionHidden} text=${pi1.actionText}`);
+    if (!pi1.installedHidden) throw new Error("未安装时不应显示「已安装」");
+    if (pi1.descHidden || !pi1.desc.includes("文件渲染编辑"))
+      throw new Error(`应显示说明文案,实际 ${pi1.desc}`);
+    console.log("[10a] 侧边栏:未安装 → 版本徽标 0.15.2 + 说明 + 「安装」 ✓");
 
-    // 10b. 点「安装」→ install 闭环(确认框置真),安装后 → 已装最新 + 无按钮
+    // 10b. 点「安装」→ install 闭环 → 已安装(绿字)+ 无按钮
     await win.webContents.executeJavaScript(`window.confirm = () => true; undefined;`);
-    await win.webContents.executeJavaScript(`[...document.querySelectorAll("#pluginCard button")][0].click(); undefined;`);
-    await wait(250);
+    await win.webContents.executeJavaScript(`document.getElementById("pluginActionBtn").click(); undefined;`);
+    await wait(280);
+    if (pluginInstalled !== "0.15.2") throw new Error(`点「安装」应 install 0.15.2,实际 ${pluginInstalled}`);
     const pi2 = await win.webContents.executeJavaScript(`(() => {
-      const card = document.getElementById("pluginCard");
       return {
-        meta: [...card.querySelectorAll(".plugin-meta")].map((m) => m.textContent).join(" "),
-        buttons: [...card.querySelectorAll("button")].map((b) => b.textContent),
+        badge: document.getElementById("pluginVersionBadge").textContent,
+        actionHidden: document.getElementById("pluginActionBtn").hidden,
+        installedText: document.getElementById("pluginInstalledLabel").textContent,
+        installedHidden: document.getElementById("pluginInstalledLabel").hidden,
+        installedColor: getComputedStyle(document.getElementById("pluginInstalledLabel")).color,
       };
     })()`);
-    if (pluginInstalled !== "0.15.1") throw new Error(`点「安装」应 install 0.15.1,实际 ${pluginInstalled}`);
-    if (!pi2.meta.includes("已装 0.15.1")) throw new Error(`安装后应显示已装版本,实际 ${pi2.meta}`);
-    if (pi2.buttons.length !== 0) throw new Error(`已装且无更新应无按钮,实际 ${pi2.buttons}`);
+    if (!pi2.actionHidden) throw new Error("已装且无更新应隐藏按钮");
+    if (pi2.installedHidden || pi2.installedText !== "已安装")
+      throw new Error(`装完应显示「已安装」,实际 ${pi2.installedText}`);
+    if (pi2.installedColor !== "rgb(34, 197, 94)") throw new Error("「已安装」应为绿色");
+    if (pi2.badge !== "0.15.2") throw new Error(`版本徽标应为最新,实际 ${pi2.badge}`);
+    console.log("[10b] 安装闭环:装完 → 「已安装」绿字 + 无按钮,徽标最新 ✓");
 
-    // 10c. 已有新版本:显示「更新」;点「更新」→ install 最新 → 无按钮
+    // 10c. 已装但低于最新 → 「更新」;点更新 → 安装最新 → 已安装
     pluginInstalled = "0.15.0";
     pluginLatest = "0.15.1";
     pluginError = null;
     await win.loadFile(path.join(__dirname, "..", "src", "renderer", "dsh-status.html")); // 重载触发重新查询
-    await wait(250);
+    await wait(300);
     const pi3 = await win.webContents.executeJavaScript(`(() => {
-      const card = document.getElementById("pluginCard");
       return {
-        meta: [...card.querySelectorAll(".plugin-meta")].map((m) => m.textContent).join(" "),
-        buttons: [...card.querySelectorAll("button")].map((b) => b.textContent),
+        badge: document.getElementById("pluginVersionBadge").textContent,
+        actionHidden: document.getElementById("pluginActionBtn").hidden,
+        actionText: document.getElementById("pluginActionBtn").textContent,
+        installedHidden: document.getElementById("pluginInstalledLabel").hidden,
       };
     })()`);
-    if (!pi3.meta.includes("已装 0.15.0 · 最新 0.15.1"))
-      throw new Error(`有更新时版本行应含已装+最新,实际 ${pi3.meta}`);
-    if (pi3.buttons.length !== 1 || pi3.buttons[0] !== "更新")
-      throw new Error(`有更新应只有「更新」按钮,实际 ${pi3.buttons}`);
+    if (pi3.badge !== "0.15.1") throw new Error(`版本徽标应显示最新 0.15.1,实际 ${pi3.badge}`);
+    if (pi3.actionHidden || pi3.actionText !== "更新")
+      throw new Error(`有更新应显示「更新」按钮,实际 hidden=${pi3.actionHidden} text=${pi3.actionText}`);
+    if (!pi3.installedHidden) throw new Error("有更新时不应显示「已安装」");
     // 10c 重载过页面 → confirm 又变回原生对话框,必须重新置真
     await win.webContents.executeJavaScript(`window.confirm = () => true; undefined;`);
-    await win.webContents.executeJavaScript(`[...document.querySelectorAll("#pluginCard button")][0].click(); undefined;`);
-    await wait(250);
+    await win.webContents.executeJavaScript(`document.getElementById("pluginActionBtn").click(); undefined;`);
+    await wait(280);
     if (pluginInstalled !== "0.15.1") throw new Error(`点「更新」应 install 最新,实际 ${pluginInstalled}`);
-    const pi4 = await win.webContents.executeJavaScript(
-      `document.querySelectorAll("#pluginCard button").length`
-    );
-    if (pi4 !== 0) throw new Error("更新到最新后应无按钮");
+    const pi4 = await win.webContents.executeJavaScript(`(() => ({
+      actionHidden: document.getElementById("pluginActionBtn").hidden,
+      installedHidden: document.getElementById("pluginInstalledLabel").hidden,
+    }))()`);
+    if (!pi4.actionHidden || pi4.installedHidden)
+      throw new Error("更新到最新后应显示「已安装」且隐藏按钮");
+    console.log("[10c] 更新闭环:已装 0.15.0 < 最新 0.15.1 → 「更新」 → 装完「已安装」 ✓");
 
     // 10d. 查询失败(未安装):「网络服务异常」+「重试」;点重试恢复
     pluginInstalled = null;
     pluginError = "fetch failed";
     await win.loadFile(path.join(__dirname, "..", "src", "renderer", "dsh-status.html")); // 重载触发重新查询
-    await wait(250);
+    await wait(300);
     const pi5 = await win.webContents.executeJavaScript(`(() => {
-      const card = document.getElementById("pluginCard");
       return {
-        errText: card.querySelector(".error-text")?.textContent ?? null,
-        retryText: [...card.querySelectorAll("button")].map((b) => b.textContent),
-        installBtn: [...card.querySelectorAll("button")].some((b) => b.textContent === "安装"),
+        rowHidden: document.getElementById("pluginRow").hidden,
+        errText: document.querySelector("#pluginError .error-text").textContent,
+        buttons: [...document.querySelectorAll("#pluginError button")].map((b) => b.textContent),
       };
     })()`);
+    if (!pi5.rowHidden) throw new Error("失败时插件行应隐藏");
     if (pi5.errText !== "网络服务异常") throw new Error(`失败态应有「网络服务异常」,实际 ${pi5.errText}`);
-    if (pi5.retryText.length !== 1 || pi5.retryText[0] !== "重试")
-      throw new Error(`失败态应只有「重试」,实际 ${pi5.retryText}`);
-    if (pi5.installBtn) throw new Error("失败态不应有「安装」按钮");
+    if (pi5.buttons.length !== 1 || pi5.buttons[0] !== "重试")
+      throw new Error(`失败态应只有「重试」,实际 ${pi5.buttons}`);
+    // 10d.2 已装 + 失败:行显示本地版本 + 「网络异常,无法检查更新」+ 重试
+    pluginInstalled = "0.15.0";
+    pluginError = "fetch failed";
+    await win.loadFile(path.join(__dirname, "..", "src", "renderer", "dsh-status.html"));
+    await wait(300);
+    const pi5b = await win.webContents.executeJavaScript(`(() => {
+      return {
+        badge: document.getElementById("pluginVersionBadge").textContent,
+        errText: document.querySelector("#pluginError .error-text").textContent,
+        buttons: [...document.querySelectorAll("#pluginError button")].map((b) => b.textContent),
+        actionHidden: document.getElementById("pluginActionBtn").hidden,
+      };
+    })()`);
+    if (pi5b.badge !== "0.15.0") throw new Error(`已装+失败时徽标应回退本地版本,实际 ${pi5b.badge}`);
+    if (pi5b.errText !== "网络异常,无法检查更新")
+      throw new Error(`已装+失败文案错误: ${pi5b.errText}`);
+    if (!pi5b.actionHidden) throw new Error("已装+失败时不应有安装/更新按钮");
+    if (pi5b.buttons.length !== 1 || pi5b.buttons[0] !== "重试")
+      throw new Error(`已装+失败应只有「重试」,实际 ${pi5b.buttons}`);
+    // 恢复 → 点重试 → 回到「更新」态(0.15.0 < 0.15.1)
     pluginError = null;
     pluginLatest = "0.15.1";
-    await win.webContents.executeJavaScript(`[...document.querySelectorAll("#pluginCard button")][0].click()`);
+    await win.webContents.executeJavaScript(`document.getElementById("pluginRetryBtn").click(); undefined;`);
     await wait(250);
-    const pi6 = await win.webContents.executeJavaScript(`(() => {
-      const card = document.getElementById("pluginCard");
+    const pi6 = await win.webContents.executeJavaScript(`(() => ({
+      errHidden: document.getElementById("pluginError").hidden,
+      badge: document.getElementById("pluginVersionBadge").textContent,
+      actionHidden: document.getElementById("pluginActionBtn").hidden,
+      actionText: document.getElementById("pluginActionBtn").textContent,
+    }))()`);
+    if (!pi6.errHidden || pi6.actionHidden || pi6.actionText !== "更新")
+      throw new Error("重试后应恢复「更新」态");
+    console.log("[10d] 查询失败:未装→错误+重试;已装→本地版本+警示+重试;重试恢复 ✓");
+
+    // ========== 11. 链接悬停下划线(hover 规则存在) ==========
+    const linkRules = await win.webContents.executeJavaScript(`(() => {
+      const hoverOK = (selector) => {
+        for (const sh of document.styleSheets) {
+          try {
+            for (const r of sh.cssRules) {
+              if (r.selectorText === selector) {
+                return r.style.textDecoration === 'underline' || r.style.textDecorationLine === 'underline';
+              }
+            }
+          } catch { /* 跨域样式表跳过 */ }
+        }
+        return false;
+      };
+      const cs = (el) => {
+        const s = getComputedStyle(el);
+        return { color: s.color, deco: s.textDecorationLine, cursor: s.cursor };
+      };
       return {
-        meta: [...card.querySelectorAll(".plugin-meta")].map((m) => m.textContent).join(" "),
-        installBtn: [...card.querySelectorAll("button")].some((b) => b.textContent === "安装"),
+        dshLink: cs(document.getElementById("dshVersionLink")),
+        pluginLink: cs(document.getElementById("pluginNameLink")),
+        hoverRule: hoverOK(".row-link:hover"),
       };
     })()`);
-    if (pi6.installBtn !== true || !pi6.meta.includes("未安装 · 最新 0.15.1"))
-      throw new Error("重试后应恢复「未安装 + 安装」态");
-    console.log("[10] 侧边栏插件板块:未安装/安装闭环/有更新/网络失败重试 ✓");
+    if (!linkRules.hoverRule) throw new Error(".row-link:hover 应有 text-decoration: underline 规则");
+    if (linkRules.dshLink.deco !== "none") throw new Error("链接默认不应有下划线");
+    if (linkRules.pluginLink.cursor !== "pointer") throw new Error("插件名链接应可点击(cursor:pointer)");
+    console.log("[11] 链接:DSH 版本 / 插件名 → 仓库链接 + hover 下划线规则 ✓");
 
     console.log("\nPASS ✓ 服务状态与版本面板回归通过");
     win.destroy();

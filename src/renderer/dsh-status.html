@@ -12,20 +12,18 @@
   <body>
     <!--
       服务状态面板(右侧内置,开关由顶栏状态按钮/菜单控制,自身无关闭按钮)。
-      布局参考设计稿(正常/停止/查询失败三态):
+      布局参考设计稿 demo/0.2.0(未安装 / 已装-有更新 / 已装-无更新 三态):
         [服务状态]
           DSH 0.1.0-rc.6...        [● 运行中] (+启动服务, 停止时)
           端口 3260 · PID 33990
-        ───────────────────────────
-        [侧边栏插件]
-          dsh-better-sidebar
-          已装 0.15.0 · 最新 0.15.1    [更新 / 安装] (无更新时无按钮)
-        ───────────────────────────
-        [DSH 版本]
-          [卡片] 0.1.0-rc.8 [最新]            [更新]
-                 2026-08-19
-          [卡片] ...
-          [更多] / [网络服务异常] [重试]
+        ──────────────
+        [DSH]
+          0.1.0-rc.8 [最新]              [更新 / 当前]
+          2026-08-19
+        ──────────────
+        [侧边栏]
+          dsh-better-sidebar [0.15.2]    [安装 / 更新 / 已安装]
+          支持文件渲染编辑、终端、Git、子代理、子会话,以及第三方插件注册为新 Tab。
     -->
     <main class="content">
       <!-- ---------- 服务状态 ---------- -->
@@ -47,32 +45,67 @@
         <div class="hint-line" id="serviceHint" hidden></div>
       </section>
 
-      <!-- ---------- 侧边栏插件(dsh-better-sidebar) ---------- -->
-      <section class="section" id="pluginSection">
-        <h1 class="section-title">侧边栏插件</h1>
-        <div class="plugin-card" id="pluginCard"></div>
-        <div class="hint-line" id="pluginHint" hidden></div>
-      </section>
+      <!-- ---------- DSH(最新一条版本) ---------- -->
+      <section class="section" id="dshSection">
+        <h1 class="section-title">DSH</h1>
 
-      <!-- ---------- DSH 版本 ---------- -->
-      <section class="section" id="versionSection">
-        <h1 class="section-title">DSH 版本</h1>
-
-        <div class="version-list" id="versionList"></div>
+        <!-- 正常运行:版本链接 + 最新徽标 + 更新按钮/当前文案 -->
+        <div class="row-line" id="dshRow" hidden>
+          <a
+            class="row-link"
+            id="dshVersionLink"
+            href="https://github.com/deepseek-ai/deepseek-harness/"
+            target="_blank"
+            rel="noreferrer"
+            title="0.1.0-rc.8"
+          >0.1.0-rc.8</a>
+          <span class="v-badge">最新</span>
+          <button class="btn btn-primary v-update" id="dshUpdateBtn" type="button" hidden>更新</button>
+          <span class="state-current" id="dshCurrentLabel" hidden>当前</span>
+        </div>
+        <div class="v-date" id="dshDate" hidden>2026-08-19</div>
 
         <!-- 查询失败:错误文案 + 重试 -->
-        <div class="version-error" id="versionError" hidden>
+        <div class="version-error" id="dshError" hidden>
           <p class="error-text">网络服务异常</p>
-          <button class="btn btn-outline" id="retryBtn" type="button">重试</button>
+          <button class="btn btn-outline" id="dshRetryBtn" type="button">重试</button>
         </div>
 
         <!-- 缓存回退提示(网络失败但展示上次缓存) -->
-        <div class="cache-note" id="cacheNote" hidden>网络异常,以下为上次缓存结果</div>
-
-        <!-- 更多:一次加载 10 条,到底隐藏 -->
-        <button class="btn btn-outline btn-more" id="moreBtn" type="button" hidden>更多</button>
+        <div class="cache-note" id="dshCacheNote" hidden>网络异常,以下为上次缓存结果</div>
 
         <div class="hint-line" id="upgradeHint" hidden></div>
+      </section>
+
+      <!-- ---------- 侧边栏(dsh-better-sidebar) ---------- -->
+      <section class="section" id="pluginSection">
+        <h1 class="section-title">侧边栏</h1>
+
+        <!-- 正常:名称链接 + 版本徽标 + 安装/更新按钮或已安装文案 -->
+        <div class="row-line" id="pluginRow" hidden>
+          <a
+            class="row-link"
+            id="pluginNameLink"
+            href="https://github.com/omdsh-dev/DSH-better-sidebar"
+            target="_blank"
+            rel="noreferrer"
+            title="dsh-better-sidebar"
+          >dsh-better-sidebar</a>
+          <span class="v-badge" id="pluginVersionBadge">0.15.2</span>
+          <button class="btn btn-primary plugin-action" id="pluginActionBtn" type="button" hidden>安装</button>
+          <span class="state-current" id="pluginInstalledLabel" hidden>已安装</span>
+        </div>
+        <p class="plugin-desc" id="pluginDesc" hidden>
+          支持文件渲染编辑、终端、Git、子代理、子会话,以及第三方插件注册为新 Tab。
+        </p>
+
+        <!-- 查询失败:错误文案 + 重试 -->
+        <div class="version-error" id="pluginError" hidden>
+          <p class="error-text">网络服务异常</p>
+          <button class="btn btn-outline" id="pluginRetryBtn" type="button">重试</button>
+        </div>
+
+        <div class="hint-line" id="pluginHint" hidden></div>
       </section>
     </main>
 

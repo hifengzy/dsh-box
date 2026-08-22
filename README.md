@@ -61,8 +61,8 @@ npm start
   - **布局策略(尽量大 + 自动收起)**:面板与内容区间隙 4px(与窗口左右内缩一致);面板展开时 dsh 内容区保底 **960px**(实测 dsh 至 720px 均无横向滚动);面板 = 内宽 − 960 − 4,**上限 480px**——1280 默认窗口下面板 **308px**/内容 960,1440 下面板 468px,≥1452 触顶 480px;窗口窄到面板放不下(<240px,即窗口 <≈1212px)时**自动收起面板**,dsh 内容区拿回全宽;重新展开需窗口拉宽到 ≈1262px(50px 缓冲防抖动)。纯函数 `computeSidebar()` 单测覆盖(含滞回边界)。
   - **展开/收起动画**:与 dsh 左侧边栏同款规格(实测其主框架 `transition: grid-template-columns 0.3s cubic-bezier(.4,0,.2,1)`):面板宽度以 **300ms + cubic-bezier(.4,0,.2,1)** 逐帧动画(主进程按帧 setBounds 两个视图),dsh 内容区同步平滑重排;窗口缩放/全屏切换时为快照布局(取消动画);动画期间快速切换可反向(开→关→开)不卡死。
   - 上卡 = 服务状态:只展示 DSH 版本号、端口、PID;**状态只有「运行中(绿)/ 停止(灰)」两态**,仅停止时显示「启动服务」按钮;版本号过长自动截断为 …,完整值悬停可见;
-  - 中卡 = 侧边栏插件(dsh-better-sidebar):展示安装状态与版本;**状态机:未安装 →「安装」;已装无更新 → 无按钮;已装有更新 →「更新」;查询失败 →「网络服务异常」+「重试」**。安装/更新由主进程执行 `dsh plugin --profile web add dsh-better-sidebar@<版本>`(`src/main/plugin-manager.js`),成功后**自动重启 dsh 服务**让新 bundle 生效,并写入 `openByDefault: true`(与浏览器 WebUI 对齐,可在插件设置页改回)。安装/更新失败不阻塞,可重试。
-  - 下卡 = DSH 版本(原「版本列表」):**每次打开面板(视图重建)自动查一次 npm registry**(`https://registry.npmjs.org/@deepseek-ai/dsh` JSON API,非网页),按发布时间倒序,**发布时间最新的一行即「最新」**;默认只显示最近 **10 条**,「更多」按钮每次再加载 10 条旧版本,全部查完自动隐藏;仅「比当前运行版本新」的行显示「更新」按钮;查询失败显示「网络服务异常」+「重试」;
+  - 中卡 = 侧边栏(dsh-better-sidebar):插件名(链接,悬停下划线)+ 最新版本徽标 + 说明文案;**状态机:未安装 →「安装」;已装且版本 == 最新 →「已安装」绿色文案;已装但低于最新 →「更新」;查询失败 →「网络服务异常」+「重试」(已装时徽标回退本地版本并警示)**。安装/更新由主进程执行 `dsh plugin --profile web add dsh-better-sidebar@<版本>`(`src/main/plugin-manager.js`),成功后**自动重启 dsh 服务**让新 bundle 生效,并写入 `openByDefault: true`(与浏览器 WebUI 对齐,可在插件设置页改回)。安装/更新失败不阻塞,可重试。
+  - 下卡 = DSH:只展示**最新一条版本**(版本号链接 `deepseek-harness` 仓库,悬停下划线)+「最新」徽标 + 发布日期;**当前运行版本 < 最新 →「更新」按钮;一致 →「当前」绿色文案**;查询失败显示「网络服务异常」+「重试」(有缓存回退展示并提示)。每次打开面板(视图重建)自动查一次 npm registry(`https://registry.npmjs.org/@deepseek-ai/dsh` JSON API,非网页);
   - 每次启动应用也会静默查一次 npm 和插件 registry,有新版 → 顶栏入口红点(本体或插件任一有更新即亮);面板展开时顶栏按钮呈激活态(品牌蓝),再点一次收起、dsh 内容区恢复整宽;
   - 升级链路(`src/main/dsh-upgrade.js`):下载 tarball → **sha512 校验**(registry 的 `dist.integrity`)→ 系统 tar 解压 → 停服 → **原子替换**(旧包留 `.bak` 备份)→ 启服;任何一步失败自动回滚,不留下半截状态。升级会短暂停止服务,完成后自动恢复。
   - 离线/查询失败回退到上次缓存结果(userData/cache)并提示;中国网络可用 `DSH_NPM_REGISTRY` 切换镜像(如 `https://registry.npmmirror.com`)。
@@ -103,7 +103,7 @@ src/
     renderer.js      启动页逻辑(状态渲染、重试)
     style.css
     about.html       关于弹窗页面(about.css / about.js 配套)
-    dsh-status.html  「dsh 服务与版本」右侧面板(状态卡 + 侧边栏插件 + 版本列表 + 更新,窄版竖排)
+    dsh-status.html  「dsh 服务与版本」右侧面板(状态卡 + DSH 最新版本 + 侧边栏插件,窄版竖排)
     dsh-status.js
     dsh-status.css
     topbar.html      自定义顶栏(GitHub / dsh 状态入口 + 红点 / 侧栏插件两个面板开关)

@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * dsh-status.js — 「服务状态 + DSH 版本」右侧面板逻辑。
+ * dsh-status.js — 「服务状态 + DSH + 侧边栏」右侧面板逻辑。
  *
  * 面板由顶栏状态按钮(或菜单)开关,自身不提供关闭按钮。
  * 数据全部经 preload 桥(window.dsh.*):
@@ -12,16 +12,16 @@
  *     仅「停止」时显示「启动服务」按钮;
  *   - 版本号超长自动截断为 …(title 完整值)。
  *
- * DSH 版本(原「版本列表」):
- *   - 按发布时间倒序(发布时间最新 = 「最新」);
- *   - 默认显示最近 10 条,「更多」按钮每次再加载 10 条旧版本,
- *     直到全部查完隐藏「更多」;
- *   - 网络查询失败 → 「网络服务异常」+「重试」;有缓存时回退展示并提示;
- *   - 比当前运行版本新的行显示「更新」按钮(升级链路不变)。
+ * DSH 板块(原「DSH 版本」列表,已精简为单条):
+ *   - 只展示最新一条版本(发布时间最新):版本号(链接,悬停下划线)
+ *     + 「最新」徽标 + 发布日期;
+ *   - 当前运行版本 < 最新 → 「更新」按钮;一致 → 「当前」绿色文案;
+ *   - 网络查询失败 → 「网络服务异常」+「重试」;有缓存时回退展示并提示。
  *
- * 侧边栏插件(dsh-better-sidebar):
- *   - 未安装 → 「安装」;已装无更新 → 无按钮;已装有更新 → 「更新」;
- *   - 网络查询失败 → 「网络服务异常」+「重试」;
+ * 侧边栏板块(dsh-better-sidebar):
+ *   - 名称(链接,悬停下划线)+ 最新版本徽标 + 说明文案;
+ *   - 未安装 → 「安装」按钮;已装且版本 == 最新 → 「已安装」绿色文案;
+ *     已装但版本 < 最新 → 「更新」按钮;查询失败 → 「网络服务异常」+「重试」;
  *   - 安装/更新由主进程完成(停服 → dsh plugin add → 恢复服务)。
  */
 
@@ -35,26 +35,33 @@ const els = {
   stateLabel: $("stateLabel"),
   startBtn: $("startBtn"),
   serviceHint: $("serviceHint"),
-  // 侧边栏插件
-  pluginCard: $("pluginCard"),
-  pluginHint: $("pluginHint"),
-  // DSH 版本
-  versionList: $("versionList"),
-  versionError: $("versionError"),
-  retryBtn: $("retryBtn"),
-  cacheNote: $("cacheNote"),
-  moreBtn: $("moreBtn"),
+  // DSH(最新一条)
+  dshRow: $("dshRow"),
+  dshVersionLink: $("dshVersionLink"),
+  dshUpdateBtn: $("dshUpdateBtn"),
+  dshCurrentLabel: $("dshCurrentLabel"),
+  dshDate: $("dshDate"),
+  dshError: $("dshError"),
+  dshRetryBtn: $("dshRetryBtn"),
+  dshCacheNote: $("dshCacheNote"),
   upgradeHint: $("upgradeHint"),
+  // 侧边栏插件
+  pluginRow: $("pluginRow"),
+  pluginNameLink: $("pluginNameLink"),
+  pluginVersionBadge: $("pluginVersionBadge"),
+  pluginActionBtn: $("pluginActionBtn"),
+  pluginInstalledLabel: $("pluginInstalledLabel"),
+  pluginDesc: $("pluginDesc"),
+  pluginError: $("pluginError"),
+  pluginRetryBtn: $("pluginRetryBtn"),
+  pluginHint: $("pluginHint"),
 };
 
 let currentInfo = null;
 let upgrading = false;
 let pluginInstalling = false;
-
-/** 版本分页:每页条数 / 当前展示条数 / 全部行缓存 */
-const PAGE_SIZE = 10;
-let visibleCount = 0;
-let allRows = [];
+/** 最近一次插件查询信息(供安装/更新成功后刷新对照) */
+let lastPluginInfo = null;
 
 // ---------- 服务状态 ----------
 
@@ -63,22 +70,18 @@ function renderStatus(info) {
   if (!info) return;
   currentInfo = info;
 
-  // 1) 版本号(超长截断,完整值放进 title)
   const versionText = info.version ? `DSH ${info.version}` : "DSH(版本未知)";
   els.versionLine.textContent = versionText;
   els.versionLine.title = versionText;
 
-  // 2) 端口 · PID
   const running = info.state === "ready";
   els.metaLine.textContent = running
     ? `端口 ${info.port} · PID ${info.pid ?? "-"}`
     : "端口 - · PID -";
 
-  // 3) 状态徽标:运行中(绿) / 停止(灰)
   els.statePill.classList.toggle("state-running", running);
   els.stateLabel.textContent = running ? "运行中" : "停止";
 
-  // 4) 仅停止时显示「启动服务」;启动中禁用以防重复点击
   els.startBtn.hidden = running;
   els.startBtn.disabled = info.state === "starting";
   els.startBtn.textContent = info.state === "starting" ? "启动中…" : "启动服务";
@@ -104,86 +107,45 @@ function fmtDate(iso) {
   }
 }
 
-// ---------- DSH 版本(列表) ----------
+// ---------- DSH(最新一条) ----------
 
-/** 渲染当前可见的版本行(visibleCount 条) */
-function renderVersionRows() {
-  els.versionList.textContent = "";
-  const rows = allRows.slice(0, visibleCount);
-  rows.forEach((row, index) => {
-    const card = document.createElement("div");
-    card.className = "vcard";
-
-    // 上排:版本号 + 徽标 + 更新按钮
-    const top = document.createElement("div");
-    top.className = "vcard-top";
-
-    const ver = document.createElement("span");
-    ver.className = "v-version";
-    ver.textContent = row.version;
-    ver.title = row.version;
-
-    const badges = document.createElement("span");
-    badges.className = "v-badges";
-    // 发布时间倒序首行 = 发布时间最新 = 「最新」(取消 dist-tag 置顶语义)
-    if (index === 0) {
-      const b = document.createElement("span");
-      b.className = "v-badge";
-      b.textContent = "最新";
-      badges.appendChild(b);
-    }
-    if (row.isCurrent) {
-      const b = document.createElement("span");
-      b.className = "v-badge";
-      b.textContent = "当前";
-      badges.appendChild(b);
-    }
-
-    top.append(ver, badges);
-
-    // 比当前运行版本新的行 → 更新按钮(升级链路不变)
-    if (row.hasUpdate && !row.isCurrent) {
-      const btn = document.createElement("button");
-      btn.className = "btn btn-primary v-update";
-      btn.textContent = "更新";
-      btn.addEventListener("click", () => doUpgrade(row.version, btn));
-      top.appendChild(btn);
-    }
-
-    // 下排:发布日期
-    const date = document.createElement("div");
-    date.className = "v-date";
-    date.textContent = fmtDate(row.publishedAt);
-
-    card.append(top, date);
-    els.versionList.appendChild(card);
-  });
-}
-
-/** 渲染版本区整体(错误 / 缓存 / 列表 + 更多按钮) */
-function renderVersion(res) {
-  allRows = res.rows || [];
-  const failed = !!res.error || !allRows.length;
-
-  // 查询失败:无内容可用 → 错误态 + 重试
-  if (failed) {
-    els.versionError.hidden = false;
-    els.cacheNote.hidden = true;
-    els.versionList.textContent = "";
-    els.moreBtn.hidden = true;
-    visibleCount = 0;
+/**
+ * 渲染 DSH 板块:只展示最新一条版本。
+ * res 来自 window.dsh.checkUpdates()(完整列表已由主进程 decorate,
+ * 含 latest / runtime / hasUpdate / rows;rows 按发布时间倒序)。
+ */
+function renderDsh(res) {
+  // 无最新版本可用 → 失败态
+  if (res.error || !res.latest || !res.rows || !res.rows.length) {
+    els.dshError.hidden = false;
+    els.dshCacheNote.hidden = true;
+    els.dshRow.hidden = true;
+    els.dshDate.hidden = true;
     return;
   }
 
-  // 有缓存回退(网络失败但有上次结果)
-  els.versionError.hidden = true;
-  els.cacheNote.hidden = !res.fromCache;
+  // 最新版本行:dist-tag latest 精确匹配优先,再回退 isLatest 标记/首行
+  const latestRow =
+    res.rows.find((r) => r.version === res.latest) ??
+    res.rows.find((r) => r.isLatest) ??
+    res.rows[0];
+  const latestVersion = latestRow.version;
 
-  visibleCount = Math.min(PAGE_SIZE, allRows.length);
-  renderVersionRows();
+  els.dshError.hidden = true;
+  els.dshCacheNote.hidden = !res.fromCache;
 
-  // 还有更旧的版本 → 显示「更多」
-  els.moreBtn.hidden = visibleCount >= allRows.length;
+  els.dshRow.hidden = false;
+  els.dshVersionLink.textContent = latestVersion;
+  els.dshVersionLink.title = latestVersion;
+
+  // 当前运行版本 < 最新 → 更新按钮;一致(或无法比较)→ 「当前」文案
+  const hasUpdate = !!res.hasUpdate;
+  els.dshUpdateBtn.hidden = !hasUpdate;
+  els.dshCurrentLabel.hidden = hasUpdate;
+  if (hasUpdate) els.dshUpdateBtn.textContent = "更新";
+
+  els.dshDate.hidden = false;
+  els.dshDate.textContent = fmtDate(latestRow.publishedAt) || String(latestVersion);
 }
 
 /** 查一次 npm 并渲染(每次进入页面都查) */
@@ -191,122 +153,71 @@ async function loadVersions() {
   els.upgradeHint.hidden = false;
   els.upgradeHint.textContent = "正在检查…";
   try {
-    const res = await window.dsh.checkUpdates();
-    renderVersion(res);
+    renderDsh(await window.dsh.checkUpdates());
     els.upgradeHint.hidden = true;
   } catch (error) {
-    // invoke 抛错(极端)也走错误态
     els.upgradeHint.hidden = true;
-    renderVersion({ error: String(error), rows: [] });
-  }
-}
-
-/** 「更多」:加载下一批 10 条旧版本 */
-function loadMore() {
-  visibleCount += PAGE_SIZE;
-  renderVersionRows();
-  els.moreBtn.hidden = visibleCount >= allRows.length;
-}
-
-// ---------- 应用内升级(链路不变) ----------
-
-async function doUpgrade(version, btn) {
-  if (upgrading) return;
-  const ok = confirm(
-    `确定将 dsh 升级到 ${version} 吗?\n\n升级过程会短暂停止当前服务,完成后自动恢复。`
-  );
-  if (!ok) return;
-  upgrading = true;
-  btn.disabled = true;
-  btn.textContent = "升级中…";
-  els.upgradeHint.hidden = false;
-  els.upgradeHint.textContent = `正在下载并安装 dsh ${version},请稍候…`;
-  try {
-    const res = await window.dsh.upgrade(version);
-    if (res.ok) {
-      els.upgradeHint.textContent = res.unchanged
-        ? `当前已是 ${res.installed},无需升级`
-        : `已升级到 ${res.installed}(原 ${res.previous} 已备份)`;
-      await Promise.all([refreshInfo(), loadVersions()]);
-    } else {
-      els.upgradeHint.textContent = `升级失败: ${res.error}`;
-    }
-  } catch (error) {
-    els.upgradeHint.textContent = `升级失败: ${error}`;
-  } finally {
-    upgrading = false;
+    renderDsh({ error: String(error), rows: [] });
   }
 }
 
 // ---------- 侧边栏插件(dsh-better-sidebar) ----------
-// 状态机:未安装 →「安装」;已装无更新 → 无按钮;已装有更新 →「更新」;
-// 网络查询失败 →「网络服务异常」+「重试」(已装时保留版本信息)。
+// 状态机:未安装 →「安装」;已装 == 最新 →「已安装」(绿字,无按钮);
+// 已装 < 最新 →「更新」;查询失败 →「网络服务异常」+「重试」。
 
-/** 渲染插件卡片(info = getPluginInfo 结果) */
-function renderPluginCard(info) {
-  const card = els.pluginCard;
-  card.textContent = "";
-  const isInstalled = !!info.installed;
+/** 渲染插件板块(info = getPluginInfo 结果) */
+function renderPlugin(info) {
+  lastPluginInfo = info;
+  const installed = info.installed;
   const failed = !!info.error;
+  const latest = info.latest;
 
-  // 名称行
-  const name = document.createElement("div");
-  name.className = "plugin-name";
-  name.textContent = "dsh-better-sidebar";
-  card.appendChild(name);
+  // 名称行内容固定(链接 href 静态),只需控制显隐与徽标/按钮
+  els.pluginRow.hidden = false;
 
-  // 未安装 + 网络失败 → 错误态(复用版本区样式)
-  if (failed && !isInstalled) {
-    const err = document.createElement("div");
-    err.className = "version-error";
-    const p = document.createElement("p");
-    p.className = "error-text";
-    p.textContent = "网络服务异常";
-    const retry = document.createElement("button");
-    retry.className = "btn btn-outline";
-    retry.textContent = "重试";
-    retry.addEventListener("click", () => loadPluginInfo());
-    err.append(p, retry);
-    card.appendChild(err);
-    return;
-  }
-
-  // 版本行:未安装 / 已装(±最新)
-  const meta = document.createElement("div");
-  meta.className = "plugin-meta";
-  const latestSuffix =
-    info.latest && !info.hasUpdate && isInstalled ? " · 已是最新" : "";
-  if (!isInstalled) {
-    meta.textContent = info.latest ? `未安装 · 最新 ${info.latest}` : "未安装";
+  // 版本徽标:正常时展示「查询到的最新版本号」;查询失败时 latest 不可靠,
+  // 回退本地已装版本(未装则隐藏)
+  const badgeText = failed ? (installed || latest) : (latest || installed);
+  if (badgeText) {
+    els.pluginVersionBadge.textContent = badgeText;
+    els.pluginVersionBadge.hidden = false;
   } else {
-    meta.textContent = info.hasUpdate
-      ? `已装 ${info.installed} · 最新 ${info.latest}`
-      : `已装 ${info.installed}${latestSuffix}`;
+    els.pluginVersionBadge.hidden = true;
   }
-  card.appendChild(meta);
 
-  // 已装但网络失败 → 额外警示行 + 重试(不提供更新按钮,无法判断)
-  if (failed && isInstalled) {
-    const warn = document.createElement("div");
-    warn.className = "plugin-meta plugin-meta-warn";
-    warn.textContent = "网络异常,无法检查更新";
-    card.appendChild(warn);
-    const retry = document.createElement("button");
-    retry.className = "btn btn-outline plugin-action";
-    retry.textContent = "重试";
-    retry.addEventListener("click", () => loadPluginInfo());
-    card.appendChild(retry);
+  // 未安装 + 查询失败:隐藏行,只显示错误态
+  if (failed && !installed) {
+    els.pluginRow.hidden = true;
+    els.pluginDesc.hidden = true;
+    els.pluginError.hidden = false;
+    els.pluginError.querySelector(".error-text").textContent = "网络服务异常";
     return;
   }
 
-  // 操作按钮:未安装 → 安装;已装有更新 → 更新;已装无更新 → 无按钮
-  if (!isInstalled || info.hasUpdate) {
-    const btn = document.createElement("button");
-    btn.className = "btn btn-primary plugin-action";
-    const isInstall = !isInstalled;
-    btn.textContent = isInstall ? "安装" : "更新";
-    btn.addEventListener("click", () => doPluginInstall(info.latest, btn, isInstall));
-    card.appendChild(btn);
+  // 已安装 + 查询失败:显示本地已装版本 + 警示 + 重试(无法判断更新)
+  if (failed && installed) {
+    els.pluginDesc.hidden = true;
+    els.pluginError.hidden = false;
+    els.pluginError.querySelector(".error-text").textContent = "网络异常,无法检查更新";
+    els.pluginActionBtn.hidden = true;
+    els.pluginInstalledLabel.hidden = true;
+    return;
+  }
+
+  els.pluginError.hidden = true;
+  els.pluginDesc.hidden = false;
+
+  // 动作区:未安装 → 安装;已装 < 最新 → 更新;已装 >= 最新 → 已安装(绿字)
+  const isInstall = !installed;
+  const hasUpdate = installed && latest && installed !== latest;
+  if (isInstall || hasUpdate) {
+    els.pluginActionBtn.hidden = false;
+    els.pluginActionBtn.disabled = false;
+    els.pluginActionBtn.textContent = isInstall ? "安装" : "更新";
+    els.pluginInstalledLabel.hidden = true;
+  } else {
+    els.pluginActionBtn.hidden = true;
+    els.pluginInstalledLabel.hidden = false;
   }
 }
 
@@ -315,12 +226,11 @@ async function loadPluginInfo() {
   els.pluginHint.hidden = false;
   els.pluginHint.textContent = "正在检查…";
   try {
-    const info = await window.dsh.getPluginInfo();
-    renderPluginCard(info);
+    renderPlugin(await window.dsh.getPluginInfo());
     els.pluginHint.hidden = true;
   } catch (error) {
     els.pluginHint.hidden = true;
-    renderPluginCard({ error: String(error), installed: null });
+    renderPlugin({ error: String(error), installed: null });
   }
 }
 
@@ -354,6 +264,36 @@ async function doPluginInstall(version, btn, isInstall) {
   }
 }
 
+// ---------- 应用内升级(DSH 本体,链路不变) ----------
+
+async function doUpgrade(version, btn) {
+  if (upgrading) return;
+  const ok = confirm(
+    `确定将 dsh 升级到 ${version} 吗?\n\n升级过程会短暂停止当前服务,完成后自动恢复。`
+  );
+  if (!ok) return;
+  upgrading = true;
+  btn.disabled = true;
+  btn.textContent = "升级中…";
+  els.upgradeHint.hidden = false;
+  els.upgradeHint.textContent = `正在下载并安装 dsh ${version},请稍候…`;
+  try {
+    const res = await window.dsh.upgrade(version);
+    if (res.ok) {
+      els.upgradeHint.textContent = res.unchanged
+        ? `当前已是 ${res.installed},无需升级`
+        : `已升级到 ${res.installed}(原 ${res.previous} 已备份)`;
+      await Promise.all([refreshInfo(), loadVersions()]);
+    } else {
+      els.upgradeHint.textContent = `升级失败: ${res.error}`;
+    }
+  } catch (error) {
+    els.upgradeHint.textContent = `升级失败: ${error}`;
+  } finally {
+    upgrading = false;
+  }
+}
+
 // ---------- 事件 ----------
 
 els.startBtn.addEventListener("click", async () => {
@@ -370,12 +310,20 @@ els.startBtn.addEventListener("click", async () => {
   refreshInfo();
 });
 
-els.retryBtn.addEventListener("click", () => {
+els.dshUpdateBtn.addEventListener("click", () => {
+  doUpgrade(els.dshVersionLink.textContent, els.dshUpdateBtn);
+});
+
+els.dshRetryBtn.addEventListener("click", () => {
   loadVersions();
 });
 
-els.moreBtn.addEventListener("click", () => {
-  loadMore();
+els.pluginRetryBtn.addEventListener("click", () => {
+  loadPluginInfo();
+});
+
+els.pluginActionBtn.addEventListener("click", () => {
+  doPluginInstall(lastPluginInfo?.latest ?? null, els.pluginActionBtn, !lastPluginInfo?.installed);
 });
 
 // ---------- 初始化 ----------

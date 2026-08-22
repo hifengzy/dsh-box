@@ -1,12 +1,13 @@
-/* dsh-status.css — 「服务状态 + DSH 版本」右侧面板。
+/* dsh-status.css — 「服务状态 + DSH + 侧边栏」右侧面板。
  *
- * 布局与组件样式按设计稿(正常/停止/查询失败三态)实现,配色走 dsh 原生
- * 设计体系(neutral-bluish 中性色 + 反白主按钮),浅色/深色各一套,
- * 经 light-dark() 自适应(nativeTheme 跟随 dsh UI 主题)。
+ * 布局与组件样式按设计稿 demo/0.2.0(未安装 / 已装-有更新 / 已装-无更新
+ * 三态),配色走 dsh 原生设计体系(neutral-bluish 中性色 + 反白主按钮),
+ * 浅色/深色各一套,经 light-dark() 自适应(nativeTheme 跟随 dsh UI 主题)。
  *
- * 面板特性:竖排窄版(240~480px 宽),状态只有「运行中 / 停止」两态,
- * 仅停止时显示「启动服务」;版本列表默认 10 条 + 「更多」分页,
- * 查询失败显示「网络服务异常」+「重试」。开关仍只靠顶栏按钮,面板无关闭钮。 */
+ * 面板特性:竖排窄版(240~480px 宽),状态只有「运行中 / 停止」两态;
+ * DSH 板块只展示最新一条版本(「最新」徽标 + 更新按钮/当前文案);
+ * 侧边栏板块展示插件名称(链接)+ 最新版本徽标 + 安装/更新/已安装 三态。
+ * 开关仍只靠顶栏按钮,面板无关闭钮。 */
 
 :root {
   color-scheme: light dark;
@@ -31,8 +32,6 @@
 
   /* DeepSeek 品牌蓝(进行中 / 强调 / 链接) */
   --brand: light-dark(rgb(65, 118, 230), rgb(103, 158, 254));
-  --brand-hover: light-dark(rgb(57, 100, 205), rgb(124, 172, 255));
-  --brand-weak: light-dark(rgba(65, 118, 230, 0.1), rgba(103, 158, 254, 0.16));
 
   /* 状态语义色 */
   --ok: light-dark(rgb(34, 197, 94), rgb(78, 209, 126));
@@ -42,8 +41,7 @@
   --idle: light-dark(rgb(129, 133, 140), rgb(173, 178, 184));
   --idle-weak: light-dark(rgba(129, 133, 140, 0.1), rgba(173, 178, 184, 0.16));
 
-  --radius-lg: 10px; /* 版本卡片 */
-  --radius-md: 5px; /* 状态/最新/当前 徽标 */
+  --radius-md: 5px; /* 状态 / 最新 / 版本 徽标 */
 }
 
 * {
@@ -79,12 +77,17 @@ body {
   gap: 24px;
 }
 
-/* ---------- 区块标题(「服务状态」/「DSH 版本」) ---------- */
+/* ---------- 区块:标题 + 内容,区块之间 1px 分隔线(设计稿 256px 细分隔) ---------- */
 .section {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
+}
+
+.section + .section {
+  border-top: 1px solid var(--border-weak);
+  padding-top: 20px;
 }
 
 .section-title {
@@ -192,7 +195,7 @@ body {
     opacity 0.15s ease;
 }
 
-/* 主按钮(启动服务 / 更新):反白 */
+/* 主按钮(启动服务 / 更新 / 安装):反白 */
 .btn-primary {
   background: var(--primary-fill);
   color: var(--primary-fg);
@@ -224,97 +227,37 @@ body {
   outline-offset: 2px;
 }
 
-/* ---------- 侧边栏插件卡片 ---------- */
-.plugin-card {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.plugin-name {
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* 版本行:未安装 / 已装 + 最新 / 网络异常提示 */
-.plugin-meta {
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.plugin-meta.plugin-meta-warn {
-  color: var(--warn);
-}
-
-/* 安装/更新按钮:靠右 */
-.plugin-action {
-  align-self: flex-start;
-  margin-top: 4px;
-  height: 28px;
-  padding: 0 14px;
-}
-
-/* 插件未安装时的错误态复用 DSH 版本的错误布局 */
-.plugin-card .version-error {
-  padding: 8px 0 4px;
-}
-
-/* ---------- 版本列表 ---------- */
-.version-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-/* 单条版本卡片 */
-.vcard {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.vcard-top {
+/* ---------- 行布局(DSH 版本行 / 侧边栏名称行) ----------
+ * 名称(链接) + 徽标 + 右侧按钮/文案;超长时徽标与按钮保持可见 */
+.row-line {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
 }
 
-.v-version {
-  font-size: 12px;
-  line-height: 18px;
-  font-weight: 400;
+/* 可点击链接(版本号 / 插件名):与正文同色,悬停显示下划线 */
+.row-link {
   color: var(--text);
+  text-decoration: none;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  cursor: pointer;
 }
 
-.v-badges {
-  display: flex;
-  gap: 4px;
-  flex: none;
+.row-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
-/* 最新 / 当前 徽标:小圆角描边标签 */
+.row-link:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* 最新 / 版本 徽标:小圆角描边标签(18px,与设计稿一致) */
 .v-badge {
   display: inline-flex;
   align-items: center;
@@ -326,6 +269,7 @@ body {
   line-height: 16px;
   color: var(--text-muted);
   white-space: nowrap;
+  flex: none;
 }
 
 /* 更新按钮:靠右 */
@@ -336,17 +280,36 @@ body {
   padding: 0 12px;
 }
 
+.plugin-action {
+  margin-left: auto;
+  flex: none;
+  height: 28px;
+  padding: 0 14px;
+}
+
+/* 「当前」/「已安装」:绿色文案(与运行中同语义色),不占按钮形态 */
+.state-current {
+  margin-left: auto;
+  flex: none;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--ok);
+  white-space: nowrap;
+}
+
+/* 发布日期(DSH 最新版本) */
 .v-date {
   font-size: 12px;
   line-height: 18px;
   color: var(--text-muted);
 }
 
-/* 更多按钮:底部居中 */
-.btn-more {
-  align-self: center;
-  margin-top: 4px;
-  padding: 0 18px;
+/* 侧边栏插件说明:换行小字 */
+.plugin-desc {
+  font-size: 11px;
+  line-height: 17px;
+  color: var(--text-muted);
+  word-break: break-word;
 }
 
 /* ---------- 查询失败 / 缓存回退 ---------- */
@@ -355,7 +318,7 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 12px;
-  padding: 24px 0;
+  padding: 12px 0;
 }
 
 .error-text {
