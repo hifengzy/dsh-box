@@ -181,12 +181,21 @@ function MARKET_BRIDGE_JS_FN(marketEntry) {
       entryBtn = null;
     };
 
+    const syncEntry = () => {
+      if (!marketEntry) { removeEntry(); return; }
+      if (!document.querySelector('[data-slot="sidebar.market"]')) {
+        entryBtn = makeEntry();
+      }
+    };
+
     // ---------- 侧边栏折叠(rail)适配 ----------
-    // dsh 的 rail 收缩规则绑定了「设置」槽位(选择器含 data-slot),克隆的
-    // 「插件」按钮同 class 也不命中 → 折叠后它保持宽款式。这里以「设置」
-    // 按钮的计算宽度为折叠信号(展开 264px / 折叠 36px),实时给「插件」
-    // 按钮补内联样式(36×36、图标居中、label 隐藏),展开时还原。
-    // 不依赖任何哈希类名,仅依赖「设置按钮宽度」这个行为信号。
+    // dsh 的 rail 收缩规则绑定「设置」槽位(选择器含 data-slot),克隆的
+    // 「插件」按钮同 class 也不命中(折叠尺寸/圆角/label 隐藏都跟着丢)。
+    // 这里以「设置」按钮的计算宽度为折叠信号(展开 264px / 折叠 36px),
+    // 用 ResizeObserver 实时跟随宽度动画(每帧回调,与 dsh 同步),折叠时
+    // 给「插件」按钮补内联样式:36×36、border-radius:50%(与「设置」的
+    // 纯圆 hover 一致)、图标居中、label 隐藏;foot 区最小高度抬高容纳
+    // 两枚按钮并保持纵向排列;展开时全部还原。不依赖任何哈希类名。
     let railOn = false;
     const findPluginLabel = (btn) => {
       for (const el of btn.querySelectorAll('*')) {
@@ -194,46 +203,56 @@ function MARKET_BRIDGE_JS_FN(marketEntry) {
       }
       return null;
     };
-    const applyRail = () => {
-      const settingsAnchor = document.querySelector('[data-slot="sidebar.settings"]');
-      const sb = settingsAnchor ? settingsAnchor.querySelector('button') : null;
-      const next = sb ? parseInt(getComputedStyle(sb).width, 10) <= 40 : false;
+    const applyRailState = (next) => {
       if (next === railOn) return;
       railOn = next;
       const wrap = document.querySelector('[data-slot="sidebar.market"]');
       const btn = wrap ? wrap.querySelector('button') : null;
-      // 折叠时 dsh 把 foot 区高度固定为单个 36px 按钮(54px),两个按钮会
-      // 重叠——把 foot 区最小高度拉高到容纳两个按钮(上下排列)。
+      const settingsAnchor = document.querySelector('[data-slot="sidebar.settings"]');
       const footArea = settingsAnchor ? settingsAnchor.parentElement.parentElement : null;
-      if (footArea) {
-        footArea.style.minHeight = railOn ? '96px' : '';
-        // 折叠后强制纵向排列(rail 的 foot 可能被 dsh 排成横向,两个 36px
-        // 图标会被挤到同一行互相重叠)——「插件」「设置」上下各一行。
-        footArea.style.flexDirection = railOn ? 'column' : '';
-      }
-      if (!btn) return;
       if (railOn) {
-        btn.style.cssText = 'width:36px;height:36px;padding:0;justify-content:center;';
-        const label = findPluginLabel(btn);
-        if (label) label.style.display = 'none';
-        // 折叠时 foot 区高度按单个 36px 按钮收窄,display:contents 不占位
-        // 会让两个按钮重叠——改为块级占一行,foot 高度自动撑开上下排列
-        wrap.style.display = 'block';
+        if (btn) {
+          btn.style.cssText = 'width:36px;height:36px;padding:0;justify-content:center;border-radius:50%;';
+          const label = findPluginLabel(btn);
+          if (label) label.style.display = 'none';
+        }
+        if (wrap) wrap.style.display = 'block';
+        if (footArea) {
+          footArea.style.minHeight = '96px';
+          footArea.style.flexDirection = 'column';
+        }
       } else {
-        btn.style.cssText = '';
-        const label = findPluginLabel(btn);
-        if (label) label.style.display = '';
-        wrap.style.display = 'contents';
+        if (btn) {
+          btn.style.cssText = '';
+          const label = findPluginLabel(btn);
+          if (label) label.style.display = '';
+        }
+        if (wrap) wrap.style.display = 'contents';
+        if (footArea) {
+          footArea.style.minHeight = '';
+          footArea.style.flexDirection = '';
+        }
       }
     };
-    setInterval(applyRail, 500);
-
-    const syncEntry = () => {
-      if (!marketEntry) { removeEntry(); return; }
-      if (!document.querySelector('[data-slot="sidebar.market"]')) {
-        entryBtn = makeEntry();
-      }
+    const railSignal = () => {
+      const sb = document.querySelector('[data-slot="sidebar.settings"] button');
+      return sb ? parseInt(getComputedStyle(sb).width, 10) <= 40 : false;
     };
+    // 实时跟随:ResizeObserver 在设置按钮尺寸动画的每一帧触发,与 dsh
+    // 的折叠/展开同步(文字显隐、圆角、尺寸都不再滞后半拍)。
+    let railObserver = null;
+    const ensureRailObserver = () => {
+      const sb = document.querySelector('[data-slot="sidebar.settings"] button');
+      if (!sb || railObserver) return;
+      railObserver = new ResizeObserver(() => applyRailState(railSignal()));
+      railObserver.observe(sb);
+    };
+    ensureRailObserver();
+    // 兜底:慢速轮询(ResizeObserver 偶发未触发时恢复状态),不影响实时性
+    setInterval(() => {
+      ensureRailObserver();
+      applyRailState(railSignal());
+    }, 800);
 
     // 1) 设置弹窗导航图标替换(观察 body 子级变化,幂等)
     const patchNavIcon = () => {

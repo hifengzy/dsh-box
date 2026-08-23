@@ -158,7 +158,7 @@ app.whenReady().then(async () => {
           if (!settingsAnchor || !marketWrap) return null;
           const settingsBtn = settingsAnchor.querySelector('button');
           const btn = marketWrap.querySelector('button');
-          const cs = (el) => { const st = getComputedStyle(el); return { w: st.width, h: st.height }; };
+          const cs = (el) => { const st = getComputedStyle(el); return { w: st.width, h: st.height, br: st.borderRadius }; };
           const sRect = settingsBtn.getBoundingClientRect();
           const mRect = btn.getBoundingClientRect();
           const textLeafVisible = (el, text) => {
@@ -201,6 +201,8 @@ app.whenReady().then(async () => {
     if (railState.settingsCS.h !== "36px") throw new Error("折叠后「设置」应为 36×36 icon-only");
     if (railState.marketCS.w !== "36px" || railState.marketCS.h !== "36px")
       throw new Error(`折叠后「插件」应 36×36,实际 ${JSON.stringify(railState.marketCS)}`);
+    if (railState.settingsCS.br !== "50%" || railState.marketCS.br !== "50%")
+      throw new Error(`折叠后两按钮圆角应 50%(与「设置」纯圆 hover 一致),实际 ${railState.settingsCS.br} vs ${railState.marketCS.br}`);
     if (railState.settingsLabelVisible || railState.marketLabelVisible)
       throw new Error("折叠后两个按钮都应只显示 icon(label 隐藏)");
     if (!railState.marketAbove) throw new Error("折叠后「插件」仍应在「设置」上方");
