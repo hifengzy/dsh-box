@@ -723,6 +723,25 @@ function main() {
     }
   }
 
+  // ---------- 升级编排:停服 → 换文件 → 恢复服务 → 刷新红点 ----------
+  async function performUpgrade(version) {
+    const wasReady = server?.ready ?? false;
+    broadcastStatus({ state: "starting", message: `正在升级 dsh 至 ${version}…` });
+    if (server) await server.stop();
+    serviceState = "stopped";
+    const result = await upgradeDsh(version, {
+      cacheDir: path.join(app.getPath("userData"), "cache"),
+      log: console,
+    });
+    if (!result.ok) {
+      if (wasReady) await startServer();
+      return result;
+    }
+    if (wasReady) await startServer();
+    await refreshUpdateFlag();
+    return result;
+  }
+
   // ---------- 侧边栏插件检查(服务状态页板块 + 红点) ----------
   /** 查一次插件(本地版本 + registry 最新),刷新红点并广播;永远不抛错。 */
   async function refreshPluginCheck() {
@@ -759,6 +778,47 @@ function main() {
     }
     broadcastUpdateFlag();
     return lastMarketCheck;
+  }
+
+  /**
+   * 安装(version=null)或更新(version=最新版)侧边栏插件。
+   * 服务运行中则先停后启,让新 bundle 在启动时加载;服务未运行时不动它。
+   * 安装成功后写入 openByDefault 偏好(与浏览器 WebUI 对齐)。
+   */
+  async function performPluginInstall(version = null) {
+    const dshHome = appDshHome();
+    const wasReady = server?.ready ?? false;
+    const installedBefore = pluginManager.getInstalledVersion(dshHome, "dsh-better-sidebar");
+    const label = installedBefore ? "更新" : "安装";
+    broadcastStatus({
+      state: "starting",
+      message: `正在${label}侧边栏插件${version ? ` ${version}` : ""}…`,
+    });
+    if (server) await server.stop();
+    serviceState = "stopped";
+    const result = await pluginManager.installPlugin(dshHome, "dsh-better-sidebar", version);
+    if (!result.ok) {
+      if (wasReady) await startServer();
+      return { ...result, previouslyInstalled: installedBefore };
+    }
+    const installed = pluginManager.getInstalledVersion(dshHome, "dsh-better-sidebar") || version || "unknown";
+    pluginManager.ensureOpenByDefault(dshHome);
+    if (wasReady) {
+      try {
+        await startServer();
+      } catch (error) {
+        console.error("[app] 侧边栏插件安装后重启服务失败:", error);
+        return {
+          ok: true,
+          installed,
+          previouslyInstalled: installedBefore,
+          restarted: false,
+          restartError: error.message || String(error),
+        };
+      }
+    }
+    await refreshPluginCheck();
+    return { ok: true, installed, previouslyInstalled: installedBefore, restarted: wasReady };
   }
 
   /**
