@@ -105,21 +105,23 @@ const STATUS_PANEL_CSS = `
     transform var(--ds-transition-duration-slow, 300ms) var(--ds-ease-in-out, cubic-bezier(0.4, 0, 0.2, 1)),
     width var(--ds-transition-duration-slow, 300ms) var(--ds-ease-in-out, cubic-bezier(0.4, 0, 0.2, 1));
 }
-/* 拖拽调宽时禁用面板过渡,配合 body 属性让内容区挤压跟手 */
+/* 布局挤压:面板展开时「对话区」让出宽度(与插件底栏同手法:只压缩中心列,
+   不改变 #root 整宽 → dsh 左侧边栏/右侧详情栏完全不受影响)。
+   变量只反映服务状态自身宽度,与插件侧栏(--dsh-sidebar-width)互不干扰。
+   选择器与插件底栏同款(已实测稳定),双写法兼容 dsh 版本差异。 */
+#root [data-dsh-frame] > [data-pane="conversation"],
+#root :has(> [data-slot="conversation"]) {
+  margin-right: var(--dshbox-status-panel-width, 0px);
+  transition:
+    margin-right var(--ds-transition-duration-slow, 300ms) var(--ds-ease-in-out, cubic-bezier(0.4, 0, 0.2, 1));
+}
+/* 拖拽调宽时禁用面板过渡,配合 body 属性让对话区挤压跟手 */
 #dshbox-status-panel[data-dragging] {
   transition: none;
 }
-body[data-dshbox-status-dragging] #root {
+body[data-dshbox-status-dragging] #root [data-dsh-frame] > [data-pane="conversation"],
+body[data-dshbox-status-dragging] #root :has(> [data-slot="conversation"]) {
   transition: none !important;
-}
-/* 布局挤压:展开时内容区让出面板宽度(与插件侧栏同机制,组合变量互不干扰;
-   互斥保证两侧变量同时只有一个非零)。!important 压过插件自己的 #root 规则。 */
-#root {
-  margin-right: calc(var(--dsh-sidebar-width, 0px) + var(--dshbox-status-panel-width, 0px)) !important;
-  width: calc(100% - var(--dsh-sidebar-width, 0px) - var(--dshbox-status-panel-width, 0px)) !important;
-  transition:
-    margin-right var(--ds-transition-duration-slow, 300ms) var(--ds-ease-in-out, cubic-bezier(0.4, 0, 0.2, 1)),
-    width var(--ds-transition-duration-slow, 300ms) var(--ds-ease-in-out, cubic-bezier(0.4, 0, 0.2, 1));
 }
 /* 拖拽把手(左缘 6px):展开 = 面板变宽;收起 = 变窄 */
 #dshbox-status-panel .dshbox-st-resizer {

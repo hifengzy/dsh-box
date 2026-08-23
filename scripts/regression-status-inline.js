@@ -47,7 +47,11 @@ const FIXTURE = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head><meta charset="UTF-8" /><title>dsh web</title></head>
 <body>
-  <div id="root"><div id="app">dsh web mock</div></div>
+  <div id="root">
+    <div data-dsh-frame>
+      <div data-pane="conversation">conversation</div>
+    </div>
+  </div>
   <!-- 插件 toggle cluster(mock):最后一个按钮 = 侧栏,第一个 = 底栏 -->
   <div data-dsh-toggle-cluster>
     <button type="button" data-mock="bottom">bottom</button>
@@ -212,12 +216,14 @@ app.whenReady().then(async () => {
     await wait(450); // rAF → 动画(300ms 回退) → 数据
     const open1 = await win.webContents.executeJavaScript(`(() => {
       const panel = document.getElementById("dshbox-status-panel");
+      const conv = document.querySelector('#root [data-dsh-frame] > [data-pane="conversation"]');
       const root = document.getElementById("root");
       return {
         panel: !!panel,
         openClass: panel ? panel.classList.contains("dshbox-st-open") : false,
         visible: panel ? getComputedStyle(panel).visibility : null,
         widthVar: document.documentElement.style.getPropertyValue("--dshbox-status-panel-width"),
+        convMarginRight: conv ? getComputedStyle(conv).marginRight : null,
         rootMarginRight: root ? getComputedStyle(root).marginRight : null,
         pill: panel ? document.getElementById("stStatePill").classList.contains("dshbox-st-running") : false,
         versionLink: panel ? document.getElementById("stDshVersionLink").textContent : null,
@@ -233,7 +239,8 @@ app.whenReady().then(async () => {
     check(open1.openClass, "面板应处于滑入态(dshbox-st-open)");
     check(open1.visible === "visible", `面板应可见,实际 ${open1.visible}`);
     check(open1.widthVar === "320px", `挤压变量应为 320px,实际 ${open1.widthVar}`);
-    check(open1.rootMarginRight === "320px", `#root 应被挤压 320px,实际 ${open1.rootMarginRight}`);
+    check(open1.convMarginRight === "320px", `对话区应被挤压 320px,实际 ${open1.convMarginRight}`);
+    check(open1.rootMarginRight === "0px", `#root 不应被挤压(左侧栏锚点稳定),实际 ${open1.rootMarginRight}`);
     check(open1.pill, "服务状态应显示「运行中」徽标");
     check(open1.versionLink === "0.1.0-rc.12", `DSH 应展示最新一条,实际 ${open1.versionLink}`);
     check(open1.badges.length === 1 && open1.badges[0] === "最新", `应有「最新」徽标,实际 ${open1.badges}`);
@@ -241,7 +248,7 @@ app.whenReady().then(async () => {
     check(!open1.pluginBtnHidden && open1.pluginBtnText === "安装", "侧边栏未安装应显示「安装」按钮");
     check(!open1.marketBtnHidden, "插件市场未安装应显示「安装」按钮");
     check(open1.reports >= 2, "打开应再次上报(含 {open:true})");
-    console.log("[2] toggle 开:滑入 + 四板块渲染 + #root 挤压 320px + 上报 {open:true} ✓");
+    console.log("[2] toggle 开:滑入 + 四板块渲染 + 对话区挤压 320px(#root 不动) + 上报 {open:true} ✓");
 
     // ========== 3. toggle 关:滑出动画后移除 + 挤压回收 ==========
     await win.webContents.executeJavaScript(`window.__dshBoxStatusBridge.toggle(); undefined;`);
@@ -249,12 +256,12 @@ app.whenReady().then(async () => {
     const closed = await win.webContents.executeJavaScript(`(() => ({
       panelExists: !!document.getElementById("dshbox-status-panel"),
       widthVar: document.documentElement.style.getPropertyValue("--dshbox-status-panel-width"),
-      rootMarginRight: getComputedStyle(document.getElementById("root")).marginRight,
+      convMarginRight: getComputedStyle(document.querySelector('#root [data-dsh-frame] > [data-pane="conversation"]')).marginRight,
       last: window.__rec.reports[window.__rec.reports.length - 1],
     }))()`);
     check(!closed.panelExists, "滑出动画后应移除面板");
-    check(closed.widthVar === "0px" && closed.rootMarginRight === "0px",
-      `挤压应回收为 0,实际 var=${closed.widthVar} margin=${closed.rootMarginRight}`);
+    check(closed.widthVar === "0px" && closed.convMarginRight === "0px",
+      `挤压应回收为 0,实际 var=${closed.widthVar} conv=${closed.convMarginRight}`);
     check(closed.last.open === false, `关闭应上报 {open:false},实际 ${JSON.stringify(closed.last)}`);
     console.log("[3] toggle 关:滑出移除 + 挤压回收 0 + 上报 {open:false} ✓");
 
@@ -265,7 +272,7 @@ app.whenReady().then(async () => {
       await new Promise((r) => setTimeout(r, 400));
       const read = () => ({
         panelW: document.getElementById("dshbox-status-panel").style.width,
-        rootMR: getComputedStyle(document.getElementById("root")).marginRight,
+        convMR: getComputedStyle(document.querySelector('#root [data-dsh-frame] > [data-pane="conversation"]')).marginRight,
       });
       const w500 = read();
       b.setWidth(500); await new Promise((r) => setTimeout(r, 400)); const r500 = read();
@@ -273,15 +280,15 @@ app.whenReady().then(async () => {
       b.setWidth(999); await new Promise((r) => setTimeout(r, 400)); const r999 = read();
       return { w500, r500, r10, r999, widths: window.__rec.widths.slice() };
     })()`);
-    check(widths.r500.panelW === "500px" && widths.r500.rootMR === "500px",
-      `setWidth(500) 应生效且挤压 500px,实际 ${JSON.stringify(widths.r500)}`);
-    check(widths.r10.panelW === "240px" && widths.r10.rootMR === "240px",
+    check(widths.r500.panelW === "500px" && widths.r500.convMR === "500px",
+      `setWidth(500) 应生效且对话区挤压 500px,实际 ${JSON.stringify(widths.r500)}`);
+    check(widths.r10.panelW === "240px" && widths.r10.convMR === "240px",
       `setWidth(10) 应钳到 240,实际 ${JSON.stringify(widths.r10)}`);
-    check(widths.r999.panelW === "640px" && widths.r999.rootMR === "640px",
+    check(widths.r999.panelW === "640px" && widths.r999.convMR === "640px",
       `setWidth(999) 应钳到 640,实际 ${JSON.stringify(widths.r999)}`);
     check(widths.widths[0] === 500 && widths.widths[1] === 240 && widths.widths[2] === 640,
       `持久化通道应收到钳制后宽度,实际 ${JSON.stringify(widths.widths)}`);
-    console.log("[4] 宽度:500/240/640 钳制 + #root 挤压跟随 + 持久化通道 ✓");
+    console.log("[4] 宽度:500/240/640 钳制 + 对话区挤压跟随 + 持久化通道 ✓");
 
     // ========== 5. 主题:body 属性 → 面板类切换 ==========
     const darkOn = await win.webContents.executeJavaScript(`(() => {
@@ -454,9 +461,10 @@ app.whenReady().then(async () => {
     check(pushedBack.label === "运行中" && pushedBack.startHidden, "推送恢复后应回到运行中且隐藏启动按钮");
     console.log("[10] 常驻:dsh:status 推送 → 状态行/徽标/按钮实时刷新 ✓");
 
-    // ========== 11. 互斥:与主进程编排同款原语序列 ==========
-    // 11a. 插件侧栏展开 → 开服务状态:先收插件侧栏(等动画)→ 再滑入服务状态;
-    //      requestClose() 须等动画完成才 resolve。
+    // ========== 11. 互斥:与主进程编排同款「并行换边」 ==========
+    // 11a. 插件侧栏展开 → 开服务状态:收起插件与展开服务状态同帧发起
+    //      (动画重叠 → 总时长 = 单侧动画,不再串行 ≈ 700ms);
+    //      目标:切换不产生「#root 先回全宽再收窄」的中间态。
     const mutualA = await win.webContents.executeJavaScript(`(async () => {
       const p = window.__dshBoxPluginBridge;
       const s = window.__dshBoxStatusBridge;
@@ -468,58 +476,54 @@ app.whenReady().then(async () => {
         pluginCollapsed: document.body.hasAttribute("data-dsh-sidebar-collapsed"),
         statusOpen: s.state().open,
       };
-      // 主进程编排序列:先收插件侧栏(读主题时长等),再展开服务状态
-      const order = [];
-      p.toggle("side"); // 收起插件侧栏(动画开始)
-      order.push("plugin-collapsed:" + document.body.hasAttribute("data-dsh-sidebar-collapsed"));
-      // 等待插件动画(与主进程 closePluginSideWithAnimation 同语义:慢速时长+余量)
-      await new Promise((r) => setTimeout(r, 400));
-      const pluginFolded = document.body.hasAttribute("data-dsh-sidebar-collapsed");
-      order.push("plugin-folded:" + pluginFolded);
-      await s.requestOpen();
-      order.push("status-open:" + s.state().open);
+      // 并行换边:两条动作同帧发起(与主进程 runMutualOpen 的 Promise.all 同语义)
+      const t0 = performance.now();
+      await Promise.all([
+        (async () => { p.toggle("side"); await new Promise((r) => setTimeout(r, 400)); })(),
+        (async () => { await s.requestOpen(); })(),
+      ]);
+      const elapsed = performance.now() - t0;
       const after = {
         pluginCollapsed: document.body.hasAttribute("data-dsh-sidebar-collapsed"),
         statusOpen: s.state().open,
         statusPanelOpen: !!document.getElementById("dshbox-status-panel"),
       };
-      return { before, after, order };
+      return { before, after, elapsed };
     })()`);
     check(!mutualA.before.pluginCollapsed && !mutualA.before.statusOpen,
       `前提:插件侧栏应展开、服务状态应关闭,实际 ${JSON.stringify(mutualA.before)}`);
     check(mutualA.after.pluginCollapsed && mutualA.after.statusOpen && mutualA.after.statusPanelOpen,
       `互斥结果:插件侧栏应已收起 + 服务状态应已展开,实际 ${JSON.stringify(mutualA.after)}`);
-    check(mutualA.order[1].startsWith("plugin-folded:true"),
-      `展开服务状态前应先把插件侧栏收完,实际 ${JSON.stringify(mutualA.order)}`);
-    console.log("[11a] 互斥:插件侧栏展开时开服务状态 → 先收插件再滑入服务状态 ✓");
+    check(mutualA.elapsed < 650,
+      `并行换边总时长应明显短于串行(≈700ms),实际 ${Math.round(mutualA.elapsed)}ms`);
+    console.log(`[11a] 互斥:插件展开时开服务状态 → 并行换边(${Math.round(mutualA.elapsed)}ms, 串行≈700ms) ✓`);
 
-    // 11b. 服务状态展开 → 开插件侧栏:先 requestClose(等动画)→ 再展开插件侧栏
+    // 11b. 服务状态展开 → 开插件侧栏:requestClose 与插件展开同帧发起
     const mutualB = await win.webContents.executeJavaScript(`(async () => {
       const p = window.__dshBoxPluginBridge;
       const s = window.__dshBoxStatusBridge;
       // 当前状态:服务状态开(11a 结果)+ 插件侧栏折叠
       const before = { statusOpen: s.state().open, pluginCollapsed: document.body.hasAttribute("data-dsh-sidebar-collapsed") };
-      // 主进程编排序列:先收服务状态(await 动画),再展开插件侧栏
-      const order = [];
-      await s.requestClose();
-      order.push("status-closed:" + !s.state().open + ":" + !document.getElementById("dshbox-status-panel"));
-      p.toggle("side"); // 展开插件侧栏
-      await new Promise((r) => setTimeout(r, 400));
-      order.push("plugin-open:" + !document.body.hasAttribute("data-dsh-sidebar-collapsed"));
+      const t0 = performance.now();
+      await Promise.all([
+        (async () => { await s.requestClose(); })(),
+        (async () => { p.toggle("side"); await new Promise((r) => setTimeout(r, 400)); })(),
+      ]);
+      const elapsed = performance.now() - t0;
       const after = {
         statusOpen: s.state().open,
         statusPanelExists: !!document.getElementById("dshbox-status-panel"),
         pluginCollapsed: document.body.hasAttribute("data-dsh-sidebar-collapsed"),
       };
-      return { before, after, order };
+      return { before, after, elapsed };
     })()`);
     check(mutualB.before.statusOpen && mutualB.before.pluginCollapsed,
       `前提:服务状态应展开、插件侧栏应折叠,实际 ${JSON.stringify(mutualB.before)}`);
-    check(mutualB.order[0] === "status-closed:true:true",
-      `展开插件侧栏前应先把服务状态收完(含 DOM 移除),实际 ${JSON.stringify(mutualB.order)}`);
     check(!mutualB.after.statusOpen && !mutualB.after.statusPanelExists && !mutualB.after.pluginCollapsed,
       `互斥结果:服务状态应已移除 + 插件侧栏应已展开,实际 ${JSON.stringify(mutualB.after)}`);
-    console.log("[11b] 互斥:服务状态展开时开插件侧栏 → 先收服务状态(等动画)再展开插件 ✓");
+    check(mutualB.elapsed < 650,
+      `并行换边总时长应明显短于串行(≈650ms),实际 ${Math.round(mutualB.elapsed)}ms`);
+    console.log(`[11b] 互斥:服务状态展开时开插件侧栏 → 并行换边(${Math.round(mutualB.elapsed)}ms) ✓`);
 
     console.log("\nPASS ✓ 「服务状态」共享面板(注入式,右滑+互斥)回归通过");
     win.destroy();
