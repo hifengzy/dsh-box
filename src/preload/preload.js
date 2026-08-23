@@ -99,4 +99,10 @@ contextBridge.exposeInMainWorld("dsh", {
 
   /** 写开关(true/false):持久化到 settings.yaml + 注入层即时生效 */
   setMarketSwitch: (enabled) => ipcRenderer.invoke("dsh:market-switch", !!enabled),
+
+  /** 「服务状态」共享面板:注入层上报开合状态(仅内容视图实际调用) */
+  reportStatusPanel: (state) => ipcRenderer.send("shell:status-panel", state),
+
+  /** 「服务状态」共享面板:拖拽结束持久化宽度(仅内容视图注入层调用) */
+  setStatusPanelWidth: (width) => ipcRenderer.invoke("dsh:status-panel-width", width),
 });

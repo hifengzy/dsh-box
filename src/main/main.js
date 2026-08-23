@@ -38,12 +38,19 @@ const { upgradeDsh } = require("./dsh-upgrade");
 const { computeSidebar, SIDEBAR_GAP } = require("./sidebar-layout");
 const { SIDEBAR_ANIM_MS, easeSidebar } = require("./sidebar-anim");
 const pluginManager = require("./plugin-manager");
-const { readSettingBool, writeSettingBool } = require("./box-settings");
+const { readSettingValue, readSettingBool, writeSettingValue, writeSettingBool } = require("./box-settings");
 const {
   PLUGIN_BRIDGE_JS,
   PLUGIN_HIDE_CSS,
   MARKET_BRIDGE_JS_FN,
 } = require("./plugin-ui-inject");
+const {
+  STATUS_PANEL_CSS,
+  STATUS_BRIDGE_JS_FN,
+  STATUS_WIDTH_MIN,
+  STATUS_WIDTH_MAX,
+  STATUS_WIDTH_DEFAULT,
+} = require("./status-ui-inject");
 
 const APP_NAME = "DSH Box";
 const isMac = process.platform === "darwin";
@@ -144,6 +151,12 @@ function main() {
   let marketInstalling = false;
   /** 「在 DSH 侧边栏显示插件市场入口」开关(启动时读 settings.yaml) */
   let marketSidebarEntry = false;
+  /** 「服务状态」共享面板(内容视图注入层)开合镜像;null 语义同 false */
+  let statusPanelOpen = false;
+  /** 注入桥缺失(executeJavaScript 失败/无返回值)→ 本会话回退 statusView */
+  let statusInjectBroken = false;
+  /** 「服务状态」共享面板宽度(拖拽持久化,启动时读 settings.yaml) */
+  let statusPanelWidth = STATUS_WIDTH_DEFAULT;
 
   const port = Number(process.env.DSH_APP_PORT) || DEFAULT_PORT;
 
@@ -497,7 +510,9 @@ function main() {
       wc.executeJavaScript(THEME_WATCHER_JS, true).catch(() => {});
       wc.executeJavaScript(PLUGIN_BRIDGE_JS, true).catch(() => {});
       wc.executeJavaScript(MARKET_BRIDGE_JS_FN(marketSidebarEntry), true).catch(() => {});
+      wc.executeJavaScript(STATUS_BRIDGE_JS_FN(statusPanelWidth), true).catch(() => {});
       wc.insertCSS(PLUGIN_HIDE_CSS).catch(() => {});
+      wc.insertCSS(STATUS_PANEL_CSS).catch(() => {});
       const css = readCustomCss();
       if (css) wc.insertCSS(css).catch(() => {});
     });
@@ -539,9 +554,29 @@ function main() {
   }
 
   // ---------- 右侧「dsh 服务与版本」面板(顶栏按钮/菜单控制开关) ----------
+  /**
+   * 「服务状态」共享面板(内容视图注入层)是否可用:仅当 dsh 服务就绪且内容
+   * 视图正显示 dsh WebUI 时成立。异常态(未启动/崩溃/重启中)内容视图在加载页
+   * (file://),注入面板不存在→ 自然回退到 statusView 兜底,两者互不干扰。
+   */
+  function statusInjectActive() {
+    return (
+      !statusInjectBroken &&
+      !!server &&
+      server.ready &&
+      contentView &&
+      !contentView.webContents.isDestroyed() &&
+      isServerOrigin(contentView.webContents.getURL(), server.url)
+    );
+  }
+
   /** @returns {{ open: boolean, canOpen: boolean }} 当前面板状态 */
   function sidebarState() {
-    // 传 open:滞回判定(展开态不参与 canOpen;闭合态按重开阈值)
+    // 注入模式:overlay 面板不挤占内容区,不受窗口宽度约束 → 恒可开
+    if (statusInjectActive()) {
+      return { open: statusPanelOpen, canOpen: true };
+    }
+    // 兜底模式(独立 statusView):宽度布局滞回判定
     const layout = computeSidebar(currentInnerWidth(), { open: sidebarOpen });
     return { open: sidebarOpen, canOpen: layout.canOpen };
   }
@@ -677,12 +712,46 @@ function main() {
   }
 
   function toggleStatusSidebar() {
-    if (sidebarOpen) {
-      closeStatusSidebar();
-      return sidebarState();
+    // 注入模式(dsh WebUI 页面内)常态:控制内容视图里的共享面板
+    if (statusInjectActive()) {
+      // 同步调桥;异步失败(桥缺失等)回退 statusView 兜底,不让按钮失效
+      contentView.webContents
+        .executeJavaScript(
+          'window.__dshBoxStatusBridge && window.__dshBoxStatusBridge.toggle()',
+          true
+        )
+        .then((value) => {
+          if (value && typeof value.open === "boolean") {
+            statusPanelOpen = value.open;
+            // 注入面板打开时,异常态 statusView 兜底必须收起,避免双开遮挡
+            if (statusPanelOpen && sidebarOpen && statusView) closeStatusSidebar();
+            broadcastSidebarState();
+          } else {
+            markInjectBroken();
+            fallbackStatusSidebar();
+          }
+        })
+        .catch(() => {
+          markInjectBroken();
+          fallbackStatusSidebar();
+        });
+      // 预判翻转结果:按钮即时反馈,真实结果随后经桥上报/broadcast 校正
+      return { open: !statusPanelOpen, canOpen: true };
     }
-    openStatusSidebar();
+    fallbackStatusSidebar();
     return sidebarState();
+  }
+
+  /** 桥调用失败(注入缺失/异常):标记并整会话回退 statusView 兜底 */
+  function markInjectBroken() {
+    statusInjectBroken = true;
+    console.warn("[app] 服务状态注入桥不可用,回退独立状态面板");
+  }
+
+  /** 兜底路径:独立 WebContentsView 状态面板(statusView,异常态用) */
+  function fallbackStatusSidebar() {
+    if (sidebarOpen) closeStatusSidebar();
+    else openStatusSidebar();
   }
 
   // ---------- npm 更新检查(启动查一次 → 顶栏红点) ----------
@@ -1027,6 +1096,29 @@ function main() {
     return { ok: true, enabled: marketSidebarEntry };
   });
 
+  // ---------- 「服务状态」共享面板(内容视图注入层) ----------
+  // 注入层上报开合:同步顶栏按钮高亮;并复位「桥缺失」标记(桥重新注入成功
+  // 即上报,页面重载后注入失败标记随之清除)
+  ipcMain.on("shell:status-panel", (_event, state) => {
+    if (!state || typeof state.open !== "boolean") return;
+    statusInjectBroken = false;
+    statusPanelOpen = state.open;
+    // 注入面板打开时,异常态 statusView 兜底若还开着(如服务异常时打开过),
+    // 一并收起,避免两块面板同时遮挡内容
+    if (statusPanelOpen && sidebarOpen && statusView) closeStatusSidebar();
+    broadcastSidebarState();
+  });
+  // 拖拽结束持久化面板宽度(240~640 钳制)
+  ipcMain.handle("dsh:status-panel-width", (_event, width) => {
+    const w = Math.max(
+      STATUS_WIDTH_MIN,
+      Math.min(STATUS_WIDTH_MAX, Math.round(Number(width) || STATUS_WIDTH_DEFAULT))
+    );
+    statusPanelWidth = w;
+    writeSettingValue(appDshHome(), "statusPanelWidth", w);
+    return { ok: true, width: w };
+  });
+
   // ---------- 主题同步(dsh UI → 外壳) ----------
   // dsh UI 在设置里切换外观(浅色/深色/跟随系统)时,dsh 前端会在
   // document.body 上设置/移除 data-ds-dark-theme;注入脚本把解析结果
@@ -1117,6 +1209,14 @@ function main() {
     refreshPluginCheck().catch(() => {});
     // 启动时读「侧边栏显示插件市场入口」开关(注入参数用);并静默查插件市场
     marketSidebarEntry = readSettingBool(appDshHome(), "marketSidebarEntry");
+    // 启动时读「服务状态」共享面板宽度(注入参数用;拖拽后持久化)
+    {
+      const rawW = readSettingValue(appDshHome(), "statusPanelWidth");
+      statusPanelWidth = Math.max(
+        STATUS_WIDTH_MIN,
+        Math.min(STATUS_WIDTH_MAX, Math.round(Number(rawW) || STATUS_WIDTH_DEFAULT))
+      );
+    }
     refreshMarketCheck().catch(() => {});
 
     // 测试钩子:冒烟测试模式 — 就绪后打印标记并退出(CI / 自检用)
