@@ -208,12 +208,42 @@ app.whenReady().then(async () => {
     if (!railState.marketAbove) throw new Error("折叠后「插件」仍应在「设置」上方");
     if (!railState.noOverlap) throw new Error("折叠后两按钮不应重叠(应上下排列)");
     console.log("[1b] 折叠(rail):两按钮 36×36 icon-only,上下排列不重叠 ✓");
-    // 展开恢复宽模式,继续后续步骤
+
+    // ---------- 3a3. 折叠态才开启入口 → 展开后必须完整恢复(rail 类残留 bug) ----------
+    // 回归:克隆发生在折叠态时按钮带着 VOzbGW_rail 等折叠专用类,展开后
+    // 残留会导致按钮保持 36px 且文字缺失——按钮类须跟随「设置」当前类。
+    // 当前仍在折叠态(1b 未展开):先关再开开关,模拟「折叠状态开启入口」。
+    await win.webContents.executeJavaScript(`window.__dshBoxMarketBridge.setEnabled(false); undefined;`);
+    await wait(200);
+    await win.webContents.executeJavaScript(`window.__dshBoxMarketBridge.setEnabled(true); undefined;`);
+    await wait(600);
+    const mRail2 = await win.webContents.executeJavaScript(`(() => {
+      const mBtn = document.querySelector('[data-slot="sidebar.market"] button');
+      let label = null;
+      for (const x of mBtn.querySelectorAll('*')) {
+        if (x.children.length === 0 && (x.textContent || '').trim() === '插件') { label = getComputedStyle(x).display; break; }
+      }
+      return { w: getComputedStyle(mBtn).width, label, clsHasRail: (mBtn.className || '').includes('rail') };
+    })()`);
+    if (mRail2.w !== "36px" || mRail2.label !== "none" || !mRail2.clsHasRail)
+      throw new Error(`折叠态开启入口后按钮应为 36px+label 隐藏+rail 类,实际 ${JSON.stringify(mRail2)}`);
+    // 展开 → 按钮恢复 264px 完整行 + 文字 + 移除 rail 类
     await win.webContents.executeJavaScript(`(() => {
-      const b = [...document.querySelectorAll('button,[role="button"]')].find((x) => (((x.getAttribute('aria-label') || '') + ' ' + (x.textContent || '')).includes('展开侧边栏')));
+      const b = [...document.querySelectorAll('button,[role="button"]')].find((x) => (((x.getAttribute('aria-label') || '') + ' ' + (x.textContent || '')).includes('展开侧边栏')) || (((x.getAttribute('aria-label') || '') + ' ' + (x.textContent || '')).includes('打开侧边栏')));
       if (b) b.click();
     })()`);
-    await wait(1200);
+    await wait(1500);
+    const mExpanded2 = await win.webContents.executeJavaScript(`(() => {
+      const mBtn = document.querySelector('[data-slot="sidebar.market"] button');
+      let labelVisible = false;
+      for (const x of mBtn.querySelectorAll('*')) {
+        if (x.children.length === 0 && (x.textContent || '').trim() === '插件') { labelVisible = x.getClientRects().length > 0; break; }
+      }
+      return { w: getComputedStyle(mBtn).width, labelVisible, clsHasRail: (mBtn.className || '').includes('rail') };
+    })()`);
+    if (mExpanded2.w !== "264px" || !mExpanded2.labelVisible || mExpanded2.clsHasRail)
+      throw new Error(`展开后「插件」应恢复完整行+文字+无 rail 类,实际 ${JSON.stringify(mExpanded2)}`);
+    console.log("[1c] 折叠态开启入口 → 展开后完整恢复(类跟随,无 rail 残留) ✓");
 
     // ---------- 3b. 点击「插件」→ 设置弹窗打开并激活插件市场页 ----------
     await win.webContents.executeJavaScript(`document.querySelector('[data-slot="sidebar.market"] button').click(); undefined;`);

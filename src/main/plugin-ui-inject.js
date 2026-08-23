@@ -144,13 +144,22 @@ function MARKET_BRIDGE_JS_FN(marketEntry) {
         holder.innerHTML = '${CHAJIAN_SVG.replace(/\u0027/g, "&#39;")}';
         btn.insertBefore(holder, btn.firstChild);
       }
-      // 换文本:label「设置」→「插件」
+      // 换文本:确保 label 叶子存在且为「插件」。
+      // 注意:若在侧栏折叠态下克隆,「设置」按钮的 label 文本已被 dsh
+      // 清空(label 元素空文本)→ 上面「文本==='设置'」匹配不到 → 按钮会
+      // 缺「插件」文字。这里兜底:优先复用空 label 元素,否则补建一个。
+      let pluginLabel = null;
       for (const el of btn.querySelectorAll('*')) {
-        if (el.children.length === 0 && (el.textContent || '').trim() === '设置') {
-          el.textContent = '插件';
-          break;
-        }
+        if (el.children.length > 0) continue;
+        const text = (el.textContent || '').trim();
+        if (text === '设置') { pluginLabel = el; break; }
+        if (el.tagName === 'SPAN' && text === '') { pluginLabel = el; }
       }
+      if (!pluginLabel) {
+        pluginLabel = document.createElement('span');
+        btn.appendChild(pluginLabel);
+      }
+      pluginLabel.textContent = '插件';
       btn.addEventListener('click', () => {
         // 打开设置 → 激活插件市场页(复用 dsh 自有交互,不调内部 API)
         const settingsBtn = document.querySelector('[data-slot="sidebar.settings"] button');
@@ -185,6 +194,9 @@ function MARKET_BRIDGE_JS_FN(marketEntry) {
       if (!marketEntry) { removeEntry(); return; }
       if (!document.querySelector('[data-slot="sidebar.market"]')) {
         entryBtn = makeEntry();
+        // 新按钮立即按当前折叠状态应用内联样式(railOn 可能已为 true,
+        // 普通 applyRailState 会因防重入跳过,必须强制同步一次)。
+        applyRailState(railSignal(), true);
       }
     };
 
@@ -203,9 +215,19 @@ function MARKET_BRIDGE_JS_FN(marketEntry) {
       }
       return null;
     };
-    const applyRailState = (next) => {
-      if (next === railOn) return;
+    // 克隆发生在任意折叠状态,按钮可能带着「当时」的 rail 专用类
+    // (如 VOzbGW_rail),展开后残留会让它保持 36px。这里让按钮的类
+    // 始终跟随「设置」按钮的当前类(折叠=带 rail 类,展开=基础类)。
+    const syncBtnClass = () => {
+      const sb = document.querySelector('[data-slot="sidebar.settings"] button');
+      const wrap = document.querySelector('[data-slot="sidebar.market"]');
+      const btn = wrap ? wrap.querySelector('button') : null;
+      if (sb && btn && btn.className !== sb.className) btn.className = sb.className;
+    };
+    const applyRailState = (next, force = false) => {
+      if (next === railOn && !force) return;
       railOn = next;
+      syncBtnClass();
       const wrap = document.querySelector('[data-slot="sidebar.market"]');
       const btn = wrap ? wrap.querySelector('button') : null;
       const settingsAnchor = document.querySelector('[data-slot="sidebar.settings"]');
@@ -244,13 +266,14 @@ function MARKET_BRIDGE_JS_FN(marketEntry) {
     const ensureRailObserver = () => {
       const sb = document.querySelector('[data-slot="sidebar.settings"] button');
       if (!sb || railObserver) return;
-      railObserver = new ResizeObserver(() => applyRailState(railSignal()));
+      railObserver = new ResizeObserver(() => { syncBtnClass(); applyRailState(railSignal()); });
       railObserver.observe(sb);
     };
     ensureRailObserver();
     // 兜底:慢速轮询(ResizeObserver 偶发未触发时恢复状态),不影响实时性
     setInterval(() => {
       ensureRailObserver();
+      syncBtnClass();
       applyRailState(railSignal());
     }, 800);
 
