@@ -802,23 +802,31 @@ function main() {
       return { ...result, previouslyInstalled: installedBefore };
     }
     const installed = pluginManager.getInstalledVersion(dshHome, "dsh-better-sidebar") || version || "unknown";
-    pluginManager.ensureOpenByDefault(dshHome);
+    // 装包成功后的任何异常(如写入偏好抛错)都不得让服务停着不恢复:
+    // wasReady 时无论成败都尝试拉回服务;写偏好失败只记录 warning,不判安装失败。
+    let warning = null;
+    try {
+      pluginManager.ensureOpenByDefault(dshHome);
+    } catch (error) {
+      warning = `写入开屏偏好失败: ${error.message || error}`;
+      console.error("[app] 侧边栏插件写入开屏偏好失败:", error);
+    }
     if (wasReady) {
       try {
         await startServer();
       } catch (error) {
         console.error("[app] 侧边栏插件安装后重启服务失败:", error);
         return {
-          ok: true,
+          ok: false,
+          error: `插件已装,但重启服务失败: ${error.message || error}`,
           installed,
           previouslyInstalled: installedBefore,
           restarted: false,
-          restartError: error.message || String(error),
         };
       }
     }
     await refreshPluginCheck();
-    return { ok: true, installed, previouslyInstalled: installedBefore, restarted: wasReady };
+    return { ok: true, installed, previouslyInstalled: installedBefore, restarted: wasReady, warning };
   }
 
   /**
@@ -849,11 +857,11 @@ function main() {
       } catch (error) {
         console.error("[app] 插件市场安装后重启服务失败:", error);
         return {
-          ok: true,
+          ok: false,
+          error: `插件市场已装,但重启服务失败: ${error.message || error}`,
           installed,
           previouslyInstalled: installedBefore,
           restarted: false,
-          restartError: error.message || String(error),
         };
       }
     }

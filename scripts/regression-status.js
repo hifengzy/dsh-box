@@ -76,6 +76,11 @@ let marketInstalled = null; // null = 未安装
 let marketLatest = "1.18.1";
 let marketError = null;
 let marketSwitchOn = false;
+// 失败注入:非 null 时对应 action 返回失败(mock 真实主进程异常/失败)
+let pluginInstallFail = null;
+let marketInstallFail = null;
+let upgradeFail = null;
+let retryFail = false;
 // 插件板块夹具:可变状态驱动各组断言
 let pluginInstalled = null; // null = 未安装
 let pluginLatest = "0.15.2";
@@ -98,10 +103,12 @@ ipcMain.handle("dsh:get-info", () => ({ ...FIXTURE_INFO, state }));
 ipcMain.handle("dsh:check-updates", () => FIXTURE_VERSIONS);
 ipcMain.handle("dsh:upgrade", (_e, v) => {
   upgradedVersion = v;
+  if (upgradeFail) return { ok: false, error: upgradeFail };
   return { ok: true, previous: "0.1.0-rc.6", installed: v, backupDir: "/tmp/bak" };
 });
 ipcMain.handle("dsh:retry", async () => {
   retried = true;
+  if (retryFail) { throw new Error("端口被占用(EADDRINUSE)"); }
   return { ...FIXTURE_INFO, state };
 });
 ipcMain.handle("dsh:stop", async () => {
@@ -124,6 +131,7 @@ ipcMain.handle("dsh:plugin-info", () => ({
   error: pluginError,
 }));
 ipcMain.handle("dsh:plugin-install", async (_e, v) => {
+  if (pluginInstallFail) return { ok: false, error: pluginInstallFail };
   pluginInstalled = v ?? pluginLatest;
   return { ok: true, installed: pluginInstalled, previouslyInstalled: null, restarted: true };
 });
@@ -140,6 +148,7 @@ ipcMain.handle("dsh:market-info", () => ({
   error: marketError,
 }));
 ipcMain.handle("dsh:market-install", async (_e, v) => {
+  if (marketInstallFail) return { ok: false, error: marketInstallFail };
   marketInstalled = v ?? marketLatest;
   return { ok: true, installed: marketInstalled, previouslyInstalled: null, restarted: true };
 });
@@ -720,6 +729,103 @@ app.whenReady().then(async () => {
     if (!mk6.errHidden || mk6.actionHidden || mk6.actionText !== "更新")
       throw new Error("重试后应恢复「更新」态");
     console.log("[12d] 插件市场:查询失败(未装/已装)+ 重试恢复 ✓");
+
+    // ========== 13. 失败重置:安装/更新/启动失败后按钮不得卡在「××中…」 ==========
+    // 13a. 侧边栏插件安装失败 → 按钮重置「安装」+ hint 展示错误
+    pluginInstalled = null;
+    pluginLatest = "0.15.2";
+    pluginError = null;
+    pluginInstallFail = "模拟安装失败";
+    await win.loadFile(path.join(__dirname, "..", "src", "renderer", "dsh-status.html"));
+    await wait(300);
+    await win.webContents.executeJavaScript(`window.confirm = () => true; undefined;`);
+    await win.webContents.executeJavaScript(`document.getElementById("pluginActionBtn").click(); undefined;`);
+    await wait(280);
+    const f1 = await win.webContents.executeJavaScript(`(() => ({
+      actionHidden: document.getElementById("pluginActionBtn").hidden,
+      actionText: document.getElementById("pluginActionBtn").textContent,
+      actionDisabled: document.getElementById("pluginActionBtn").disabled,
+      hint: document.getElementById("pluginHint").textContent,
+    }))()`);
+    if (f1.actionHidden || f1.actionText !== "安装" || f1.actionDisabled)
+      throw new Error(`安装失败后按钮应重置为「安装」,实际 ${JSON.stringify(f1)}`);
+    const f1h = await win.webContents.executeJavaScript(`(() => ({
+      hidden: document.getElementById("pluginHint").hidden,
+      text: document.getElementById("pluginHint").textContent,
+    }))()`);
+    if (f1h.hidden || !f1h.text.includes("安装失败") || !f1h.text.includes("模拟安装失败"))
+      throw new Error(`应展示失败原因且可见,实际 ${JSON.stringify(f1h)}`);
+    pluginInstallFail = null;
+    console.log("[13a] 插件安装失败:按钮重置「安装」+ 展示错误 ✓");
+
+    // 13b. 插件市场安装失败 → 按钮重置「安装」
+    marketInstalled = null;
+    marketLatest = "1.18.1";
+    marketError = null;
+    marketInstallFail = "模拟市场失败";
+    await win.loadFile(path.join(__dirname, "..", "src", "renderer", "dsh-status.html"));
+    await wait(300);
+    await win.webContents.executeJavaScript(`window.confirm = () => true; undefined;`);
+    await win.webContents.executeJavaScript(`document.getElementById("marketActionBtn").click(); undefined;`);
+    await wait(280);
+    const f2 = await win.webContents.executeJavaScript(`(() => ({
+      actionText: document.getElementById("marketActionBtn").textContent,
+      actionDisabled: document.getElementById("marketActionBtn").disabled,
+      hint: document.getElementById("marketHint").textContent,
+    }))()`);
+    const f2h = await win.webContents.executeJavaScript(`(() => ({
+      hidden: document.getElementById("marketHint").hidden,
+      text: document.getElementById("marketHint").textContent,
+    }))()`);
+    if (f2.actionText !== "安装" || f2.actionDisabled || f2h.hidden || !f2h.text.includes("安装失败"))
+      throw new Error(`市场安装失败后按钮应重置,实际 ${JSON.stringify(f2)} hint=${JSON.stringify(f2h)}`);
+    marketInstallFail = null;
+    console.log("[13b] 插件市场安装失败:按钮重置「安装」+ 展示错误 ✓");
+
+    // 13c. DSH 升级失败 → 按钮重置「更新」
+    FIXTURE_VERSIONS.error = undefined;
+    FIXTURE_VERSIONS.latest = "0.1.0-rc.12";
+    FIXTURE_VERSIONS.hasUpdate = true;
+    FIXTURE_VERSIONS.rows = VERSIONS;
+    upgradeFail = "模拟升级失败";
+    await win.loadFile(path.join(__dirname, "..", "src", "renderer", "dsh-status.html"));
+    await wait(300);
+    await win.webContents.executeJavaScript(`window.confirm = () => true; undefined;`);
+    await win.webContents.executeJavaScript(`document.getElementById("dshUpdateBtn").click(); undefined;`);
+    await wait(280);
+    const f3 = await win.webContents.executeJavaScript(`(() => ({
+      btnText: document.getElementById("dshUpdateBtn").textContent,
+      btnDisabled: document.getElementById("dshUpdateBtn").disabled,
+      hint: document.getElementById("upgradeHint").textContent,
+    }))()`);
+    if (f3.btnText !== "更新" || f3.btnDisabled || !f3.hint.includes("升级失败"))
+      throw new Error(`升级失败后按钮应重置「更新」,实际 ${JSON.stringify(f3)}`);
+    upgradeFail = null;
+    console.log("[13c] DSH 升级失败:按钮重置「更新」+ 展示错误 ✓");
+
+    // 13d. 服务启动失败 → 按钮重置「启动服务」+ 「服务启动失败」文案
+    state = "stopped";
+    win.webContents.send("dsh:status", { state: "stopped", message: "服务已停止" });
+    await wait(150);
+    retryFail = true;
+    await win.webContents.executeJavaScript(`document.getElementById("startBtn").click(); undefined;`);
+    await wait(200);
+    const f4 = await win.webContents.executeJavaScript(`(() => {
+      const btn = document.getElementById("startBtn");
+      return {
+        hidden: btn.hidden,
+        btnText: btn.textContent,
+        btnDisabled: btn.disabled,
+        hint: document.getElementById("serviceHint").textContent,
+        hintHidden: document.getElementById("serviceHint").hidden,
+      };
+    })()`);
+    if (f4.hidden || f4.btnText !== "启动服务" || f4.btnDisabled)
+      throw new Error(`启动失败后按钮应重置「启动服务」,实际 ${JSON.stringify(f4)}`);
+    if (f4.hintHidden || !f4.hint.includes("服务启动失败"))
+      throw new Error(`应展示「服务启动失败」原因,实际 ${f4.hint}`);
+    retryFail = false;
+    console.log("[13d] 服务启动失败:按钮重置「启动服务」+「服务启动失败:原因」 ✓");
 
     console.log("\nPASS ✓ 服务状态与版本面板回归通过");
     win.destroy();

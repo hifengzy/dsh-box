@@ -196,7 +196,7 @@ function ensureOpenByDefault(dshHome) {
   for (const line of lines) {
     const trimmed = line.trim();
     if (!inSection) {
-      if (trimmed === `${PLUGIN_NAME}:`) {
+      if (trimmed === "dsh-better-sidebar:") {
         inSection = true;
         out.push(line);
         continue;
@@ -222,7 +222,7 @@ function ensureOpenByDefault(dshHome) {
   if (!wrote) {
     // 域不存在 → 追加到文件末尾
     if (out.length > 0 && out[out.length - 1].trim() !== "") out.push("");
-    out.push(`${PLUGIN_NAME}:`, "  openByDefault: true");
+    out.push("dsh-better-sidebar:", "  openByDefault: true");
   }
   try {
     fs.mkdirSync(dshHome, { recursive: true });

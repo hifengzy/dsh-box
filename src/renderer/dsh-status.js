@@ -251,6 +251,12 @@ async function loadPluginInfo() {
   }
 }
 
+/** 失败后重置按钮文案/可用态(禁止卡在「××中…」) */
+function resetActionBtn(btn, isInstall) {
+  btn.disabled = false;
+  btn.textContent = isInstall ? "安装" : "更新";
+}
+
 /** 安装/更新(主进程负责停服 → dsh plugin add → 恢复服务) */
 async function doPluginInstall(version, btn, isInstall) {
   if (pluginInstalling) return;
@@ -269,13 +275,15 @@ async function doPluginInstall(version, btn, isInstall) {
     if (res.ok) {
       els.pluginHint.textContent = res.unchanged
         ? `当前已是 ${res.installed}`
-        : `已${verb}到 ${res.installed}${res.restarted ? ",服务已重启" : ",启动服务后生效"}`;
+        : `已${verb}到 ${res.installed}${res.restarted ? ",服务已重启" : ",启动服务后生效"}${res.warning ? "; " + res.warning : ""}`;
       await loadPluginInfo();
     } else {
       els.pluginHint.textContent = `${verb}失败: ${res.error}`;
+      resetActionBtn(btn, isInstall);
     }
   } catch (error) {
     els.pluginHint.textContent = `${verb}失败: ${error}`;
+    resetActionBtn(btn, isInstall);
   } finally {
     pluginInstalling = false;
   }
@@ -391,13 +399,15 @@ async function doMarketInstall(version, btn, isInstall) {
     if (res.ok) {
       els.marketHint.textContent = res.unchanged
         ? `当前已是 ${res.installed}`
-        : `已${verb}到 ${res.installed}${res.restarted ? ",服务已重启" : ",启动服务后生效"}`;
+        : `已${verb}到 ${res.installed}${res.restarted ? ",服务已重启" : ",启动服务后生效"}${res.warning ? "; " + res.warning : ""}`;
       await loadMarketInfo();
     } else {
       els.marketHint.textContent = `${verb}失败: ${res.error}`;
+      resetActionBtn(btn, isInstall);
     }
   } catch (error) {
     els.marketHint.textContent = `${verb}失败: ${error}`;
+    resetActionBtn(btn, isInstall);
   } finally {
     marketInstalling = false;
   }
@@ -425,12 +435,20 @@ async function doUpgrade(version, btn) {
       await Promise.all([refreshInfo(), loadVersions()]);
     } else {
       els.upgradeHint.textContent = `升级失败: ${res.error}`;
+      resetUpgradeBtn();
     }
   } catch (error) {
     els.upgradeHint.textContent = `升级失败: ${error}`;
+    resetUpgradeBtn();
   } finally {
     upgrading = false;
   }
+}
+
+/** 升级失败后重置「更新」按钮,避免卡在「升级中…」 */
+function resetUpgradeBtn() {
+  els.dshUpdateBtn.disabled = false;
+  els.dshUpdateBtn.textContent = "更新";
 }
 
 // ---------- 事件 ----------
@@ -455,8 +473,11 @@ els.startBtn.addEventListener("click", async () => {
   try {
     await window.dsh.retry();
   } catch (error) {
+    // 启动失败:重置按钮为「启动服务」并展示原因,禁止卡在「启动中…」
+    els.startBtn.disabled = false;
+    els.startBtn.textContent = "启动服务";
     els.serviceHint.hidden = false;
-    els.serviceHint.textContent = `启动失败: ${error}`;
+    els.serviceHint.textContent = `服务启动失败: ${error}`;
   }
   refreshInfo();
 });
