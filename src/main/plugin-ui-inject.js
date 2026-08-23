@@ -98,12 +98,15 @@ const PLUGIN_HIDE_CSS = `
  *
  *   1) 设置弹窗导航里「插件市场」标签页按钮:隐藏 dsh 默认齿轮图标,
  *      替换为 chajian.svg(方块网格,currentColor 16px);
- *   2) DSH 左侧边栏底部「设置」按钮上方注入「插件」入口按钮
- *      (chajian 图标 + 文本),点击 = 打开设置并激活插件市场页;
- *      显隐受 `marketEntry` 开关控制(由主进程注入时写入)。
+ *   2) DSH 左侧边栏底部「设置」按钮上方注入「插件」入口按钮:完全
+ *      克隆「设置」按钮(同 class + 同内部结构,只换图标与文本)→ dsh
+ *      对侧栏按钮的样式(宽/窄 rail 两态、hover、label 隐藏)自动继承,
+ *      与「设置」零差异;点击 = 打开设置并激活插件市场页;显隐受
+ *      `marketEntry` 开关控制(由主进程注入时写入)。
  *
- * 定位锚点全部是 dsh 公开 UI(文本 / data-slot),不依赖哈希类名
- * (VOzbGW_* 等会随 dsh 构建变化),也不触碰 dsh / dshmarket 源码。
+ * 定位锚点全部是 dsh 公开 UI(文本 / data-slot / 克隆现有按钮的类名),
+ * 不硬编码哈希类名(VOzbGW_* 等会随 dsh 构建变化,克隆即时跟随),
+ * 也不触碰 dsh / dshmarket 源码。
  *
  * @param {boolean} marketEntry 开关:是否在侧边栏显示「插件」入口
  */
@@ -118,19 +121,36 @@ function MARKET_BRIDGE_JS_FN(marketEntry) {
     let entryBtn = null;
 
     const makeEntry = () => {
-      // 在 sidebar.settings 槽位前插入「插件」按钮(结构仿 dsh 侧栏项)
+      // 在 sidebar.settings 槽位前插入「插件」按钮:完全克隆「设置」按钮
+      // (class + 内部结构原样继承)→ dsh 的样式规则(宽/窄 rail 两态、
+      // hover、label 隐藏、圆角/间距)全部作用于它,与「设置」完全一致。
       const anchor = document.querySelector('[data-slot="sidebar.settings"]');
       if (!anchor) return null;
       if (document.querySelector('[data-slot="sidebar.market"]')) return null;
-      const wrap = document.createElement('div');
-      wrap.setAttribute('data-slot', 'sidebar.market');
-      wrap.style.cssText = 'padding:2px 6px;';
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'dshbox-market-entry';
-      btn.setAttribute('aria-label', '插件');
+      const settingsBtn = anchor.querySelector('button');
+      if (!settingsBtn) return null;
+      const btn = settingsBtn.cloneNode(true);
+      btn.removeAttribute('aria-haspopup');
+      btn.removeAttribute('aria-expanded');
       btn.title = '插件市场';
-      btn.innerHTML = '${CHAJIAN_SVG.replace(/\\u0027/g, "&#39;")}<span class="dshbox-market-label">插件</span>';
+      // 换图标:保留 svg 属性(尺寸/类),只替换内部图形为 chajian 方块网格
+      const svg = btn.querySelector('svg');
+      if (svg) {
+        svg.setAttribute('viewBox', '0 0 16 16');
+        svg.innerHTML = '<g fill="currentColor"><rect x="1.96" y="3.36" width="3.3" height="3.3" rx="0.53"></rect><rect x="5.71" y="3.36" width="3.3" height="3.3" rx="0.53"></rect><rect x="1.96" y="7.11" width="3.3" height="3.3" rx="0.53"></rect><rect x="5.71" y="7.11" width="3.3" height="3.3" rx="0.53"></rect><rect x="9.46" y="7.11" width="3.3" height="3.3" rx="0.53"></rect><rect x="1.96" y="10.86" width="3.3" height="3.3" rx="0.53"></rect><rect x="5.71" y="10.86" width="3.3" height="3.3" rx="0.53"></rect><rect x="9.46" y="10.86" width="3.3" height="3.3" rx="0.53"></rect></g><rect x="10.74" y="2.09" width="3.3" height="3.3" rx="0.53" fill="currentColor" transform="rotate(9 12.39 3.74)"></rect>';
+      } else {
+        const holder = document.createElement('span');
+        holder.style.cssText = 'display:inline-flex;';
+        holder.innerHTML = '${CHAJIAN_SVG.replace(/\u0027/g, "&#39;")}';
+        btn.insertBefore(holder, btn.firstChild);
+      }
+      // 换文本:label「设置」→「插件」
+      for (const el of btn.querySelectorAll('*')) {
+        if (el.children.length === 0 && (el.textContent || '').trim() === '设置') {
+          el.textContent = '插件';
+          break;
+        }
+      }
       btn.addEventListener('click', () => {
         // 打开设置 → 激活插件市场页(复用 dsh 自有交互,不调内部 API)
         const settingsBtn = document.querySelector('[data-slot="sidebar.settings"] button');
@@ -141,8 +161,17 @@ function MARKET_BRIDGE_JS_FN(marketEntry) {
           if (market) market.click();
         }, 350);
       });
+      // 槽位包装:插到 foot 区(sidebar.settings 的父)里、settingsArea 之前,
+      // 与 settingsArea 平级 —— 宽/窄两态都沿 foot 的 column 上下排列,
+      // 不会把按钮塞进 settingsArea 内部导致折叠时重叠。
+      const wrap = document.createElement('div');
+      wrap.setAttribute('data-slot', 'sidebar.market');
+      wrap.style.display = 'contents';
       wrap.appendChild(btn);
-      anchor.parentElement ? anchor.parentElement.insertBefore(wrap, anchor) : null;
+      const foot = anchor.parentElement ? anchor.parentElement.parentElement : null;
+      const settingsArea = anchor.parentElement;
+      if (foot && settingsArea) foot.insertBefore(wrap, settingsArea);
+      else if (anchor.parentElement) anchor.parentElement.insertBefore(wrap, anchor);
       return btn;
     };
 
@@ -151,6 +180,53 @@ function MARKET_BRIDGE_JS_FN(marketEntry) {
       if (old) old.remove();
       entryBtn = null;
     };
+
+    // ---------- 侧边栏折叠(rail)适配 ----------
+    // dsh 的 rail 收缩规则绑定了「设置」槽位(选择器含 data-slot),克隆的
+    // 「插件」按钮同 class 也不命中 → 折叠后它保持宽款式。这里以「设置」
+    // 按钮的计算宽度为折叠信号(展开 264px / 折叠 36px),实时给「插件」
+    // 按钮补内联样式(36×36、图标居中、label 隐藏),展开时还原。
+    // 不依赖任何哈希类名,仅依赖「设置按钮宽度」这个行为信号。
+    let railOn = false;
+    const findPluginLabel = (btn) => {
+      for (const el of btn.querySelectorAll('*')) {
+        if (el.children.length === 0 && (el.textContent || '').trim() === '插件') return el;
+      }
+      return null;
+    };
+    const applyRail = () => {
+      const settingsAnchor = document.querySelector('[data-slot="sidebar.settings"]');
+      const sb = settingsAnchor ? settingsAnchor.querySelector('button') : null;
+      const next = sb ? parseInt(getComputedStyle(sb).width, 10) <= 40 : false;
+      if (next === railOn) return;
+      railOn = next;
+      const wrap = document.querySelector('[data-slot="sidebar.market"]');
+      const btn = wrap ? wrap.querySelector('button') : null;
+      // 折叠时 dsh 把 foot 区高度固定为单个 36px 按钮(54px),两个按钮会
+      // 重叠——把 foot 区最小高度拉高到容纳两个按钮(上下排列)。
+      const footArea = settingsAnchor ? settingsAnchor.parentElement.parentElement : null;
+      if (footArea) {
+        footArea.style.minHeight = railOn ? '96px' : '';
+        // 折叠后强制纵向排列(rail 的 foot 可能被 dsh 排成横向,两个 36px
+        // 图标会被挤到同一行互相重叠)——「插件」「设置」上下各一行。
+        footArea.style.flexDirection = railOn ? 'column' : '';
+      }
+      if (!btn) return;
+      if (railOn) {
+        btn.style.cssText = 'width:36px;height:36px;padding:0;justify-content:center;';
+        const label = findPluginLabel(btn);
+        if (label) label.style.display = 'none';
+        // 折叠时 foot 区高度按单个 36px 按钮收窄,display:contents 不占位
+        // 会让两个按钮重叠——改为块级占一行,foot 高度自动撑开上下排列
+        wrap.style.display = 'block';
+      } else {
+        btn.style.cssText = '';
+        const label = findPluginLabel(btn);
+        if (label) label.style.display = '';
+        wrap.style.display = 'contents';
+      }
+    };
+    setInterval(applyRail, 500);
 
     const syncEntry = () => {
       if (!marketEntry) { removeEntry(); return; }
@@ -205,42 +281,8 @@ function MARKET_BRIDGE_JS_FN(marketEntry) {
   })()`;
 }
 
-/** 侧边栏「插件」入口按钮样式(仿 dsh 侧栏项,用页面内的 --dsw-alias 变量) */
-const MARKET_INJECT_CSS = `
-.dshbox-market-entry {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  height: 40px;
-  padding: 0 12px;
-  border: none;
-  border-radius: 12px;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary, inherit);
-  font: inherit;
-  font-size: 13px;
-  line-height: 22px;
-  cursor: pointer;
-  white-space: nowrap;
-  box-sizing: border-box;
-}
-.dshbox-market-entry:hover {
-  background: var(--dsw-alias-interactive-bg-hover, rgba(0, 0, 0, 0.06));
-  color: var(--dsw-alias-label-primary, inherit);
-}
-.dshbox-market-entry:focus-visible {
-  outline: 2px solid var(--dsw-alias-brand-primary, #4f6ef7);
-  outline-offset: -1px;
-}
-.dshbox-market-entry svg {
-  flex: none;
-}
-`;
-
 module.exports = {
   PLUGIN_BRIDGE_JS,
   PLUGIN_HIDE_CSS,
   MARKET_BRIDGE_JS_FN,
-  MARKET_INJECT_CSS,
 };

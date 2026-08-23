@@ -43,7 +43,6 @@ const {
   PLUGIN_BRIDGE_JS,
   PLUGIN_HIDE_CSS,
   MARKET_BRIDGE_JS_FN,
-  MARKET_INJECT_CSS,
 } = require("./plugin-ui-inject");
 
 const APP_NAME = "DSH Box";
@@ -499,7 +498,6 @@ function main() {
       wc.executeJavaScript(PLUGIN_BRIDGE_JS, true).catch(() => {});
       wc.executeJavaScript(MARKET_BRIDGE_JS_FN(marketSidebarEntry), true).catch(() => {});
       wc.insertCSS(PLUGIN_HIDE_CSS).catch(() => {});
-      wc.insertCSS(MARKET_INJECT_CSS).catch(() => {});
       const css = readCustomCss();
       if (css) wc.insertCSS(css).catch(() => {});
     });

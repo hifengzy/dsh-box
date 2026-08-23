@@ -23,7 +23,7 @@ const fs = require("node:fs");
 
 const ROOT = path.resolve(__dirname, "..");
 const { resolveDsh } = require(path.join(ROOT, "src", "main", "dsh-server"));
-const { MARKET_BRIDGE_JS_FN, MARKET_INJECT_CSS } = require(path.join(ROOT, "src", "main", "plugin-ui-inject"));
+const { MARKET_BRIDGE_JS_FN } = require(path.join(ROOT, "src", "main", "plugin-ui-inject"));
 
 const E2E_HOME = process.env.DSH_E2E_HOME || "/tmp/dsh-box-plugin-e2e";
 const PORT = Number(process.env.DSH_E2E_PORT) || 3974;
@@ -102,27 +102,31 @@ app.whenReady().then(async () => {
     win = new BrowserWindow({ width: 1400, height: 900, show: false, webPreferences: PRELOAD });
     win.webContents.on("did-finish-load", () => {
       win.webContents.executeJavaScript(MARKET_BRIDGE_JS_FN(true), true).catch(() => {});
-      win.webContents.insertCSS(MARKET_INJECT_CSS).catch(() => {});
     });
     await win.loadURL(url);
     await wait(WAIT_MS);
 
-    // ---------- 3a. 侧边栏「插件」入口出现在「设置」上方 ----------
+    // ---------- 3a. 侧边栏「插件」入口:克隆设置按钮,出现在其上方 ----------
     const entry = await (async () => {
       const start = Date.now();
       while (Date.now() - start < MOUNT_TIMEOUT_MS) {
         const r = await win.webContents.executeJavaScript(`(() => {
-          const settings = document.querySelector('[data-slot="sidebar.settings"]');
-          if (!settings) return null;
+          const settingsAnchor = document.querySelector('[data-slot="sidebar.settings"]');
           const marketWrap = document.querySelector('[data-slot="sidebar.market"]');
-          if (!marketWrap) return null;
-          const btn = marketWrap.querySelector('button.dshbox-market-entry');
-          const beforeSettings = settings.compareDocumentPosition(marketWrap) & Node.DOCUMENT_POSITION_PRECEDING;
+          if (!settingsAnchor || !marketWrap) return null;
+          const settingsBtn = settingsAnchor.querySelector('button');
+          const btn = marketWrap.querySelector('button');
+          if (!settingsBtn || !btn) return null;
+          const beforeSettings = settingsAnchor.compareDocumentPosition(marketWrap) & Node.DOCUMENT_POSITION_PRECEDING;
+          const cs = (el) => { const st = getComputedStyle(el); return { w: st.width, h: st.height, br: st.borderRadius, pad: st.padding }; };
+          const label = [...btn.querySelectorAll('*')].find((el) => el.children.length === 0 && (el.textContent || '').trim() === '插件');
           return {
             before: !!beforeSettings,
-            text: btn ? btn.textContent.trim() : null,
-            iconCount: btn ? btn.querySelectorAll('svg rect').length : 0,
-            aria: btn ? btn.getAttribute('aria-label') : null,
+            text: btn.textContent.trim(),
+            sameClass: btn.className === settingsBtn.className,
+            styleSame: JSON.stringify(cs(btn)) === JSON.stringify(cs(settingsBtn)),
+            iconCount: btn.querySelectorAll('svg rect').length,
+            labelTag: label ? label.tagName : null,
           };
         })()`);
         if (r && r.text === "插件") return r;
@@ -130,14 +134,87 @@ app.whenReady().then(async () => {
       }
       return null;
     })();
-    if (!entry) throw new Error("侧边栏「插件」入口未出现或不在「设置」上方");
+    if (!entry) throw new Error("侧边栏「插件」入口未出现");
     if (!entry.before) throw new Error("「插件」入口应在「设置」按钮上方");
-    if (entry.text !== "插件" || entry.aria !== "插件") throw new Error(`入口文案错误: ${JSON.stringify(entry)}`);
+    if (entry.text !== "插件" || !entry.labelTag) throw new Error(`入口文案错误: ${JSON.stringify(entry)}`);
+    if (!entry.sameClass) throw new Error("「插件」应克隆「设置」的渲染 class");
+    if (!entry.styleSame) throw new Error("「插件」与「设置」的计算样式应一致");
     if (entry.iconCount < 8) throw new Error(`入口图标应为 chajian 方块网格,实际 rect=${entry.iconCount}`);
-    console.log("[1] 侧边栏「插件」入口:设置上方,chajian 图标 + 文本 ✓");
+    console.log("[1] 侧边栏「插件」入口:克隆设置按钮(同 class/同样式)+ 在设置上方 ✓");
+
+    // ---------- 3a2. 折叠(rail)后:两按钮都 icon-only、上下排列不重叠 ----------
+    const collapsed = await win.webContents.executeJavaScript(`(() => {
+      const b = [...document.querySelectorAll('button,[role="button"]')].find((x) => (((x.getAttribute('aria-label') || '') + ' ' + (x.textContent || '')).includes('收起侧边栏')));
+      if (b) { b.click(); return true; }
+      return false;
+    })()`);
+    if (!collapsed) throw new Error("找不到「收起侧边栏」按钮");
+    const railState = await (async () => {
+      const start = Date.now();
+      while (Date.now() - start < 10_000) {
+        const r = await win.webContents.executeJavaScript(`(() => {
+          const settingsAnchor = document.querySelector('[data-slot="sidebar.settings"]');
+          const marketWrap = document.querySelector('[data-slot="sidebar.market"]');
+          if (!settingsAnchor || !marketWrap) return null;
+          const settingsBtn = settingsAnchor.querySelector('button');
+          const btn = marketWrap.querySelector('button');
+          const cs = (el) => { const st = getComputedStyle(el); return { w: st.width, h: st.height }; };
+          const sRect = settingsBtn.getBoundingClientRect();
+          const mRect = btn.getBoundingClientRect();
+          const textLeafVisible = (el, text) => {
+            for (const x of el.querySelectorAll('*')) {
+              if (x.children.length === 0 && (x.textContent || '').trim() === text) {
+                return x.getClientRects().length > 0;
+              }
+            }
+            return false;
+          };
+          let collapsedCls = false;
+          { let el = btn.parentElement; for (let i = 0; i < 8 && el; i++) { if (((el.className || '') + '').includes('collapsed')) { collapsedCls = true; break; } el = el.parentElement; } }
+          return {
+            collapsedCls,
+            settingsCS: cs(settingsBtn),
+            marketCS: cs(btn),
+            settingsLabelVisible: textLeafVisible(settingsBtn, '设置'),
+            marketLabelVisible: textLeafVisible(btn, '插件'),
+            marketAbove: mRect.top < sRect.top,
+            noOverlap: mRect.top + mRect.height <= sRect.top + 0.5,
+          };
+        })()`);
+        if (r && r.marketCS.w === "36px") return r;
+        await wait(500);
+      }
+      return null;
+    })();
+    if (!railState) {
+      const dbg = await win.webContents.executeJavaScript(`(() => {
+        const btn = document.querySelector('[data-slot="sidebar.settings"] button');
+        const cs = btn ? getComputedStyle(btn) : null;
+        let collapsedCls = false;
+        { let el = btn; for (let i = 0; i < 8 && el; i++) { if (((el.className || '') + '').includes('collapsed')) { collapsedCls = true; break; } el = el.parentElement; } }
+        const labels = [...document.querySelectorAll('button,[role="button"]')].filter((b) => ((b.getAttribute('aria-label') || '') + (b.textContent || '')).includes('侧边栏')).map((b) => b.getAttribute('aria-label'));
+        return { w: cs ? cs.width : null, collapsedCls, labels: [...new Set(labels)] };
+      })()`);
+      console.error("[dbg] rail debug:", JSON.stringify(dbg));
+      throw new Error("折叠侧边栏后未进入 rail 态(按钮未变 36px)");
+    }
+    if (railState.settingsCS.h !== "36px") throw new Error("折叠后「设置」应为 36×36 icon-only");
+    if (railState.marketCS.w !== "36px" || railState.marketCS.h !== "36px")
+      throw new Error(`折叠后「插件」应 36×36,实际 ${JSON.stringify(railState.marketCS)}`);
+    if (railState.settingsLabelVisible || railState.marketLabelVisible)
+      throw new Error("折叠后两个按钮都应只显示 icon(label 隐藏)");
+    if (!railState.marketAbove) throw new Error("折叠后「插件」仍应在「设置」上方");
+    if (!railState.noOverlap) throw new Error("折叠后两按钮不应重叠(应上下排列)");
+    console.log("[1b] 折叠(rail):两按钮 36×36 icon-only,上下排列不重叠 ✓");
+    // 展开恢复宽模式,继续后续步骤
+    await win.webContents.executeJavaScript(`(() => {
+      const b = [...document.querySelectorAll('button,[role="button"]')].find((x) => (((x.getAttribute('aria-label') || '') + ' ' + (x.textContent || '')).includes('展开侧边栏')));
+      if (b) b.click();
+    })()`);
+    await wait(1200);
 
     // ---------- 3b. 点击「插件」→ 设置弹窗打开并激活插件市场页 ----------
-    await win.webContents.executeJavaScript(`document.querySelector('[data-slot="sidebar.market"] button.dshbox-market-entry').click(); undefined;`);
+    await win.webContents.executeJavaScript(`document.querySelector('[data-slot="sidebar.market"] button').click(); undefined;`);
     const marketActivated = await (async () => {
       const start = Date.now();
       while (Date.now() - start < 15_000) {
