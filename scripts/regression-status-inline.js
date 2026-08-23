@@ -248,10 +248,22 @@ app.whenReady().then(async () => {
     check(!open1.pluginBtnHidden && open1.pluginBtnText === "安装", "侧边栏未安装应显示「安装」按钮");
     check(!open1.marketBtnHidden, "插件市场未安装应显示「安装」按钮");
     check(open1.reports >= 2, "打开应再次上报(含 {open:true})");
-    console.log("[2] toggle 开:滑入 + 四板块渲染 + 对话区挤压 320px(#root 不动) + 上报 {open:true} ✓");
+    // 打开/关闭动画全程 document 不应出现横向滚动(面板 fixed,不扩展滚动区域)
+    const noHScroll = await win.webContents.executeJavaScript(
+      `document.documentElement.scrollWidth <= window.innerWidth + 1`
+    );
+    check(noHScroll, "面板展开后不应产生横向滚动条");
+    console.log("[2] toggle 开:滑入 + 四板块渲染 + 对话区挤压 320px(#root 不动) + 无横向滚动条 ✓");
 
-    // ========== 3. toggle 关:滑出动画后移除 + 挤压回收 ==========
+    // ========== 3. toggle 关:滑出动画中无横向滚动条 → 动画后移除 + 挤压回收 ==========
     await win.webContents.executeJavaScript(`window.__dshBoxStatusBridge.toggle(); undefined;`);
+    await wait(120); // 滑出动画中段(此前 absolute 面板此处 scrollWidth 暴涨)
+    const midScroll = await win.webContents.executeJavaScript(`(() => ({
+      sw: document.documentElement.scrollWidth,
+      iw: window.innerWidth,
+    }))()`);
+    check(midScroll.sw <= midScroll.iw + 1,
+      `滑出动画期间不应出现横向滚动条(sw=${midScroll.sw}, iw=${midScroll.iw})`);
     await wait(500);
     const closed = await win.webContents.executeJavaScript(`(() => ({
       panelExists: !!document.getElementById("dshbox-status-panel"),

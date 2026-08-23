@@ -69,7 +69,11 @@ const STATUS_PANEL_CSS = `
   --st-idle-weak: rgba(173, 178, 184, 0.16);
 }
 #dshbox-status-panel {
-  position: absolute;
+  /* fixed(相对视口,不扩展文档滚动区域):与插件侧栏装在 fixed host 内
+     同效——滑出动画(transform 移出视口)不会让 document 出现横向滚动条。
+     absolute(挂 body)会把 transform 后的边界计入 scrollWidth,导致
+     关闭瞬间窗口底部闪现横向滚动条。 */
+  position: fixed;
   top: 0;
   bottom: 0;
   right: 0;
