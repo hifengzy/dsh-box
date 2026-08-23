@@ -196,6 +196,24 @@ app.whenReady().then(async () => {
       throw new Error(`未挂载时应返回 {ok:false},实际 ${JSON.stringify(unmounted)}`);
     console.log("[4] 未挂载防呆:返回 plugin-not-mounted ✓");
 
+    // ---------- 4d2. 会话激活 → 桥常驻轮询补报 active=true(顶栏开关自动亮起) ----------
+    // 回归:桥曾在页面加载后只补报 4 秒即停,cluster 按钮 disabled 变化
+    // (会话激活)不触发 body/style 观察 → 顶栏开关永远置灰。这里模拟 dsh
+    // 会话激活的 DOM 变化(解除按钮 disabled),验证常驻兜底轮询上报。
+    const beforeLen = panelReports.length;
+    const unset = await win.webContents.executeJavaScript(`(() => {
+      const cluster = document.querySelector('[data-dsh-toggle-cluster]');
+      if (!cluster) return false;
+      cluster.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+      return true;
+    })()`);
+    if (!unset) throw new Error("找不到 toggle cluster,无法模拟会话激活");
+    await wait(3000); // 等一次 2s 兜底轮询周期
+    const lastAfter = panelReports[panelReports.length - 1];
+    if (!lastAfter || lastAfter.active !== true)
+      throw new Error(`会话激活后桥应上报 active=true,实际 ${JSON.stringify(lastAfter)} (共 ${panelReports.length - beforeLen} 条新上报)`);
+    console.log("[4b] 会话激活(按钮解除 disabled)→ 常驻轮询补报 active=true,顶栏开关点亮 ✓");
+
     // ---------- 4e. 双向翻转(活跃会话)是实机验收项 ----------
     console.log("[5] 双向翻转需活跃会话,由实机验收(见 README 验收指引) ✓");
 

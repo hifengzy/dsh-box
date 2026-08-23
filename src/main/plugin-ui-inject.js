@@ -53,10 +53,17 @@ const PLUGIN_BRIDGE_JS = `
     },
   };
   window.__dshBoxPluginBridge = api;
+  // 状态变化才上报(避免 IPC 洪峰);初始与每次变化各报一次。
+  let lastReported = null;
   const report = () => {
+    let state;
+    try { state = api.state(); } catch { return; }
+    const key = JSON.stringify(state);
+    if (key === lastReported) return;
+    lastReported = key;
     try {
       if (window.dsh && window.dsh.reportPluginPanels) {
-        window.dsh.reportPluginPanels(api.state());
+        window.dsh.reportPluginPanels(state);
       }
     } catch { /* 上报失败不影响页面 */ }
   };
@@ -74,14 +81,10 @@ const PLUGIN_BRIDGE_JS = `
     report();
   };
   start();
-  // 插件 mount 晚于页面加载:延迟补报几次,直到 cluster 出现(或放弃)
-  let tries = 0;
-  const timer = setInterval(() => {
-    if (api.installed() || ++tries >= 8) {
-      report();
-      clearInterval(timer);
-    }
-  }, 500);
+  // 常驻低频兜底轮询:覆盖 observer 覆盖不到的 DOM 变化(如会话激活时
+  // cluster 按钮从 disabled 解除——按钮属性变化不触发 body/style 观察),
+  // 保证顶栏开关状态始终跟随插件真实状态(此前只补报 4 秒,之后永远灰)。
+  setInterval(report, 2000);
 })();
 `;
 
