@@ -213,6 +213,37 @@ app.whenReady().then(async () => {
 
     console.log("[2] 原入口彻底隐藏(display:none)+ 折叠态页头 78px 占位回收为 28px ✓");
 
+    // ---------- 2b. 面板打开时 tab strip 右端 72px 预留回收 ----------
+    // 72px 是插件为 cluster 预留的 padding(哈希类 .tabBar 无法用 CSS 覆盖),
+    // 桥用「computed padding-right === 72px」特征定位后内联归零。模拟面板
+    // 展开结构(mock [data-dsh-panel] + 72px tab 条),验证桥兜底轮询回收。
+    await win.webContents.executeJavaScript(`(() => {
+      if (document.querySelector('[data-dsh-panel]')) return true;
+      const panel = document.createElement('div');
+      panel.setAttribute('data-dsh-panel', '');
+      const bar = document.createElement('div');
+      bar.setAttribute('data-dsh-tab-strip', 'mock');
+      bar.style.paddingRight = '72px';
+      bar.innerHTML = '<span>tab1</span><span>tab2</span>';
+      panel.appendChild(bar);
+      document.body.appendChild(panel);
+      return true;
+    })()`);
+    const reclaimed = await (async () => {
+      const start = Date.now();
+      while (Date.now() - start < 10_000) {
+        const r = await win.webContents.executeJavaScript(`(() => {
+          const bar = document.querySelector('[data-dsh-panel] [data-dsh-tab-strip]');
+          return bar ? getComputedStyle(bar).paddingRight : null;
+        })()`);
+        if (r === "0px") return true;
+        await wait(500);
+      }
+      return false;
+    })();
+    if (!reclaimed) throw new Error("桥应通过常驻轮询把面板 tab 条 72px 预留回收为 0px");
+    console.log("[2b] 面板 tab strip 72px 预留回收:特征定位(哈希类无关)→ 内联归零 ✓");
+
     // ---------- 4c. 状态信号与上报 ----------
     const st0 = await win.webContents.executeJavaScript(
       `window.__dshBoxPluginBridge.state()`

@@ -53,9 +53,26 @@ const PLUGIN_BRIDGE_JS = `
     },
   };
   window.__dshBoxPluginBridge = api;
+  // 收回「面板打开时 tab strip 右端 72px」:插件为右上角 cluster 预留的
+  // padding(仅展开面板时存在),cluster 已 display:none 无遮挡,72px 纯冗余。
+  // 按「computed padding-right 恰为 72px」特征定位(不依赖哈希类名/层级),
+  // 内联归零;若插件未来改 padding 值,特征失配自动降级(保持原样)。
+  const reclaimTabStrip = () => {
+    const panel = document.querySelector('[data-dsh-panel]');
+    if (!panel) return;
+    const walker = document.createTreeWalker(panel, NodeFilter.SHOW_ELEMENT);
+    let el;
+    while ((el = walker.nextNode())) {
+      if (getComputedStyle(el).paddingRight === '72px') {
+        el.style.paddingRight = '0px';
+        return;
+      }
+    }
+  };
   // 状态变化才上报(避免 IPC 洪峰);初始与每次变化各报一次。
   let lastReported = null;
   const report = () => {
+    reclaimTabStrip();
     let state;
     try { state = api.state(); } catch { return; }
     const key = JSON.stringify(state);
