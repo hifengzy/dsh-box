@@ -174,7 +174,11 @@ npm run dist:dmg    # 只生成 .dmg
 运行 `npm run doctor` 看提示。打包后的 App 自带 dsh;开发模式下先确认 `npm install` 装过 `@deepseek-ai/dsh`。也可用 `DSH_BIN` 强制指定。
 
 **启动后一直停在加载页**
-看日志:主进程终端会打印 `[dsh:err] ...`,完整日志在 `~/Library/Application Support/DSH Box/logs/`。最常见原因:端口被占用(换 `DSH_APP_PORT`)或 DSH_HOME 里的 profile 配置损坏。
+看日志:主进程终端会打印 `[dsh:err] ...`,完整日志在 `~/Library/Application Support/DSH Box/logs/`。最常见的两类原因:
+1. **端口被占用**(换 `DSH_APP_PORT`);
+2. **插件加载失败导致 dsh 启动即退出**——「服务状态」页/加载页会直接展示日志里提取的可读原因(如 `duplicate prefix route "/sidebar/api"`)与修复提示,不再是笼统的「端口可能被占用」。
+
+> 已知案例:**聚合插件与已装插件重复加载**。从插件市场安装聚合包(如 `@linxin666/dsh-web-ui-all`,它内部聚合了 `dsh-better-sidebar` 等多个插件)时,若 `dsh-better-sidebar` 已单独装过,二者会被同时记入 profile 的 `dsh.profile.bundles`,同一插件的路由重复注册 → dsh 启动崩溃(`duplicate prefix route`)。修复:编辑 `<DSH_HOME>/profiles/web/package.json`,在 `dsh.profile.bundles` 里移除重复的 `dsh-better-sidebar` 条目(聚合包仍会把它加载一次,功能保留),或卸载其中一个插件。
 
 **启动页总是闪一下红色「服务启动失败」但服务其实正常**
 最常见原因:**同时跑了两个实例**(比如 `npm start` 的 dev 版和已安装的打包版同时打开)。两个实例的 userData 不同,Electron 自带单实例锁管不住,会争抢同一个端口,后启动者的 dsh 绑定失败(EADDRINUSE)却从先启动者的服务加载 UI → 误报。App 现已用**全局单实例锁**(所有实例共享,与 userData 无关),后启动的实例会直接退出。若仍出现,检查是否有残留进程:`pkill -f "bin.js web"` 后重开。

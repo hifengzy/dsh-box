@@ -40,6 +40,47 @@ const STOP_GRACE_MS = 5_000;
 const DSH_BIN_JS = path.join("lib", "bin.js");
 
 /**
+ * 从 dsh 崩溃日志中提取可读的失败原因(供界面展示;无则 null)。
+ * 日志 = 子进程 stdout/stderr 原文,dsh 启动崩溃时以 "Error: <msg>" 行
+ * 呈现(boot 级或 cause 链根因行)。优先取含根因关键词的行
+ * (duplicate/EADDR/模块缺失/插件树失败等),避免取到无信息的堆栈行。
+ * @param {string} logFile dsh 日志文件路径
+ * @returns {string|null}
+ */
+function extractCrashReason(logFile) {
+  let raw;
+  try {
+    raw = fs.readFileSync(logFile, "utf8");
+  } catch {
+    return null;
+  }
+  const lines = raw.split("\n");
+  const prefer = lines.find((l) =>
+    /^Error:\s*(?:duplicate|EADDR|Cannot find module|listen|failed|plugin tree|Unexpected|Syntax)/i.test(l)
+  );
+  const any = lines.find((l) => /^Error:\s*\S/.test(l));
+  const line = prefer || any;
+  if (!line) return null;
+  const msg = line.replace(/^Error:\s*/, "").trim();
+  return msg.length > 240 ? msg.slice(0, 240) + "…" : msg;
+}
+
+/** 常见崩溃原因的可操作建议(无匹配返回 "") */
+function crashAdvice(reason) {
+  if (!reason) return "";
+  if (/duplicate\s+prefix\s+route/i.test(reason)) {
+    return (
+      "插件重复加载:常见于聚合插件(如 dsh-web-ui-all)与已装的同一插件并存。" +
+      "可在 <DSH_HOME>/profiles/web/package.json 的 dsh.profile.bundles 里移除重复条目,或卸载其一后重试"
+    );
+  }
+  if (/EADDRINUSE|address already in use/i.test(reason)) {
+    return "端口被占用:请结束占用该端口的进程后重试";
+  }
+  return "";
+}
+
+/**
  * 打包后的 dsh 脚本路径候选:
  * 本项目用 asar:false 打包(ELECTRON_RUN_AS_NODE 模式读不了 asar 归档,
  * 且 dsh 依赖树需要真实路径),所以打包后是 Resources/app/node_modules/…;
@@ -308,10 +349,17 @@ class DshServer extends EventEmitter {
     const deadline = Date.now() + START_TIMEOUT_MS;
     while (Date.now() < deadline) {
       if (this.stopping) throw new Error("服务已停止");
-      // 子进程提前退出(典型:端口被别的服务占用,EADDRINUSE)→ 立即失败,
+      // 子进程提前退出(典型:插件树加载失败 / 端口被占用)→ 立即失败,
       // 不要等满超时,也不要被端口上其它服务返回的 2xx 骗过。
       if (this.childExitCode !== null) {
-        throw new Error(`dsh 进程启动后立即退出 (code=${this.childExitCode}),端口 ${this.port} 可能被占用`);
+        // 读日志给出可读原因(避免只抛误导性的"端口可能被占用"猜测)
+        const reason = extractCrashReason(this.logFile);
+        const advice = crashAdvice(reason);
+        throw new Error(
+          reason
+            ? `dsh 进程启动后立即退出 (code=${this.childExitCode}); 原因: ${reason}${advice ? `; ${advice}` : ""}`
+            : `dsh 进程启动后立即退出 (code=${this.childExitCode}),端口 ${this.port} 可能被占用`
+        );
       }
       try {
         const res = await fetch(this.url, {
@@ -384,4 +432,12 @@ class DshServer extends EventEmitter {
   }
 }
 
-module.exports = { DshServer, resolveDsh, bundledDshPath, defaultDshHome, DEFAULT_PORT };
+module.exports = {
+  DshServer,
+  resolveDsh,
+  bundledDshPath,
+  defaultDshHome,
+  DEFAULT_PORT,
+  extractCrashReason,
+  crashAdvice,
+};
