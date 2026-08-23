@@ -142,6 +142,33 @@ app.whenReady().then(async () => {
     if (entry.iconCount < 8) throw new Error(`入口图标应为 chajian 方块网格,实际 rect=${entry.iconCount}`);
     console.log("[1] 侧边栏「插件」入口:克隆设置按钮(同 class/同样式)+ 在设置上方 ✓");
 
+    // ---------- 1a2. 图标尺寸跟随「设置」(dsh 版本把设置 icon 做成 18×18 等规格) ----------
+    await win.webContents.executeJavaScript(`(() => {
+      const sBtn = document.querySelector('[data-slot="sidebar.settings"] button');
+      const svg = sBtn.querySelector('svg');
+      svg.setAttribute('width', '18');
+      svg.setAttribute('height', '18');
+      svg.style.width = '18px';
+      svg.style.height = '18px';
+    })()`);
+    await wait(1500); // 等一次兜底轮询同步
+    const iconSync = await win.webContents.executeJavaScript(`(() => {
+      const info = (btn) => {
+        const svg = btn.querySelector('svg');
+        const r = svg.getBoundingClientRect();
+        return { w: svg.getAttribute('width'), h: svg.getAttribute('height'), rw: Math.round(r.width), rh: Math.round(r.height) };
+      };
+      return {
+        s: info(document.querySelector('[data-slot="sidebar.settings"] button')),
+        m: info(document.querySelector('[data-slot="sidebar.market"] button')),
+      };
+    })()`);
+    if (iconSync.m.rw !== 18 || iconSync.m.rh !== 18)
+      throw new Error(`「插件」icon 应与「设置」一致(18×18),实际 ${JSON.stringify(iconSync)}`);
+    if (iconSync.m.w !== iconSync.s.w || iconSync.m.h !== iconSync.s.h)
+      throw new Error(`「插件」icon 属性应同步设置,实际 ${JSON.stringify(iconSync)}`);
+    console.log("[1a2] 图标尺寸跟随「设置」(18×18 规格下同步) ✓");
+
     // ---------- 3a2. 折叠(rail)后:两按钮都 icon-only、上下排列不重叠 ----------
     const collapsed = await win.webContents.executeJavaScript(`(() => {
       const b = [...document.querySelectorAll('button,[role="button"]')].find((x) => (((x.getAttribute('aria-label') || '') + ' ' + (x.textContent || '')).includes('收起侧边栏')));

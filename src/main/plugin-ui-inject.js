@@ -136,9 +136,20 @@ function MARKET_BRIDGE_JS_FN(marketEntry) {
       btn.removeAttribute('aria-haspopup');
       btn.removeAttribute('aria-expanded');
       btn.title = '插件市场';
-      // 换图标:保留 svg 属性(尺寸/类),只替换内部图形为 chajian 方块网格
+      // 换图标:保留 svg 类,尺寸跟随「设置」图标的当前尺寸(不同 dsh 版本
+      // 规格可能不同,如 16×16 / 18×18),替换内部图形为 chajian 方块网格
       const svg = btn.querySelector('svg');
       if (svg) {
+        const sSvg = settingsBtn.querySelector('svg');
+        if (sSvg) {
+          svg.setAttribute('width', sSvg.getAttribute('width') || '16');
+          svg.setAttribute('height', sSvg.getAttribute('height') || '16');
+          const scs = getComputedStyle(sSvg);
+          if (parseInt(scs.width, 10) > 0) {
+            svg.style.width = scs.width;
+            svg.style.height = scs.height;
+          }
+        }
         svg.setAttribute('viewBox', '0 0 16 16');
         svg.innerHTML = '<g fill="currentColor"><rect x="1.96" y="3.36" width="3.3" height="3.3" rx="0.53"></rect><rect x="5.71" y="3.36" width="3.3" height="3.3" rx="0.53"></rect><rect x="1.96" y="7.11" width="3.3" height="3.3" rx="0.53"></rect><rect x="5.71" y="7.11" width="3.3" height="3.3" rx="0.53"></rect><rect x="9.46" y="7.11" width="3.3" height="3.3" rx="0.53"></rect><rect x="1.96" y="10.86" width="3.3" height="3.3" rx="0.53"></rect><rect x="5.71" y="10.86" width="3.3" height="3.3" rx="0.53"></rect><rect x="9.46" y="10.86" width="3.3" height="3.3" rx="0.53"></rect></g><rect x="10.74" y="2.09" width="3.3" height="3.3" rx="0.53" fill="currentColor" transform="rotate(9 12.39 3.74)"></rect>';
       } else {
@@ -227,10 +238,30 @@ function MARKET_BRIDGE_JS_FN(marketEntry) {
       const btn = wrap ? wrap.querySelector('button') : null;
       if (sb && btn && btn.className !== sb.className) btn.className = sb.className;
     };
+    // 图标尺寸跟随「设置」图标:属性 + 内联双保险(应对 dsh 版本把设置
+    // 图标做成 18×18 等规格或 CSS 控制尺寸的情况)。
+    const syncBtnIcon = () => {
+      const sb = document.querySelector('[data-slot="sidebar.settings"] button');
+      const wrap = document.querySelector('[data-slot="sidebar.market"]');
+      const btn = wrap ? wrap.querySelector('button') : null;
+      const mSvg = btn ? btn.querySelector('svg') : null;
+      const sSvg = sb ? sb.querySelector('svg') : null;
+      if (!mSvg || !sSvg) return;
+      const css = getComputedStyle(sSvg);
+      const w = parseInt(css.width, 10);
+      const h = parseInt(css.height, 10);
+      if (w > 0 && h > 0) {
+        if (mSvg.getAttribute('width') !== String(w)) mSvg.setAttribute('width', String(w));
+        if (mSvg.getAttribute('height') !== String(h)) mSvg.setAttribute('height', String(h));
+        mSvg.style.width = w + 'px';
+        mSvg.style.height = h + 'px';
+      }
+    };
     const applyRailState = (next, force = false) => {
       if (next === railOn && !force) return;
       railOn = next;
       syncBtnClass();
+      syncBtnIcon();
       const wrap = document.querySelector('[data-slot="sidebar.market"]');
       const btn = wrap ? wrap.querySelector('button') : null;
       const settingsAnchor = document.querySelector('[data-slot="sidebar.settings"]');
@@ -269,7 +300,7 @@ function MARKET_BRIDGE_JS_FN(marketEntry) {
     const ensureRailObserver = () => {
       const sb = document.querySelector('[data-slot="sidebar.settings"] button');
       if (!sb || railObserver) return;
-      railObserver = new ResizeObserver(() => { syncBtnClass(); applyRailState(railSignal()); });
+      railObserver = new ResizeObserver(() => { syncBtnClass(); syncBtnIcon(); applyRailState(railSignal()); });
       railObserver.observe(sb);
     };
     ensureRailObserver();
@@ -277,6 +308,7 @@ function MARKET_BRIDGE_JS_FN(marketEntry) {
     setInterval(() => {
       ensureRailObserver();
       syncBtnClass();
+      syncBtnIcon();
       applyRailState(railSignal());
     }, 800);
 
