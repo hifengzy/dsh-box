@@ -69,11 +69,11 @@ const STATUS_PANEL_CSS = `
   --st-idle-weak: rgba(173, 178, 184, 0.16);
 }
 #dshbox-status-panel {
-  position: fixed;
-  top: 4px;
-  right: 4px;
-  bottom: 4px;
-  z-index: 100000;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  z-index: 46;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -83,11 +83,43 @@ const STATUS_PANEL_CSS = `
   font-family: var(--st-font);
   font-size: 12px;
   line-height: 18px;
-  border: 1px solid var(--st-border);
-  border-radius: 10px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  border-left: 1px solid var(--st-border);
   user-select: none;
   -webkit-font-smoothing: antialiased;
+  /* 插件侧栏同款滑入/滑出:translate(102%) ↔ 0;时长/缓动读 dsh 主题变量
+     (--ds-transition-duration-slow / --ds-ease-in-out),缺失时回退 300ms + 同款缓动 */
+  transform: translateX(102%);
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    transform var(--ds-transition-duration-slow, 300ms) var(--ds-ease-in-out, cubic-bezier(0.4, 0, 0.2, 1)),
+    width var(--ds-transition-duration-slow, 300ms) var(--ds-ease-in-out, cubic-bezier(0.4, 0, 0.2, 1)),
+    visibility 0s linear var(--ds-transition-duration-slow, 300ms);
+}
+#dshbox-status-panel.dshbox-st-open {
+  transform: translateX(0);
+  visibility: visible;
+  pointer-events: auto;
+  /* 展开时 visibility 立即生效(无延迟),transform/width 保持动画 */
+  transition:
+    transform var(--ds-transition-duration-slow, 300ms) var(--ds-ease-in-out, cubic-bezier(0.4, 0, 0.2, 1)),
+    width var(--ds-transition-duration-slow, 300ms) var(--ds-ease-in-out, cubic-bezier(0.4, 0, 0.2, 1));
+}
+/* 拖拽调宽时禁用面板过渡,配合 body 属性让内容区挤压跟手 */
+#dshbox-status-panel[data-dragging] {
+  transition: none;
+}
+body[data-dshbox-status-dragging] #root {
+  transition: none !important;
+}
+/* 布局挤压:展开时内容区让出面板宽度(与插件侧栏同机制,组合变量互不干扰;
+   互斥保证两侧变量同时只有一个非零)。!important 压过插件自己的 #root 规则。 */
+#root {
+  margin-right: calc(var(--dsh-sidebar-width, 0px) + var(--dshbox-status-panel-width, 0px)) !important;
+  width: calc(100% - var(--dsh-sidebar-width, 0px) - var(--dshbox-status-panel-width, 0px)) !important;
+  transition:
+    margin-right var(--ds-transition-duration-slow, 300ms) var(--ds-ease-in-out, cubic-bezier(0.4, 0, 0.2, 1)),
+    width var(--ds-transition-duration-slow, 300ms) var(--ds-ease-in-out, cubic-bezier(0.4, 0, 0.2, 1));
 }
 /* 拖拽把手(左缘 6px):展开 = 面板变宽;收起 = 变窄 */
 #dshbox-status-panel .dshbox-st-resizer {
@@ -525,6 +557,7 @@ function STATUS_BRIDGE_JS_FN(width) {
     if (window.__dshBoxStatusBridge) return;
     let panel = null;
     let open = false;
+    let busy = false; // 展开/收起动画进行中(互斥编排与 UI 都靠它防重入)
     let width = ${initialWidth};
 
     // ---------- 工具 ----------
@@ -540,6 +573,36 @@ function STATUS_BRIDGE_JS_FN(width) {
           window.dsh.reportStatusPanel({ open: !!open });
         }
       } catch { /* 上报失败不影响面板 */ }
+    };
+    /** 挤压宽度变量(0px = 不挤压;面板展开时 = 目标宽) */
+    const setPanelWidthVar = (w) => {
+      document.documentElement.style.setProperty('--dshbox-status-panel-width', w ? w + 'px' : '0px');
+    };
+    /** dsh 主题的慢速过渡时长(互斥等待插件动画完成用;缺失回退 300ms) */
+    const slowMs = () => {
+      try {
+        const v = getComputedStyle(document.documentElement)
+          .getPropertyValue('--ds-transition-duration-slow').trim();
+        const m = /^([\d.]+)(ms|s)$/.exec(v);
+        if (m) return parseFloat(m[1]) * (m[2] === 's' ? 1000 : 1);
+      } catch { /* 回退 */ }
+      return 300;
+    };
+    /** 等待元素 transition(transform/width)结束;带超时兜底(reduced-motion 等) */
+    const onceTransitionEnd = (el, done) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        el.removeEventListener('transitionend', onT);
+        clearTimeout(timer);
+        done();
+      };
+      const onT = (e) => {
+        if (e.propertyName === 'transform' || e.propertyName === 'width') finish();
+      };
+      const timer = setTimeout(finish, slowMs() + 150);
+      el.addEventListener('transitionend', onT);
     };
 
     // ---------- 渲染状态(移植 src/renderer/dsh-status.js,作用于面板内) ----------
@@ -953,21 +1016,26 @@ function STATUS_BRIDGE_JS_FN(width) {
         toggle();
       });
 
-      // 拖拽调宽(左缘,240~640 钳制;结束持久化)
+      // 拖拽调宽(左缘,240~640 钳制;结束持久化;拖拽中内容区挤压跟手)
       const resizer = div.querySelector('.dshbox-st-resizer');
       resizer.addEventListener('pointerdown', (event) => {
         event.preventDefault();
         resizer.setPointerCapture(event.pointerId);
+        div.setAttribute('data-dragging', '');
+        document.body.setAttribute('data-dshbox-status-dragging', '');
         const startX = event.clientX;
         const startW = width;
         const onMove = (ev) => {
           const next = Math.round(Math.min(${STATUS_WIDTH_MAX}, Math.max(${STATUS_WIDTH_MIN}, startW - (ev.clientX - startX))));
           div.style.width = next + 'px';
           width = next;
+          setPanelWidthVar(next);
         };
         const onUp = () => {
           resizer.removeEventListener('pointermove', onMove);
           resizer.removeEventListener('pointerup', onUp);
+          div.removeAttribute('data-dragging');
+          document.body.removeAttribute('data-dshbox-status-dragging');
           try {
             if (window.dsh && window.dsh.setStatusPanelWidth) {
               window.dsh.setStatusPanelWidth(width).catch(() => {});
@@ -977,38 +1045,68 @@ function STATUS_BRIDGE_JS_FN(width) {
         resizer.addEventListener('pointermove', onMove);
         resizer.addEventListener('pointerup', onUp);
       });
+      return div;
+    };
 
-      // 每次打开都重新查(与旧 statusView「进入即查」语义一致)
+    // 打开时数据全部重新查(与旧 statusView「进入即查」语义一致)
+    const refreshAll = () => {
       refreshInfo();
       loadVersions();
       loadPluginInfo();
       loadMarketInfo();
-      return div;
     };
 
-    const removePanel = () => {
-      if (panel) {
-        panel.remove();
-        panel = null;
-      }
+    // ---------- 展开 / 收起(带滑入/滑出动画,防重入) ----------
+    const doOpen = (onDone) => {
+      if (busy || open) { onDone && onDone(open); return; }
+      busy = true;
+      const div = createPanel();
+      setPanelWidthVar(width); // 挤压动画:内容区让出面板宽度
+      requestAnimationFrame(() => {
+        if (!div) { busy = false; onDone && onDone(false); return; }
+        div.classList.add('dshbox-st-open');
+        open = true;
+        busy = false;
+        report();
+        refreshAll();
+        onDone && onDone(true);
+      });
     };
+
+    const doClose = (onDone) => {
+      if (!panel || !open) { onDone && onDone(!open); return; }
+      busy = true;
+      const div = panel;
+      open = false;
+      setPanelWidthVar(0); // 挤压回收
+      div.classList.remove('dshbox-st-open');
+      report(); // 立即上报关闭(顶栏按钮熄灭与动画同步)
+      onceTransitionEnd(div, () => {
+        if (panel === div) { div.remove(); panel = null; }
+        busy = false;
+        onDone && onDone(true);
+      });
+    };
+
+    // 互斥编排用:返回 Promise,动画完成后 resolve
+    const requestOpen = () =>
+      new Promise((resolve) => doOpen((ok) => resolve({ ok: !!ok, open: !!open })));
+    const requestClose = () =>
+      new Promise((resolve) => doClose((ok) => resolve({ ok: !!ok, open: false })));
 
     // ---------- 桥 ----------
+    // toggle 同步返回「目标态」(不动画等待);UI 与旧路径兼容用。
     const toggle = () => {
-      if (open) {
-        open = false;
-        removePanel();
-      } else {
-        open = true;
-        createPanel();
-      }
-      report();
-      return { ok: true, open };
+      const target = !open;
+      if (target) doOpen();
+      else doClose();
+      return { ok: true, open: target };
     };
     const setWidth = (w) => {
       const next = Math.round(Math.min(${STATUS_WIDTH_MAX}, Math.max(${STATUS_WIDTH_MIN}, Number(w) || ${STATUS_WIDTH_DEFAULT})));
       width = next;
       if (panel) panel.style.width = next + 'px';
+      if (open) setPanelWidthVar(next); // 展开中调宽 → 挤压跟随
       try {
         if (window.dsh && window.dsh.setStatusPanelWidth) {
           window.dsh.setStatusPanelWidth(next).catch(() => {});
@@ -1020,14 +1118,17 @@ function STATUS_BRIDGE_JS_FN(width) {
     window.__dshBoxStatusBridge = {
       toggle,
       setWidth,
-      state() { return { open }; },
+      requestOpen,
+      requestClose,
+      state() { return { open, busy }; },
       // 诊断(回归/排查用):暴露面板内异步任务锁状态
       _debug() { return { upgrading, pluginInstalling, marketInstalling }; },
     };
 
-    // ---------- 主题跟随 + 首次上报 ----------
+    // ---------- 主题跟随 + 首次上报 + 宽度变量初始化 ----------
     const start = () => {
       if (!document.body) { setTimeout(start, 100); return; }
+      setPanelWidthVar(0); // 页面重载后确保不残留挤压
       new MutationObserver(applyTheme).observe(document.body, {
         attributes: true,
         attributeFilter: ['data-ds-dark-theme'],

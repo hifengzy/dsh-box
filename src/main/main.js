@@ -51,6 +51,7 @@ const {
   STATUS_WIDTH_MAX,
   STATUS_WIDTH_DEFAULT,
 } = require("./status-ui-inject");
+const { runMutualOpen } = require("./status-panel-router");
 
 const APP_NAME = "DSH Box";
 const isMac = process.platform === "darwin";
@@ -155,6 +156,8 @@ function main() {
   let statusPanelOpen = false;
   /** 注入桥缺失(executeJavaScript 失败/无返回值)→ 本会话回退 statusView */
   let statusInjectBroken = false;
+  /** 插件侧栏/底栏最近一次上报状态(互斥编排用) */
+  let lastPluginPanels = null;
   /** 「服务状态」共享面板宽度(拖拽持久化,启动时读 settings.yaml) */
   let statusPanelWidth = STATUS_WIDTH_DEFAULT;
 
@@ -714,29 +717,21 @@ function main() {
   function toggleStatusSidebar() {
     // 注入模式(dsh WebUI 页面内)常态:控制内容视图里的共享面板
     if (statusInjectActive()) {
-      // 同步调桥;异步失败(桥缺失等)回退 statusView 兜底,不让按钮失效
-      contentView.webContents
-        .executeJavaScript(
-          'window.__dshBoxStatusBridge && window.__dshBoxStatusBridge.toggle()',
-          true
-        )
-        .then((value) => {
-          if (value && typeof value.open === "boolean") {
-            statusPanelOpen = value.open;
-            // 注入面板打开时,异常态 statusView 兜底必须收起,避免双开遮挡
-            if (statusPanelOpen && sidebarOpen && statusView) closeStatusSidebar();
-            broadcastSidebarState();
-          } else {
-            markInjectBroken();
-            fallbackStatusSidebar();
-          }
-        })
-        .catch(() => {
-          markInjectBroken();
-          fallbackStatusSidebar();
-        });
+      const desiredOpen = !statusPanelOpen;
+      if (desiredOpen) {
+        // 互斥展开:插件侧栏已展开 → 先收起(等动画完成)再展开服务状态;
+        // 编排失败(桥缺失等)→ 回退 statusView 兜底,不让按钮失效
+        runMutualOpen("open-status", {
+          statusOpen: false,
+          pluginSideOpen: !!(lastPluginPanels && lastPluginPanels.side),
+          closePluginSide: () => closePluginSideWithAnimation(),
+          openStatus: () => execStatusBridge("requestOpen()"),
+        }).catch(() => markInjectBroken());
+      } else {
+        execStatusBridge("requestClose()").catch(() => markInjectBroken());
+      }
       // 预判翻转结果:按钮即时反馈,真实结果随后经桥上报/broadcast 校正
-      return { open: !statusPanelOpen, canOpen: true };
+      return { open: desiredOpen, canOpen: true };
     }
     fallbackStatusSidebar();
     return sidebarState();
@@ -752,6 +747,45 @@ function main() {
   function fallbackStatusSidebar() {
     if (sidebarOpen) closeStatusSidebar();
     else openStatusSidebar();
+  }
+
+  /** 调服务状态桥的异步原语(如 requestOpen()/requestClose());桥缺失/超时抛错 */
+  async function execStatusBridge(expr) {
+    if (!contentView || contentView.webContents.isDestroyed()) {
+      throw new Error("内容视图不可用");
+    }
+    const res = await contentView.webContents.executeJavaScript(
+      `window.__dshBoxStatusBridge && window.__dshBoxStatusBridge.${expr}`,
+      true
+    );
+    if (!res || typeof res.open !== "boolean") throw new Error("桥未响应");
+    return res;
+  }
+
+  /** 读 dsh 主题的慢速过渡时长(互斥等待插件动画完成用;缺失回退 300ms) */
+  async function readThemeSlowMs() {
+    if (!contentView || contentView.webContents.isDestroyed()) return 300;
+    try {
+      const v = await contentView.webContents.executeJavaScript(
+        `getComputedStyle(document.documentElement).getPropertyValue('--ds-transition-duration-slow').trim()`,
+        true
+      );
+      const m = /^([\d.]+)(ms|s)$/.exec(v || "");
+      if (m) return parseFloat(m[1]) * (m[2] === "s" ? 1000 : 1);
+    } catch {
+      /* 回退 */
+    }
+    return 300;
+  }
+
+  /** 收起插件侧栏并等待动画完成(读主题时长 + 余量;插件动画无事件可 hook) */
+  async function closePluginSideWithAnimation() {
+    const slow = await readThemeSlowMs();
+    await contentView.webContents.executeJavaScript(
+      'window.__dshBoxPluginBridge && window.__dshBoxPluginBridge.toggle("side")',
+      true
+    );
+    await new Promise((resolve) => setTimeout(resolve, slow + 50));
   }
 
   // ---------- npm 更新检查(启动查一次 → 顶栏红点) ----------
@@ -1025,11 +1059,22 @@ function main() {
       pluginInstalling = false;
     }
   });
-  // 顶栏「侧栏/底栏」切换按钮 → 桥 → 模拟点击插件自己的 toggle 按钮
+  // 顶栏「侧栏/底栏」切换按钮 → 桥 → 模拟点击插件自己的 toggle 按钮。
+  // 互斥:展开「侧栏」时若服务状态面板已展开 → 先收起服务状态(等动画完成)再展开。
   ipcMain.handle("dsh:toggle-plugin-panel", async (_event, which) => {
     if (which !== "side" && which !== "bottom") return { ok: false, error: "参数错误" };
     if (!contentView || contentView.webContents.isDestroyed()) {
       return { ok: false, error: "内容视图不可用" };
+    }
+    // 本次是「展开侧栏」(当前折叠)且服务状态面板展开 → 先收服务状态
+    const sideCollapsed = !(lastPluginPanels && lastPluginPanels.side);
+    if (which === "side" && sideCollapsed && statusPanelOpen) {
+      try {
+        await execStatusBridge("requestClose()");
+      } catch (error) {
+        markInjectBroken();
+        return { ok: false, error: `收起服务状态失败: ${error.message || error}` };
+      }
     }
     try {
       const res = await contentView.webContents.executeJavaScript(
@@ -1042,14 +1087,11 @@ function main() {
       return { ok: false, error: error.message || String(error) };
     }
   });
-  // 桥上报的面板开合状态 → 转发给顶栏(按钮高亮/灰显)
+  // 桥上报的面板开合状态 → 记录(互斥编排用)并转发给顶栏(按钮高亮/灰显)
   ipcMain.on("shell:plugin-panels", (_event, state) => {
-    if (
-      topBarView &&
-      !topBarView.webContents.isDestroyed() &&
-      state &&
-      typeof state === "object"
-    ) {
+    if (!state || typeof state !== "object") return;
+    lastPluginPanels = state;
+    if (topBarView && !topBarView.webContents.isDestroyed()) {
       topBarView.webContents.send("dsh:plugin-panels", state);
     }
   });

@@ -58,7 +58,8 @@ npm start
 - **顶栏视图** (`src/renderer/topbar.*`) 是独立的自定义标题栏:整条可拖动、双击最大化,左侧留红绿灯空间且**不显示应用名**;右侧 `.actions` 是功能入口区,当前放 **dsh 状态入口**、**侧栏插件两个面板开关**和 **GitHub 仓库按钮**(28×28 无背景,悬停显示背景,图标 20×20 随 light/dark 变色,点击在系统浏览器打开 `https://github.com/hifengzy/dsh-box`)。
   - **侧栏插件两个面板开关**(右侧栏 / 底部面板,在状态入口与 GitHub 之间):控制 dsh-better-sidebar 插件的侧栏/底栏开合。链路:顶栏按钮 → preload IPC → 主进程 → `executeJavaScript` 注入桥(`src/main/plugin-ui-inject.js` 的 `PLUGIN_BRIDGE_JS`)→ 桥模拟点击插件自己的 toggle 按钮(React store 全同步);开合状态经插件公开的布局钩子(`body[data-dsh-sidebar-collapsed]` 与 `--dsh-sidebar-height`)实时回显到顶栏按钮(展开 = 品牌蓝高亮);**插件未安装或当前没有活跃会话时按钮禁用**。插件自带的右上角两个入口被注入的 `PLUGIN_HIDE_CSS` 隐藏(visibility 保留空位,零布局扰动)。
 - **「服务状态」面板(双轨:内容区注入共享面板 + 异常态兜底)**:由顶栏状态按钮(或菜单)开关。
-  - **常态 = 内容区内的注入共享面板**(`src/main/status-ui-inject.js` 的 `STATUS_BRIDGE_JS_FN`,与侧边栏/市场桥同一注入层):dsh 服务就绪时,顶栏按钮经主进程 `executeJavaScript` 调桥开合一个浮在 dsh 内容区右侧的 **overlay 面板**(position:fixed,不挤压 dsh 布局,与内容共享同一区域)。**宽度可拖拽面板左缘调整(240~640px),拖拽结束持久化到 `settings.yaml` 的 `dsh-box.statusPanelWidth`**,下次打开记住;页面重载(服务重启)后面板默认关闭。数据/操作全部复用内容视图既有的 `window.dsh.*` preload 桥(getInfo / checkUpdates / getPluginInfo / getMarketInfo / installPlugin / installMarket / upgrade / retry / setMarketSwitch / onStatus),主进程仅新增「开合上报 + 宽度持久化」两个小通道;开合状态经 `shell:status-panel` 上报同步顶栏按钮高亮,主题跟随 dsh 的 `body[data-ds-dark-theme]`。面板每次打开都重新查 npm / 插件(与旧面板「进入即查」语义一致)。
+  - **常态 = 内容区内的注入共享面板**(`src/main/status-ui-inject.js` 的 `STATUS_BRIDGE_JS_FN`,与侧边栏/市场桥同一注入层):dsh 服务就绪时,顶栏按钮经主进程 `executeJavaScript` 调桥展开一个**从右侧滑入的面板**——与 dsh-better-sidebar 侧栏同款动画(transform translate(102%)↔0,时长/缓动读 dsh 主题变量 `--ds-transition-duration-slow` / `--ds-ease-in-out`,缺失回退 300ms + 同款缓动),展开时**挤压内容区**(注入 `#root` 的 `margin-right: calc(var(--dsh-sidebar-width,0px) + var(--dshbox-status-panel-width,0px))` 组合变量,与插件侧栏互不干扰)。**宽度可拖拽面板左缘调整(240~640px),拖拽结束持久化到 `settings.yaml` 的 `dsh-box.statusPanelWidth`**;页面重载(服务重启)后面板默认关闭。
+  - **与 dsh-better-sidebar 侧栏互斥展开**(`src/main/status-panel-router.js` 的 `runMutualOpen`,主进程编排):两者不能同时展开——开服务状态时若插件侧栏已展开 → **先收起插件侧栏**(读主题时长 + 余量等动画完成)再滑入服务状态;反之开插件侧栏时若服务状态展开 → **先收起服务状态**(`requestClose()` Promise 等滑出动画完成)再展开插件。收起方向不触发互斥;自动展开/折叠时两侧顶栏按钮高亮随桥上报实时同步(现有 `report` 机制,零额外 IPC)。数据/操作全部复用内容视图既有的 `window.dsh.*` preload 桥,主进程仅新增「开合上报 + 宽度持久化」两个小通道;主题跟随 `body[data-ds-dark-theme]`,每次打开都重新查 npm / 插件。
   - **异常态兜底 = 独立 statusView**(`src/renderer/dsh-status.*` + `src/main/sidebar-layout.js`):dsh 未启动/崩溃/重启中时内容视图在加载页,注入面板不存在,主进程自动回退到独立 WebContentsView 面板(**宽度由 `computeSidebar`「内容优先」计算,展开 300ms 动画,窗口过窄自动收起**)。两种形态以「内容视图是否为 dsh origin」自动切换,互不干扰;注入桥异常(executeJavaScript 失败)时也会整会话回退兜底。
   - 内容板块(两种形态共用同一套状态机):
   - 上卡 = 服务状态:只展示 DSH 版本号、端口、PID;**状态只有「运行中(绿)/ 停止(灰)」两态**,仅停止时显示「启动服务」按钮;版本号过长自动截断为 …,完整值悬停可见;**启动失败时按钮自动重置为「启动服务」并展示「服务启动失败:原因」,不卡在「启动中…」**;
@@ -99,7 +100,8 @@ src/
     sidebar-layout.js 右侧面板宽度策略纯函数(内容优先 + 面板拿剩余;现为异常态兜底布局)
     plugin-manager.js 第三方插件生命周期(参数化:侧边栏插件 / 插件市场):本地版本 / registry 查询 / dsh plugin add / openByDefault 写入
     plugin-ui-inject.js 注入桥(PLUGIN_BRIDGE_JS 侧栏 toggle / MARKET_BRIDGE_JS_FN 市场图标+侧边栏入口)与样式(PLUGIN_HIDE_CSS)
-    status-ui-inject.js 「服务状态」共享面板注入体(STATUS_BRIDGE_JS_FN:overlay 面板 + 四板块 + 拖拽调宽 + 主题跟随)与样式(STATUS_PANEL_CSS)
+    status-ui-inject.js 「服务状态」共享面板注入体(STATUS_BRIDGE_JS_FN:右侧滑入面板 + 四板块 + 拖拽调宽 + 互斥编排原语 requestOpen/requestClose + 主题)与样式(STATUS_PANEL_CSS:滑入动画 + #root 挤压)
+    status-panel-router.js 互斥展开编排纯函数(服务状态 ↔ 插件侧栏,不能同时展开)
     box-settings.js    DSH Box 自定义设置持久化(settings.yaml 的 dsh-box 域,文本级读写:布尔 + 数值)
   preload/
     preload.js       contextBridge 最小桥(getInfo / onStatus / retry / checkUpdates / upgrade / toggleSidebar / getPluginInfo / installPlugin / togglePluginPanel / …)
@@ -132,7 +134,7 @@ docs/
 npm run doctor    # 环境体检:Node / dsh / Electron / 端口
 npm run smoke     # 核心链路冒烟测试(纯 Node,不弹窗口)
 npm run smoke:e2e # 完整 E2E:启动真实 App → 拉起 dsh → 加载 WebUI → 退出
-npm run test:regression # 回归套件:dsh 服务 stop→start 语义 / 面板宽度策略 / URL 信任边界 / 重开窗口 / 加载页可见性 / 端口冲突 / 崩溃反馈 / 菜单栏 Tray / 应用菜单与关于弹窗 / 顶栏 / 服务与版本面板(独立页 + 注入共享面板) / 升级链路 / 侧边栏插件真实环境 e2e / 插件市场真实环境 e2e
+npm run test:regression # 回归套件:dsh 服务 stop→start 语义 / 面板宽度策略 / URL 信任边界 / 重开窗口 / 加载页可见性 / 端口冲突 / 崩溃反馈 / 菜单栏 Tray / 应用菜单与关于弹窗 / 顶栏 / 服务与版本面板(独立页 + 注入共享面板:滑入/挤压/互斥) / 升级链路 / 侧边栏插件真实环境 e2e / 插件市场真实环境 e2e
 ```
 
 > `smoke:e2e` 会短暂弹出应用窗口,并把临时数据放到 `.runtime/`(已 gitignore)。`--no-sandbox` 只用于测试环境(沙箱受限的 CI/容器)。

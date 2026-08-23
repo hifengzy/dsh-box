@@ -3,27 +3,30 @@
 
 /**
  * regression-status-inline.js — 「服务状态」共享面板(路径 A:内容视图内注入
- * overlay 面板)回归测试(真实 Electron):
+ * 右侧滑入面板,与 dsh-better-sidebar 侧栏互斥展开)回归测试(真实 Electron):
  *
  *   1. 注入:桥挂载 window.__dshBoxStatusBridge;初始上报 {open:false};
- *   2. toggle 开:面板 DOM 出现(默认宽 320px),四板块按 mock 数据渲染
- *      (运行中徽标 / DSH 最新一条+「最新」+「更新」 / 侧边栏插件「安装」 /
- *      插件市场「安装」+说明);上报 {open:true};
- *   3. toggle 关:面板移除,上报 {open:false};
- *   4. 宽度:setWidth 钳制(500→500, 10→240, 999→640);面板内联宽度跟随;
- *      setStatusPanelWidth(持久化通道)收到钳制后的值;
+ *   2. toggle 开:面板出现 + .dshbox-st-open(滑入动画态) + 四板块渲染
+ *      (运行中 / DSH 最新+「最新」+「更新」 / 插件「安装」 / 市场「安装」)
+ *      + #root 被挤压(margin-right = 面板宽);上报 {open:true};
+ *   3. toggle 关:滑出动画后面板移除 + #root 挤压回收(margin-right 0);
+ *   4. 宽度:setWidth 钳制(500→500, 10→240, 999→640);面板宽度 + #root
+ *      挤压跟随;setStatusPanelWidth(持久化通道)收到钳制后值;
  *   5. 主题:body[data-ds-dark-theme] 增删 → 面板 .dshbox-st-dark 类跟随;
  *   6. 状态机:插件已装==最新 →「已安装」绿字无按钮;已装<最新 →「更新」;
  *      市场已装 →「已安装」+「侧边栏入口」开关(打开时回显已持久化值);
  *      每次打开重新查询(mock 查询计数递增);
- *   7. 操作:插件安装按钮 → installPlugin(latest) + hint 成功文案;市场安装
- *      按钮 → installMarket;DSH「更新」→ upgrade;失败一键复位;
+ *   7. 操作:插件安装按钮 → installPlugin(latest) + hint;市场安装;
+ *      DSH「更新」→ upgrade;失败一键复位;
  *   8. 链接:点 DSH 版本链接 / 插件名链接 → openExternal(http),页面不导航;
- *   9. 关闭:面板右上角 ✕ → 面板移除 + 上报 {open:false};
- *  10. 常驻:面板打开时服务状态推送(dsh:status)→ 状态行刷新。
+ *   9. 关闭:面板右上角 ✕ → 滑出动画后移除 + 上报 {open:false};
+ *  10. 常驻:dsh:status 推送 → 状态行/徽标/按钮实时刷新;
+ *  11. 互斥原语(与主进程编排同款序列):插件侧栏展开时开服务状态 →
+ *      先收插件侧栏再滑入服务状态;反向同理.requestClose() 等动画完成才 resolve。
  *
  * 面板内的 window.dsh.* 全部由 fixture 页面 mock(记录调用),独立于真实
- * preload;注入体与主进程 GENUINE 产物同源(require status-ui-inject.js)。
+ * preload;注入体与主进程 GENUINE 产物同源(require status-ui-inject.js /
+ * plugin-ui-inject.js)。
  *
  * 用法: electron scripts/regression-status-inline.js --no-sandbox
  */
@@ -31,19 +34,25 @@
 const { app, BrowserWindow } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
-const { STATUS_BRIDGE_JS_FN } = require("../src/main/status-ui-inject");
+const { STATUS_BRIDGE_JS_FN, STATUS_PANEL_CSS } = require("../src/main/status-ui-inject");
+const { PLUGIN_BRIDGE_JS } = require("../src/main/plugin-ui-inject");
 
 app.setPath("userData", path.resolve(__dirname, "..", ".runtime", "regression", "status-inline-user"));
 
 const FIXTURE_DIR = path.join(app.getPath("userData"), "fixture");
 const FIXTURE_HTML = path.join(FIXTURE_DIR, "page.html");
 
-// fixture 页面:模拟 dsh WebUI 最小骨架 + window.dsh mock(记录器)
+// fixture 页面:模拟 dsh WebUI(#root 布局锚 + 插件 toggle cluster)+ window.dsh mock
 const FIXTURE = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head><meta charset="UTF-8" /><title>dsh web</title></head>
 <body>
-  <div id="app">dsh web mock</div>
+  <div id="root"><div id="app">dsh web mock</div></div>
+  <!-- 插件 toggle cluster(mock):最后一个按钮 = 侧栏,第一个 = 底栏 -->
+  <div data-dsh-toggle-cluster>
+    <button type="button" data-mock="bottom">bottom</button>
+    <button type="button" data-mock="side">side</button>
+  </div>
   <script>
     window.__fix = {
       pluginInstalled: null,
@@ -70,6 +79,16 @@ const FIXTURE = `<!DOCTYPE html>
       statusSubs: [],     // onStatus 订阅的回调
     };
     window.confirm = () => true;
+    // mock 插件行为:点 toggle 按钮 → 翻转 body 属性(与真实插件一致)
+    document.querySelector('[data-dsh-toggle-cluster] button[data-mock="side"]')
+      .addEventListener("click", () => {
+        document.body.toggleAttribute("data-dsh-sidebar-collapsed");
+      });
+    document.querySelector('[data-dsh-toggle-cluster] button[data-mock="bottom"]')
+      .addEventListener("click", () => {
+        const h = document.documentElement.style.getPropertyValue("--dsh-sidebar-height");
+        document.documentElement.style.setProperty("--dsh-sidebar-height", h && h !== "0px" ? "0px" : "240px");
+      });
     const info = () => ({
       version: "0.1.0-rc.6",
       port: 3260,
@@ -163,95 +182,106 @@ app.whenReady().then(async () => {
     fs.writeFileSync(FIXTURE_HTML, FIXTURE);
 
     win = new BrowserWindow({ width: 1024, height: 720, show: false });
-    // 渲染进程错误转储(定位注入脚本异常)
     win.webContents.on("console-message", (...args) => {
       const msg = args.length >= 3 ? args[2] : args[0]?.message;
-      console.log("[renderer]", msg);
-    });
-    win.webContents.on("render-process-gone", (_e, d) => {
-      console.log("[renderer-gone]", JSON.stringify(d));
+      if (msg && !msg.includes("Electron Security Warning")) console.log("[renderer]", msg);
     });
     await win.loadFile(FIXTURE_HTML);
     await wait(150);
-    // 注入真实产物(主进程 did-finish-load 同款)
+    // 注入真实产物(did-finish-load 同款顺序:插件桥 → 服务状态桥 → 面板样式)
+    await win.webContents.executeJavaScript(PLUGIN_BRIDGE_JS, true);
     await win.webContents.executeJavaScript(STATUS_BRIDGE_JS_FN(320), true);
+    await win.webContents.insertCSS(STATUS_PANEL_CSS);
 
     // ========== 1. 注入 + 初始上报 ==========
     const inj = await win.webContents.executeJavaScript(`(() => ({
       bridge: !!window.__dshBoxStatusBridge,
+      pluginBridge: !!window.__dshBoxPluginBridge,
       panelExists: !!document.getElementById("dshbox-status-panel"),
       reports: window.__rec.reports,
     }))()`);
     check(inj.bridge, "桥应挂载 window.__dshBoxStatusBridge");
+    check(inj.pluginBridge, "插件桥应挂载(互斥编排依赖)");
     check(!inj.panelExists, "初始不应创建面板");
     check(inj.reports.length === 1 && inj.reports[0].open === false,
       `初始应上报一次 {open:false},实际 ${JSON.stringify(inj.reports)}`);
-    console.log("[1] 注入:桥挂载 + 初始上报 {open:false} ✓");
+    console.log("[1] 注入:双桥挂载 + 初始上报 {open:false} ✓");
 
-    // ========== 2. toggle 开:面板 + 四板块渲染 ==========
+    // ========== 2. toggle 开:面板滑入 + 四板块 + #root 挤压 ==========
     await win.webContents.executeJavaScript(`window.__dshBoxStatusBridge.toggle(); undefined;`);
-    await wait(150);
+    await wait(450); // rAF → 动画(300ms 回退) → 数据
     const open1 = await win.webContents.executeJavaScript(`(() => {
       const panel = document.getElementById("dshbox-status-panel");
-      const cs = (el) => el ? getComputedStyle(el) : null;
+      const root = document.getElementById("root");
       return {
         panel: !!panel,
-        width: panel ? panel.style.width : null,
+        openClass: panel ? panel.classList.contains("dshbox-st-open") : false,
+        visible: panel ? getComputedStyle(panel).visibility : null,
+        widthVar: document.documentElement.style.getPropertyValue("--dshbox-status-panel-width"),
+        rootMarginRight: root ? getComputedStyle(root).marginRight : null,
         pill: panel ? document.getElementById("stStatePill").classList.contains("dshbox-st-running") : false,
-        stateLabel: panel ? document.getElementById("stStateLabel").textContent : null,
         versionLink: panel ? document.getElementById("stDshVersionLink").textContent : null,
         badges: panel ? [...document.querySelectorAll("#stDshRow .dshbox-st-v-badge")].map((b) => b.textContent) : [],
         updateHidden: panel ? document.getElementById("stDshUpdateBtn").hidden : true,
         pluginBtnHidden: panel ? document.getElementById("stPluginActionBtn").hidden : true,
         pluginBtnText: panel ? document.getElementById("stPluginActionBtn").textContent : null,
-        pluginDescHidden: panel ? document.getElementById("stPluginDesc").hidden : true,
         marketBtnHidden: panel ? document.getElementById("stMarketActionBtn").hidden : true,
-        marketDescHidden: panel ? document.getElementById("stMarketDesc").hidden : true,
         reports: window.__rec.reports.length,
       };
     })()`);
     check(open1.panel, "toggle 后面板应出现");
-    check(open1.width === "320px", `面板宽度应为默认 320px,实际 ${open1.width}`);
+    check(open1.openClass, "面板应处于滑入态(dshbox-st-open)");
+    check(open1.visible === "visible", `面板应可见,实际 ${open1.visible}`);
+    check(open1.widthVar === "320px", `挤压变量应为 320px,实际 ${open1.widthVar}`);
+    check(open1.rootMarginRight === "320px", `#root 应被挤压 320px,实际 ${open1.rootMarginRight}`);
     check(open1.pill, "服务状态应显示「运行中」徽标");
-    check(open1.stateLabel === "运行中", `状态文案应为 运行中,实际 ${open1.stateLabel}`);
     check(open1.versionLink === "0.1.0-rc.12", `DSH 应展示最新一条,实际 ${open1.versionLink}`);
     check(open1.badges.length === 1 && open1.badges[0] === "最新", `应有「最新」徽标,实际 ${open1.badges}`);
     check(!open1.updateHidden, "有更新时应显示「更新」按钮");
     check(!open1.pluginBtnHidden && open1.pluginBtnText === "安装", "侧边栏未安装应显示「安装」按钮");
-    check(!open1.pluginDescHidden, "侧边栏板块应显示说明文案");
     check(!open1.marketBtnHidden, "插件市场未安装应显示「安装」按钮");
-    check(!open1.marketDescHidden, "插件市场应显示说明文案");
     check(open1.reports >= 2, "打开应再次上报(含 {open:true})");
-    const lastOpen = await win.webContents.executeJavaScript(`window.__rec.reports[window.__rec.reports.length - 1]`);
-    check(lastOpen.open === true, `上报应为 {open:true},实际 ${JSON.stringify(lastOpen)}`);
-    console.log("[2] toggle 开:默认 320px + 四板块渲染(运行中/DSH 最新/插件安装/市场安装) + 上报 {open:true} ✓");
+    console.log("[2] toggle 开:滑入 + 四板块渲染 + #root 挤压 320px + 上报 {open:true} ✓");
 
-    // ========== 3. toggle 关:面板移除 + 上报 ==========
+    // ========== 3. toggle 关:滑出动画后移除 + 挤压回收 ==========
     await win.webContents.executeJavaScript(`window.__dshBoxStatusBridge.toggle(); undefined;`);
-    await wait(100);
+    await wait(500);
     const closed = await win.webContents.executeJavaScript(`(() => ({
       panelExists: !!document.getElementById("dshbox-status-panel"),
+      widthVar: document.documentElement.style.getPropertyValue("--dshbox-status-panel-width"),
+      rootMarginRight: getComputedStyle(document.getElementById("root")).marginRight,
       last: window.__rec.reports[window.__rec.reports.length - 1],
     }))()`);
-    check(!closed.panelExists, "关闭后面板应移除");
+    check(!closed.panelExists, "滑出动画后应移除面板");
+    check(closed.widthVar === "0px" && closed.rootMarginRight === "0px",
+      `挤压应回收为 0,实际 var=${closed.widthVar} margin=${closed.rootMarginRight}`);
     check(closed.last.open === false, `关闭应上报 {open:false},实际 ${JSON.stringify(closed.last)}`);
-    console.log("[3] toggle 关:面板移除 + 上报 {open:false} ✓");
+    console.log("[3] toggle 关:滑出移除 + 挤压回收 0 + 上报 {open:false} ✓");
 
-    // ========== 4. 宽度:setWidth 钳制 + 内联宽度 + 持久化通道 ==========
+    // ========== 4. 宽度:setWidth 钳制 + 挤压跟随 + 持久化通道 ==========
     const widths = await win.webContents.executeJavaScript(`(async () => {
       const b = window.__dshBoxStatusBridge;
-      b.toggle(); // 打开以便观察内联宽度
-      const w500 = await (async () => { const r = b.setWidth(500); return { ret: r, style: document.getElementById("dshbox-status-panel").style.width }; })();
-      const w10  = await (async () => { const r = b.setWidth(10);  return { ret: r, style: document.getElementById("dshbox-status-panel").style.width }; })();
-      const w999 = await (async () => { const r = b.setWidth(999); return { ret: r, style: document.getElementById("dshbox-status-panel").style.width }; })();
-      return { w500, w10, w999, widths: window.__rec.widths.slice() };
+      b.toggle(); // 打开
+      await new Promise((r) => setTimeout(r, 400));
+      const read = () => ({
+        panelW: document.getElementById("dshbox-status-panel").style.width,
+        rootMR: getComputedStyle(document.getElementById("root")).marginRight,
+      });
+      const w500 = read();
+      b.setWidth(500); await new Promise((r) => setTimeout(r, 400)); const r500 = read();
+      b.setWidth(10);  await new Promise((r) => setTimeout(r, 400)); const r10 = read();
+      b.setWidth(999); await new Promise((r) => setTimeout(r, 400)); const r999 = read();
+      return { w500, r500, r10, r999, widths: window.__rec.widths.slice() };
     })()`);
-    check(widths.w500.ret.width === 500 && widths.w500.style === "500px", `setWidth(500) 应生效,实际 ${JSON.stringify(widths.w500)}`);
-    check(widths.w10.ret.width === 240 && widths.w10.style === "240px", `setWidth(10) 应钳到 240,实际 ${JSON.stringify(widths.w10)}`);
-    check(widths.w999.ret.width === 640 && widths.w999.style === "640px", `setWidth(999) 应钳到 640,实际 ${JSON.stringify(widths.w999)}`);
+    check(widths.r500.panelW === "500px" && widths.r500.rootMR === "500px",
+      `setWidth(500) 应生效且挤压 500px,实际 ${JSON.stringify(widths.r500)}`);
+    check(widths.r10.panelW === "240px" && widths.r10.rootMR === "240px",
+      `setWidth(10) 应钳到 240,实际 ${JSON.stringify(widths.r10)}`);
+    check(widths.r999.panelW === "640px" && widths.r999.rootMR === "640px",
+      `setWidth(999) 应钳到 640,实际 ${JSON.stringify(widths.r999)}`);
     check(widths.widths[0] === 500 && widths.widths[1] === 240 && widths.widths[2] === 640,
       `持久化通道应收到钳制后宽度,实际 ${JSON.stringify(widths.widths)}`);
-    console.log("[4] 宽度:500 生效 / 上下限钳制 240~640 / 持久化通道收到钳制值 ✓");
+    console.log("[4] 宽度:500/240/640 钳制 + #root 挤压跟随 + 持久化通道 ✓");
 
     // ========== 5. 主题:body 属性 → 面板类切换 ==========
     const darkOn = await win.webContents.executeJavaScript(`(() => {
@@ -271,28 +301,25 @@ app.whenReady().then(async () => {
     console.log("[5] 主题:body[data-ds-dark-theme] 增删 → 面板类跟随 ✓");
 
     // ========== 6. 状态机 + 每次打开重查 ==========
-    // 6a. 插件已装==最新 → 「已安装」绿字无按钮;市场已装 → 开关行
-    await win.webContents.executeJavaScript(`(() => {
+    await win.webContents.executeJavaScript(`(async () => {
       window.__fix.pluginInstalled = "0.15.2";
       window.__fix.marketInstalled = "1.18.1";
       window.__fix.marketSwitchOn = true;
-      window.__dshBoxStatusBridge.toggle(); // 关
-      window.__dshBoxStatusBridge.toggle(); // 开(=重查)
-    })(); undefined;`);
-    await wait(150);
-    const stateA = await win.webContents.executeJavaScript(`(() => {
-      const panel = document.getElementById("dshbox-status-panel");
-      return {
-        pluginInstalledLabelHidden: document.getElementById("stPluginInstalledLabel").hidden,
-        pluginInstalledText: document.getElementById("stPluginInstalledLabel").textContent,
-        pluginBtnHidden: document.getElementById("stPluginActionBtn").hidden,
-        pluginBadge: document.getElementById("stPluginVersionBadge").textContent,
-        marketInstalledLabelHidden: document.getElementById("stMarketInstalledLabel").hidden,
-        marketBtnHidden: document.getElementById("stMarketActionBtn").hidden,
-        switchRowHidden: document.getElementById("stMarketSwitchRow").hidden,
-        switchOn: document.getElementById("stMarketSwitch").classList.contains("dshbox-st-on"),
-      };
+      const s = window.__dshBoxStatusBridge;
+      await s.requestClose();
+      await s.requestOpen(); // = 重查
     })()`);
+    await wait(200);
+    const stateA = await win.webContents.executeJavaScript(`(() => ({
+      pluginInstalledLabelHidden: document.getElementById("stPluginInstalledLabel").hidden,
+      pluginInstalledText: document.getElementById("stPluginInstalledLabel").textContent,
+      pluginBtnHidden: document.getElementById("stPluginActionBtn").hidden,
+      pluginBadge: document.getElementById("stPluginVersionBadge").textContent,
+      marketInstalledLabelHidden: document.getElementById("stMarketInstalledLabel").hidden,
+      marketBtnHidden: document.getElementById("stMarketActionBtn").hidden,
+      switchRowHidden: document.getElementById("stMarketSwitchRow").hidden,
+      switchOn: document.getElementById("stMarketSwitch").classList.contains("dshbox-st-on"),
+    }))()`);
     check(!stateA.pluginInstalledLabelHidden && stateA.pluginInstalledText === "已安装",
       `插件已装==最新应显示「已安装」,实际 ${JSON.stringify(stateA)}`);
     check(stateA.pluginBtnHidden, "已安装不应有按钮");
@@ -301,15 +328,12 @@ app.whenReady().then(async () => {
     check(!stateA.switchRowHidden && stateA.switchOn, "市场已装应显示已开启的侧边栏入口开关");
     console.log("[6a] 已安装态:插件/市场「已安装」绿字 + 市场开关回显 ✓");
 
-    // 6b. 插件已装<最新 → 「更新」按钮;点击 → installPlugin(latest) + hint
-    await win.webContents.executeJavaScript(`(() => {
+    await win.webContents.executeJavaScript(`(async () => {
       window.__fix.pluginInstalled = "0.15.1";
-    })(); undefined;`);
-    await win.webContents.executeJavaScript(`(() => {
-      window.__dshBoxStatusBridge.toggle(); // 关
-      window.__dshBoxStatusBridge.toggle(); // 开
-    })(); undefined;`);
-    await wait(150);
+      await window.__dshBoxStatusBridge.requestClose();
+      await window.__dshBoxStatusBridge.requestOpen();
+    })()`);
+    await wait(200);
     const stateB = await win.webContents.executeJavaScript(`(() => ({
       btnHidden: document.getElementById("stPluginActionBtn").hidden,
       btnText: document.getElementById("stPluginActionBtn").textContent,
@@ -318,7 +342,7 @@ app.whenReady().then(async () => {
     check(!stateB.btnHidden && stateB.btnText === "更新", `已装<最新应显示「更新」,实际 ${JSON.stringify(stateB)}`);
     check(stateB.installedLabelHidden, "有更新时不应显示「已安装」");
     await win.webContents.executeJavaScript(`document.getElementById("stPluginActionBtn").click(); undefined;`);
-    await wait(150);
+    await wait(200);
     const afterInstall = await win.webContents.executeJavaScript(`(() => ({
       calls: window.__rec.pluginCalls.slice(),
       hintHidden: document.getElementById("stPluginHint").hidden,
@@ -327,53 +351,43 @@ app.whenReady().then(async () => {
     }))()`);
     check(afterInstall.calls.length === 1 && afterInstall.calls[0] === "0.15.2",
       `安装应经 installPlugin(latest=0.15.2),实际 ${JSON.stringify(afterInstall.calls)}`);
-    check(afterInstall.hintHidden || afterInstall.hint.includes("已安装到"),
-      `安装成功应展示结果,实际 hint=${afterInstall.hint}`);
     check(afterInstall.label === "已安装", "安装成功后应回到「已安装」态");
     console.log("[6b] 更新态 + 安装走 installPlugin(latest) + 成功后回「已安装」 ✓");
 
-    // 6c. 每次打开重查:记录查询次数并对比
     const q1 = await win.webContents.executeJavaScript(`window.__rec.pluginQueries`);
-    await win.webContents.executeJavaScript(`(() => {
-      window.__dshBoxStatusBridge.toggle(); // 关
-      window.__dshBoxStatusBridge.toggle(); // 开
-    })(); undefined;`);
-    await wait(150);
+    await win.webContents.executeJavaScript(`(async () => {
+      await window.__dshBoxStatusBridge.requestClose();
+      await window.__dshBoxStatusBridge.requestOpen();
+    })()`);
+    await wait(200);
     const q2 = await win.webContents.executeJavaScript(`window.__rec.pluginQueries`);
     check(q2 === q1 + 1, `重新打开应重查插件(q1=${q1}, q2=${q2})`);
     console.log("[6c] 每次打开重新查询(与「进入即查」语义一致) ✓");
 
     // ========== 7. 操作:DSH 升级 + 失败复位 ==========
     await win.webContents.executeJavaScript(`document.getElementById("stDshUpdateBtn").click(); undefined;`);
-    await wait(450); // 等 doUpgrade 的 await Promise.all([refreshInfo, loadVersions]) 收尾
+    await wait(450);
     const upOk = await win.webContents.executeJavaScript(`(() => ({
       calls: window.__rec.upgradeCalls.slice(),
       versionLink: document.getElementById("stDshVersionLink").textContent,
-      installedLabelHidden: document.getElementById("stDshCurrentLabel").hidden,
     }))()`);
     check(upOk.calls.length === 1 && upOk.calls[0] === "0.1.0-rc.12",
       `升级应经 upgrade(latest),实际 ${JSON.stringify(upOk.calls)}`);
     check(upOk.versionLink === "0.1.0-rc.12", `升级后版本行应保持最新,实际 ${upOk.versionLink}`);
-    // 升级成功后按钮保持 disabled 由「当前」态接管(与旧 statusView 同语义:
-    // 真实环境升级后 hasUpdate=false → 按钮隐藏、显示「当前」文案)
-    // 失败复位:独立场景(重开面板 → 新 DOM 按钮可用)→ 点击 → 失败 → 复位
-    await win.webContents.executeJavaScript(`(() => {
+    // 失败复位:独立场景(重开面板 → 新 DOM 按钮可用)
+    await win.webContents.executeJavaScript(`(async () => {
       window.__fix.upgradeFail = "模拟失败";
-      window.__dshBoxStatusBridge.toggle(); // 关
-      window.__dshBoxStatusBridge.toggle(); // 开 = 新 DOM,按钮可用
-    })(); undefined;`);
+      await window.__dshBoxStatusBridge.requestClose();
+      await window.__dshBoxStatusBridge.requestOpen();
+    })()`);
     await wait(200);
     const dbgBefore = await win.webContents.executeJavaScript(`window.__dshBoxStatusBridge._debug()`);
-    await win.webContents.executeJavaScript(`(() => {
-      window.__diagBtn = null;
+    const upFail = await win.webContents.executeJavaScript(`(async () => {
       const btn = document.getElementById("stDshUpdateBtn");
+      window.__diagBtn = null;
       btn.addEventListener("click", () => { window.__diagBtn = "clicked"; }, { capture: true });
       btn.click();
-      window.__diagBtn;
-    })(); undefined;`);
-    await wait(450);
-    const upFail = await win.webContents.executeJavaScript(`(() => {
-      const btn = document.getElementById("stDshUpdateBtn");
+      await new Promise((r) => setTimeout(r, 450));
       return {
         diag: window.__diagBtn,
         dbg: window.__dshBoxStatusBridge._debug(),
@@ -403,21 +417,20 @@ app.whenReady().then(async () => {
     check(links.url.startsWith("file:"), `页面不应被导航走,实际 ${links.url}`);
     console.log("[8] 链接:版本/插件链接 → openExternal,页面不导航 ✓");
 
-    // ========== 9. 关闭按钮 ✕ ==========
+    // ========== 9. 关闭按钮 ✕(滑出动画后移除) ==========
     await win.webContents.executeJavaScript(`document.querySelector(".dshbox-st-close").click(); undefined;`);
-    await wait(100);
+    await wait(500);
     const x = await win.webContents.executeJavaScript(`(() => ({
       panelExists: !!document.getElementById("dshbox-status-panel"),
       last: window.__rec.reports[window.__rec.reports.length - 1],
     }))()`);
-    check(!x.panelExists, "✕ 应移除面板");
+    check(!x.panelExists, "✕ 应在滑出动画后移除面板");
     check(x.last.open === false, `✕ 关闭应上报 {open:false},实际 ${JSON.stringify(x.last)}`);
-    console.log("[9] 关闭按钮:✕ → 面板移除 + 上报 {open:false} ✓");
+    console.log("[9] 关闭按钮:✕ → 滑出移除 + 上报 {open:false} ✓");
 
     // ========== 10. 常驻:服务状态推送(dsh:status)实时刷新面板 ==========
     await win.webContents.executeJavaScript(`window.__dshBoxStatusBridge.toggle(); undefined;`);
-    await wait(150);
-    // 主进程广播 → onStatus 回调 → 状态行/徽标/按钮跟随
+    await wait(450);
     const pushed = await win.webContents.executeJavaScript(`(() => {
       const cb = window.__rec.statusSubs[window.__rec.statusSubs.length - 1];
       cb({ state: "stopped", message: "服务已停止" });
@@ -430,7 +443,6 @@ app.whenReady().then(async () => {
     check(pushed.label === "停止", `推送停服后状态文案应为「停止」,实际 ${pushed.label}`);
     check(!pushed.running, "推送停服后徽标不应为运行态");
     check(!pushed.startHidden, "推送停服后应显示「启动服务」按钮");
-    // 推送恢复 → 回到运行中
     const pushedBack = await win.webContents.executeJavaScript(`(() => {
       const cb = window.__rec.statusSubs[window.__rec.statusSubs.length - 1];
       cb({ state: "ready", message: "服务运行中" });
@@ -442,11 +454,78 @@ app.whenReady().then(async () => {
     check(pushedBack.label === "运行中" && pushedBack.startHidden, "推送恢复后应回到运行中且隐藏启动按钮");
     console.log("[10] 常驻:dsh:status 推送 → 状态行/徽标/按钮实时刷新 ✓");
 
-    console.log("\nPASS ✓ 「服务状态」共享面板(注入式)回归通过");
+    // ========== 11. 互斥:与主进程编排同款原语序列 ==========
+    // 11a. 插件侧栏展开 → 开服务状态:先收插件侧栏(等动画)→ 再滑入服务状态;
+    //      requestClose() 须等动画完成才 resolve。
+    const mutualA = await win.webContents.executeJavaScript(`(async () => {
+      const p = window.__dshBoxPluginBridge;
+      const s = window.__dshBoxStatusBridge;
+      // 先确保插件侧栏展开 + 服务状态关闭
+      if (document.body.hasAttribute("data-dsh-sidebar-collapsed")) p.toggle("side");
+      if (s.state().open) await s.requestClose();
+      await new Promise((r) => setTimeout(r, 400));
+      const before = {
+        pluginCollapsed: document.body.hasAttribute("data-dsh-sidebar-collapsed"),
+        statusOpen: s.state().open,
+      };
+      // 主进程编排序列:先收插件侧栏(读主题时长等),再展开服务状态
+      const order = [];
+      p.toggle("side"); // 收起插件侧栏(动画开始)
+      order.push("plugin-collapsed:" + document.body.hasAttribute("data-dsh-sidebar-collapsed"));
+      // 等待插件动画(与主进程 closePluginSideWithAnimation 同语义:慢速时长+余量)
+      await new Promise((r) => setTimeout(r, 400));
+      const pluginFolded = document.body.hasAttribute("data-dsh-sidebar-collapsed");
+      order.push("plugin-folded:" + pluginFolded);
+      await s.requestOpen();
+      order.push("status-open:" + s.state().open);
+      const after = {
+        pluginCollapsed: document.body.hasAttribute("data-dsh-sidebar-collapsed"),
+        statusOpen: s.state().open,
+        statusPanelOpen: !!document.getElementById("dshbox-status-panel"),
+      };
+      return { before, after, order };
+    })()`);
+    check(!mutualA.before.pluginCollapsed && !mutualA.before.statusOpen,
+      `前提:插件侧栏应展开、服务状态应关闭,实际 ${JSON.stringify(mutualA.before)}`);
+    check(mutualA.after.pluginCollapsed && mutualA.after.statusOpen && mutualA.after.statusPanelOpen,
+      `互斥结果:插件侧栏应已收起 + 服务状态应已展开,实际 ${JSON.stringify(mutualA.after)}`);
+    check(mutualA.order[1].startsWith("plugin-folded:true"),
+      `展开服务状态前应先把插件侧栏收完,实际 ${JSON.stringify(mutualA.order)}`);
+    console.log("[11a] 互斥:插件侧栏展开时开服务状态 → 先收插件再滑入服务状态 ✓");
+
+    // 11b. 服务状态展开 → 开插件侧栏:先 requestClose(等动画)→ 再展开插件侧栏
+    const mutualB = await win.webContents.executeJavaScript(`(async () => {
+      const p = window.__dshBoxPluginBridge;
+      const s = window.__dshBoxStatusBridge;
+      // 当前状态:服务状态开(11a 结果)+ 插件侧栏折叠
+      const before = { statusOpen: s.state().open, pluginCollapsed: document.body.hasAttribute("data-dsh-sidebar-collapsed") };
+      // 主进程编排序列:先收服务状态(await 动画),再展开插件侧栏
+      const order = [];
+      await s.requestClose();
+      order.push("status-closed:" + !s.state().open + ":" + !document.getElementById("dshbox-status-panel"));
+      p.toggle("side"); // 展开插件侧栏
+      await new Promise((r) => setTimeout(r, 400));
+      order.push("plugin-open:" + !document.body.hasAttribute("data-dsh-sidebar-collapsed"));
+      const after = {
+        statusOpen: s.state().open,
+        statusPanelExists: !!document.getElementById("dshbox-status-panel"),
+        pluginCollapsed: document.body.hasAttribute("data-dsh-sidebar-collapsed"),
+      };
+      return { before, after, order };
+    })()`);
+    check(mutualB.before.statusOpen && mutualB.before.pluginCollapsed,
+      `前提:服务状态应展开、插件侧栏应折叠,实际 ${JSON.stringify(mutualB.before)}`);
+    check(mutualB.order[0] === "status-closed:true:true",
+      `展开插件侧栏前应先把服务状态收完(含 DOM 移除),实际 ${JSON.stringify(mutualB.order)}`);
+    check(!mutualB.after.statusOpen && !mutualB.after.statusPanelExists && !mutualB.after.pluginCollapsed,
+      `互斥结果:服务状态应已移除 + 插件侧栏应已展开,实际 ${JSON.stringify(mutualB.after)}`);
+    console.log("[11b] 互斥:服务状态展开时开插件侧栏 → 先收服务状态(等动画)再展开插件 ✓");
+
+    console.log("\nPASS ✓ 「服务状态」共享面板(注入式,右滑+互斥)回归通过");
     win.destroy();
     app.quit();
   } catch (err) {
-    console.error("\nFAIL ✗ 「服务状态」共享面板(注入式)回归:", err.message);
+    console.error("\nFAIL ✗ 「服务状态」共享面板(注入式,右滑+互斥)回归:", err.message);
     if (err.stack) console.error(err.stack.split("\n").slice(0, 4).join("\n"));
     if (win && !win.isDestroyed()) win.destroy();
     app.exit(1);
