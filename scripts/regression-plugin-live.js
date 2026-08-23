@@ -165,11 +165,53 @@ app.whenReady().then(async () => {
     const hideState = await win.webContents.executeJavaScript(`(() => {
       const cluster = document.querySelector('[data-dsh-toggle-cluster]');
       const cs = getComputedStyle(cluster);
-      return { visibility: cs.visibility, opacity: cs.opacity, pointerEvents: cs.pointerEvents };
+      return { display: cs.display, visibility: cs.visibility, opacity: cs.opacity, pointerEvents: cs.pointerEvents };
     })()`);
-    if (hideState.visibility !== "hidden" || hideState.pointerEvents !== "none")
-      throw new Error(`隐藏规则未生效: ${JSON.stringify(hideState)}`);
-    console.log("[2] 原入口隐藏(visibility:hidden, 保留空位) ✓");
+    if (hideState.display !== "none")
+      throw new Error(`隐藏规则未生效(应 display:none): ${JSON.stringify(hideState)}`);
+    // 折叠态页头占位回收:插件为 cluster 预留的 78px 右 padding 与 cluster
+    // 显隐无关(由 body[data-dsh-sidebar-collapsed] 驱动),我们注入覆盖把
+    // 页头恢复为默认 28px。真实会话无法在自动化中创建,这里注入一个符合
+    // 插件选择器结构的会话页头,并手动置折叠属性来验证覆盖命中。
+    await win.webContents.executeJavaScript(`(() => {
+      let slot = document.querySelector('[data-slot="conversation.session.header"]');
+      if (!slot) {
+        slot = document.createElement('div');
+        slot.setAttribute('data-slot', 'conversation.session.header');
+        slot.style.display = 'contents';
+        document.body.appendChild(slot);
+      }
+      if (!slot.querySelector('header')) {
+        slot.insertAdjacentHTML('beforeend', '<header class="mock-header">会话标题 mock</header>');
+      }
+      return true;
+    })()`);
+    // 折叠态(手动置属性,等价插件面板折叠)→ 页头应回收为 28px
+    await win.webContents.executeJavaScript(`document.body.setAttribute('data-dsh-sidebar-collapsed', ''); undefined;`);
+    await wait(300);
+    const padCollapsed = await win.webContents.executeJavaScript(`(() => {
+      const h = document.querySelector('[data-slot="conversation.session.header"] > header');
+      return h ? getComputedStyle(h).paddingRight : null;
+    })()`);
+    if (padCollapsed !== "28px") {
+      const dbg = await win.webContents.executeJavaScript(`(() => {
+        const slot = document.querySelector('[data-slot="conversation.session.header"]');
+        return { slotExists: !!slot, slotHTML: slot ? slot.outerHTML.slice(0, 160) : null, headCount: document.querySelectorAll('header').length };
+      })()`);
+      console.error("[dbg] header:", JSON.stringify(dbg));
+      throw new Error(`折叠态页头应回收为默认 28px 右间距,实际 ${padCollapsed}`);
+    }
+    // 非折叠态 → 恢复插件原 78px(覆盖只在折叠态生效,不误伤展开态)
+    await win.webContents.executeJavaScript(`document.body.removeAttribute('data-dsh-sidebar-collapsed'); undefined;`);
+    await wait(300);
+    const padExpanded = await win.webContents.executeJavaScript(`(() => {
+      const h = document.querySelector('[data-slot="conversation.session.header"] > header');
+      return h ? getComputedStyle(h).paddingRight : null;
+    })()`);
+    if (padExpanded === "28px")
+      throw new Error(`展开态覆盖不应生效(插件原 78px 或默认 0px),实际 ${padExpanded}`);
+
+    console.log("[2] 原入口彻底隐藏(display:none)+ 折叠态页头 78px 占位回收为 28px ✓");
 
     // ---------- 4c. 状态信号与上报 ----------
     const st0 = await win.webContents.executeJavaScript(

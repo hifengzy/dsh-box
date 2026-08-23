@@ -89,10 +89,18 @@ const PLUGIN_BRIDGE_JS = `
 `;
 
 const PLUGIN_HIDE_CSS = `
+/* 隐藏插件自带的右上角两个 toggle 入口(侧栏/底栏切换按钮)。
+ * display:none 彻底移除(不保留占位);按钮仍在 DOM 中,桥的 toggle 用
+ * .click() 触发不受影响(事件派发不依赖可见性)。
+ * 同时回收「折叠态页头」的占位:插件为 cluster 预留的 78px 右 padding
+ * 与 cluster 显隐无关,折叠态下把页头恢复为默认 28px 右间距。
+ * (面板打开时 tab strip 的 72px 由插件哈希类控制,无法回收——保持原样。)
+ */
 [data-dsh-toggle-cluster] {
-  visibility: hidden !important;
-  opacity: 0 !important;
-  pointer-events: none !important;
+  display: none !important;
+}
+body[data-dsh-sidebar-collapsed] [data-slot="conversation.session.header"] > header {
+  padding-right: 28px !important;
 }
 `;
 
