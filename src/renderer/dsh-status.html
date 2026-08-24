@@ -6,54 +6,205 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'none'; img-src 'self' data:"
     />
-    <title>dsh 服务与版本</title>
+    <title>服务状态</title>
     <link rel="stylesheet" href="./dsh-status.css" />
   </head>
   <body>
-    <!-- 面板头部:位于窗口顶栏下方的面板顶部;不开/关按钮,开关由顶栏状态按钮控制 -->
-    <header class="panel-header">
-      <span class="panel-title">dsh 服务与版本</span>
-      <div class="header-right">
-        <span class="last-check" id="lastCheck"></span>
-        <button class="btn btn-ghost" id="refreshBtn" type="button">刷新</button>
-      </div>
-    </header>
-
+    <!--
+      服务状态面板(右侧内置,开关由顶栏状态按钮/菜单控制,自身无关闭按钮)。
+      布局参考设计稿 demo/0.2.0(未安装 / 已装-有更新 / 已装-无更新 三态),
+      板块顺序:服务状态 → DSH → 通知 → 插件市场 → 侧边栏:
+        [服务状态]
+          DSH 0.1.0-rc.6...        [● 运行中] (+启动服务, 停止时)
+          端口 3260 · PID 33990
+        ──────────────
+        [DSH]
+          0.1.0-rc.8 [最新]              [更新 / 当前]
+          2026-08-19
+        ──────────────
+        [通知]
+          允许 DSH 在任务完成、失败和等待审批时向你推送消息提醒…
+          [横幅]                    (开关)
+          [声音]                    (开关)
+        ──────────────
+        [插件市场]
+          dsh-market [1.18.1]            [安装 / 更新 / 已安装]
+          浏览、搜索、安装、更新、卸载社区插件。
+          [在 DSH 侧边栏显示插件市场入口]
+        ──────────────
+        [侧边栏]
+          dsh-better-sidebar [0.15.2]    [安装 / 更新 / 已安装]
+          支持文件渲染编辑、终端、Git、子代理、子会话,以及第三方插件注册为新 Tab。
+    -->
     <main class="content">
-      <!-- 当前服务卡 -->
-      <section class="card">
-        <div class="status-row">
-          <span class="dot" id="statusDot"></span>
-          <span class="status-label" id="statusLabel"></span>
-          <span class="chip" id="versionChip"></span>
+      <!-- ---------- 服务状态 ---------- -->
+      <section class="section" id="serviceSection">
+        <h1 class="section-title">服务状态</h1>
+        <!-- 骨架屏:getInfo 进行中占位,数据到达即被 status-info 替换 -->
+        <div class="skeleton" id="skService">
+          <div class="sk-row"><span class="sk sk-w-xl"></span><span class="sk sk-h-pill sk-w-sm"></span></div>
+          <div class="sk-row"><span class="sk sk-w-md"></span></div>
         </div>
-        <div class="meta" id="metaLine"></div>
-        <div class="meta mono" id="homeLine"></div>
-        <div class="meta mono" id="logLine"></div>
-        <div class="error-box" id="errorBox" hidden>
-          <div class="error-title">启动失败原因</div>
-          <pre class="error-detail" id="errorDetail"></pre>
+        <div class="status-info" id="statusInfo" hidden>
+          <div class="status-text">
+            <div class="version-line" id="versionLine" title="">DSH 1.0.0</div>
+            <div class="meta-line" id="metaLine">端口 - · PID -</div>
+          </div>
+          <div class="status-side">
+            <span class="state-pill" id="statePill">
+              <span class="state-dot" id="stateDot"></span>
+              <span class="state-label" id="stateLabel">运行中</span>
+            </span>
+            <button class="btn btn-primary" id="startBtn" type="button" hidden>启动服务</button>
+          </div>
         </div>
-        <div class="actions-row">
-          <button class="btn btn-primary" id="startBtn" hidden>启动服务</button>
-          <button class="btn" id="stopBtn" hidden>停止服务</button>
-          <button class="btn" id="restartBtn" hidden>重启服务</button>
-          <span class="hint" id="serviceHint"></span>
-        </div>
+        <div class="hint-line" id="serviceHint" hidden></div>
       </section>
 
-      <!-- 版本列表卡 -->
-      <section class="card">
-        <div class="card-title-row">
-          <h2>版本列表</h2>
-          <span class="source">npm registry</span>
+      <!-- ---------- DSH(最新一条版本) ---------- -->
+      <section class="section" id="dshSection">
+        <h1 class="section-title">DSH</h1>
+
+        <!-- 骨架屏:checkUpdates 进行中占位 -->
+        <div class="skeleton" id="skDsh">
+          <div class="sk-row"><span class="sk sk-w-md"></span><span class="sk sk-h-pill sk-w-sm"></span><span class="sk sk-h-btn sk-w-sm"></span></div>
+          <div class="sk-row"><span class="sk sk-w-sm"></span></div>
         </div>
-        <div class="banner" id="updateBanner" hidden>
-          <span>发现新版本</span><span class="banner-version" id="bannerVersion"></span>
+
+        <!-- 正常运行:版本链接 + 最新徽标 + 更新按钮/当前文案 -->
+        <div class="row-line" id="dshRow" hidden>
+          <a
+            class="row-link"
+            id="dshVersionLink"
+            href="https://github.com/deepseek-ai/deepseek-harness/"
+            target="_blank"
+            rel="noreferrer"
+            title="0.1.0-rc.8"
+          >0.1.0-rc.8</a>
+          <span class="v-badge">最新</span>
+          <button class="btn btn-primary v-update" id="dshUpdateBtn" type="button" hidden>更新</button>
+          <span class="state-current" id="dshCurrentLabel" hidden>当前</span>
         </div>
-        <div class="offline" id="offlineNote" hidden></div>
-        <div class="version-table" id="versionList"></div>
-        <div class="hint" id="upgradeHint"></div>
+        <div class="v-date" id="dshDate" hidden>2026-08-19</div>
+
+        <!-- 查询失败:错误文案 + 重试 -->
+        <div class="version-error" id="dshError" hidden>
+          <p class="error-text">网络服务异常</p>
+          <button class="btn btn-outline" id="dshRetryBtn" type="button">重试</button>
+        </div>
+
+        <!-- 缓存回退提示(网络失败但展示上次缓存) -->
+        <div class="cache-note" id="dshCacheNote" hidden>网络异常,以下为上次缓存结果</div>
+
+        <div class="hint-line" id="upgradeHint" hidden></div>
+      </section>
+
+      <!-- ---------- 通知(横幅 / 声音)---------- -->
+      <section class="section" id="notifySection">
+        <h1 class="section-title">通知</h1>
+        <p class="plugin-desc">允许 DSH 在任务完成、失败和等待审批时向你推送消息提醒。请在 Mac 系统设置 &gt; 通知中开启</p>
+        <!-- 骨架屏:getNotificationSettings 进行中占位,到达后开关行替换 -->
+        <div class="skeleton" id="skNotify">
+          <div class="sk-row"><span class="sk sk-w-sm"></span><span class="sk sk-h-switch"></span></div>
+          <div class="sk-row"><span class="sk sk-w-sm"></span><span class="sk sk-h-switch"></span></div>
+        </div>
+        <label class="switch-row" hidden>
+          <span class="switch-label">横幅</span>
+          <span class="switch" id="notifyBanner" role="switch" aria-checked="false" tabindex="0">
+            <span class="switch-knob"></span>
+          </span>
+        </label>
+        <label class="switch-row" hidden>
+          <span class="switch-label">声音</span>
+          <span class="switch" id="notifySound" role="switch" aria-checked="false" tabindex="0">
+            <span class="switch-knob"></span>
+          </span>
+        </label>
+        <div class="hint-line" id="notifyHint" hidden></div>
+      </section>
+
+      <!-- ---------- 插件市场(dsh-market) ---------- -->
+      <section class="section" id="marketSection">
+        <h1 class="section-title">插件市场</h1>
+
+        <!-- 骨架屏:getMarketInfo 进行中占位 -->
+        <div class="skeleton" id="skMarket">
+          <div class="sk-row"><span class="sk sk-w-md"></span><span class="sk sk-h-pill sk-w-sm"></span><span class="sk sk-h-btn sk-w-sm"></span></div>
+          <div class="sk-row"><span class="sk sk-w-full"></span></div>
+        </div>
+
+        <!-- 正常:名称(链接)+ 版本徽标 + 安装/更新按钮或已安装文案 -->
+        <div class="row-line" id="marketRow" hidden>
+          <a
+            class="row-link"
+            id="marketName"
+            href="https://github.com/dsh-market/dsh-market"
+            target="_blank"
+            rel="noreferrer"
+            title="dsh-market"
+          >dsh-market</a>
+          <span class="v-badge" id="marketVersionBadge">0.15.2</span>
+          <button class="btn btn-primary plugin-action" id="marketActionBtn" type="button" hidden>安装</button>
+          <span class="state-current" id="marketInstalledLabel" hidden>已安装</span>
+        </div>
+
+        <!-- 说明文案:未安装时显示 -->
+        <p class="plugin-desc" id="marketDesc" hidden>
+          浏览、搜索、安装、更新、卸载社区插件。
+        </p>
+
+        <!-- 开关行:已安装后显示,控制侧边栏「插件」入口 -->
+        <label class="switch-row" id="marketSwitchRow" hidden>
+          <span class="switch-label">在 DSH 侧边栏显示插件市场入口</span>
+          <span class="switch" id="marketSwitch" role="switch" aria-checked="false" tabindex="0">
+            <span class="switch-knob"></span>
+          </span>
+        </label>
+
+        <!-- 查询失败:错误文案 + 重试 -->
+        <div class="version-error" id="marketError" hidden>
+          <p class="error-text">网络服务异常</p>
+          <button class="btn btn-outline" id="marketRetryBtn" type="button">重试</button>
+        </div>
+
+        <div class="hint-line" id="marketHint" hidden></div>
+      </section>
+
+      <!-- ---------- 侧边栏(dsh-better-sidebar) ---------- -->
+      <section class="section" id="pluginSection">
+        <h1 class="section-title">侧边栏</h1>
+
+        <!-- 骨架屏:getPluginInfo 进行中占位 -->
+        <div class="skeleton" id="skPlugin">
+          <div class="sk-row"><span class="sk sk-w-md"></span><span class="sk sk-h-pill sk-w-sm"></span><span class="sk sk-h-btn sk-w-sm"></span></div>
+          <div class="sk-row"><span class="sk sk-w-full"></span></div>
+        </div>
+
+        <!-- 正常:名称链接 + 版本徽标 + 安装/更新按钮或已安装文案 -->
+        <div class="row-line" id="pluginRow" hidden>
+          <a
+            class="row-link"
+            id="pluginNameLink"
+            href="https://github.com/omdsh-dev/DSH-better-sidebar"
+            target="_blank"
+            rel="noreferrer"
+            title="dsh-better-sidebar"
+          >dsh-better-sidebar</a>
+          <span class="v-badge" id="pluginVersionBadge">0.15.2</span>
+          <button class="btn btn-primary plugin-action" id="pluginActionBtn" type="button" hidden>安装</button>
+          <span class="state-current" id="pluginInstalledLabel" hidden>已安装</span>
+        </div>
+        <p class="plugin-desc" id="pluginDesc" hidden>
+          支持文件渲染编辑、终端、Git、子代理、子会话,以及第三方插件注册为新 Tab。
+        </p>
+
+        <!-- 查询失败:错误文案 + 重试 -->
+        <div class="version-error" id="pluginError" hidden>
+          <p class="error-text">网络服务异常</p>
+          <button class="btn btn-outline" id="pluginRetryBtn" type="button">重试</button>
+        </div>
+
+        <div class="hint-line" id="pluginHint" hidden></div>
       </section>
     </main>
 

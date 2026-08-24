@@ -1,9 +1,13 @@
-/* dsh-status.css — 「dsh 服务与版本」右侧面板,延续 dsh WebUI 的设计体系:
- *   neutral-bluish 中性色 + DeepSeek 品牌蓝 + 状态色,浅色/深色各一套,
- *   经 light-dark() 自适应(nativeTheme 跟随 dsh UI 主题)。
- * 面板特性:竖排窄版(240~380px 宽),不带头部关闭按钮(开关只靠顶栏),
- * 无独立窗口概念(不再为红绿灯留空间、无拖拽区)。
- * 数据来源全部走 IPC(preload 桥),本页不发起任何网络请求。 */
+/* dsh-status.css — 「服务状态 + DSH + 侧边栏」右侧面板。
+ *
+ * 布局与组件样式按设计稿 demo/0.2.0(未安装 / 已装-有更新 / 已装-无更新
+ * 三态),配色走 dsh 原生设计体系(neutral-bluish 中性色 + 反白主按钮),
+ * 浅色/深色各一套,经 light-dark() 自适应(nativeTheme 跟随 dsh UI 主题)。
+ *
+ * 面板特性:竖排窄版(240~480px 宽),状态只有「运行中 / 停止」两态;
+ * DSH 板块只展示最新一条版本(「最新」徽标 + 更新按钮/当前文案);
+ * 侧边栏板块展示插件名称(链接)+ 最新版本徽标 + 安装/更新/已安装 三态。
+ * 开关仍只靠顶栏按钮,面板无关闭钮。 */
 
 :root {
   color-scheme: light dark;
@@ -15,25 +19,29 @@
   --bg: light-dark(rgb(249, 250, 251), rgb(21, 21, 23));
   --surface: light-dark(#ffffff, rgb(27, 27, 28));
   --surface-2: light-dark(rgb(235, 238, 242), rgb(53, 54, 56));
-  --border: light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.08));
-  --border-strong: light-dark(rgba(0, 0, 0, 0.12), rgba(255, 255, 255, 0.16));
+  --border: light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.12));
+  --border-weak: light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.08));
   --text: light-dark(rgb(15, 17, 21), rgb(249, 250, 251));
   --text-secondary: light-dark(rgb(97, 102, 107), rgb(207, 211, 214));
-  --text-muted: light-dark(rgb(151, 157, 166), rgb(129, 133, 140));
+  --text-muted: light-dark(rgb(129, 133, 140), rgb(173, 178, 184));
 
-  /* DeepSeek 品牌蓝 */
+  /* 主操作按钮:反白(浅色近黑底 / 深色近白底),dsh 内部 primary 的同一逻辑 */
+  --primary-fill: light-dark(rgb(15, 17, 21), rgb(249, 250, 251));
+  --primary-fg: light-dark(#ffffff, rgb(15, 17, 21));
+  --primary-hover: light-dark(rgb(67, 69, 74), rgb(235, 238, 242));
+
+  /* DeepSeek 品牌蓝(进行中 / 强调 / 链接) */
   --brand: light-dark(rgb(65, 118, 230), rgb(103, 158, 254));
-  --brand-hover: light-dark(rgb(57, 100, 205), rgb(124, 172, 255));
-  --brand-weak: light-dark(rgba(65, 118, 230, 0.1), rgba(103, 158, 254, 0.16));
 
-  /* 状态色 */
+  /* 状态语义色 */
   --ok: light-dark(rgb(34, 197, 94), rgb(78, 209, 126));
+  --ok-weak: light-dark(rgba(34, 197, 94, 0.1), rgba(78, 209, 126, 0.16));
   --err: light-dark(rgb(236, 19, 19), rgb(242, 90, 90));
   --warn: light-dark(rgb(221, 134, 41), rgb(245, 158, 11));
-  --idle: light-dark(rgb(151, 157, 166), rgb(129, 133, 140));
+  --idle: light-dark(rgb(129, 133, 140), rgb(173, 178, 184));
+  --idle-weak: light-dark(rgba(129, 133, 140, 0.1), rgba(173, 178, 184, 0.16));
 
-  --radius-lg: 10px;
-  --radius-md: 7px;
+  --radius-md: 5px; /* 状态 / 最新 / 版本 徽标 */
 }
 
 * {
@@ -56,206 +64,157 @@ body {
   color: var(--text);
   font-family: var(--font);
   font-size: 12px;
+  line-height: 18px;
   -webkit-font-smoothing: antialiased;
   overflow-y: auto;
-}
-
-/* ---------- 面板头部(窄条:标题 + 检查时间 + 刷新;无关闭按钮) ---------- */
-.panel-header {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 10px;
-  background: var(--bg);
-  border-bottom: 1px solid var(--border);
   user-select: none;
 }
 
-.panel-title {
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.header-right {
-  margin-left: auto;
+.content {
+  padding: 16px;
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 24px;
 }
 
-.last-check {
-  font-size: 10px;
+/* ---------- 区块:标题 + 内容,区块之间 1px 分隔线(设计稿 256px 细分隔) ---------- */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.section + .section {
+  border-top: 1px solid var(--border-weak);
+  padding-top: 20px;
+}
+
+.section-title {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 22px;
+  color: var(--text);
+}
+
+/* ---------- 服务状态区 ---------- */
+.status-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.status-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 版本号:超长截断为 ... */
+.version-line {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meta-line {
+  font-size: 12px;
+  line-height: 18px;
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 110px;
 }
 
-/* ---------- 内容 ---------- */
-.content {
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 10px 12px;
-}
-
-.card-title-row {
+.status-side {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
 }
 
-.card-title-row h2 {
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.source {
-  margin-left: auto;
-  font-size: 10px;
-  color: var(--text-muted);
-}
-
-/* ---------- 当前服务卡 ---------- */
-.status-row {
-  display: flex;
+/* 状态徽标:圆点 + 小圆角标签(运行中=绿 / 停止=灰) */
+.state-pill {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-bottom: 8px;
-  flex-wrap: wrap; /* 窄面板:版本 chip 放不下时自动折行 */
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius-md);
+  background: var(--idle-weak);
+  color: var(--idle);
+  white-space: nowrap;
 }
 
-.dot {
-  width: 9px;
-  height: 9px;
+.state-pill.state-running {
+  background: var(--ok-weak);
+  color: var(--ok);
+}
+
+.state-dot {
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
+  background: currentColor;
   flex: none;
 }
 
-.dot.ok {
-  background: var(--ok);
-}
-
-.dot.err {
-  background: var(--err);
-}
-
-.dot.busy {
-  background: var(--brand);
-  animation: pulse 1.1s ease-in-out infinite;
-}
-
-.dot.idle {
-  background: var(--idle);
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
-}
-
-.status-label {
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.chip {
-  font-family: var(--mono);
-  font-size: 10px;
-  padding: 1px 8px;
-  border-radius: 999px;
-  background: var(--brand-weak);
-  color: var(--brand);
-}
-
-.meta {
+.state-label {
   font-size: 11px;
-  color: var(--text-secondary);
-  line-height: 1.7;
-  word-break: break-all;
+  line-height: 16px;
 }
 
-.meta.mono {
-  font-family: var(--mono);
-  font-size: 10px;
-  line-height: 1.6;
-}
-
-.error-box {
-  margin-top: 8px;
-  padding: 8px 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--err) 8%, var(--surface));
-}
-
-.error-title {
+.hint-line {
   font-size: 11px;
-  font-weight: 600;
-  color: var(--err);
-  margin-bottom: 3px;
-}
-
-.error-detail {
-  font-family: var(--mono);
-  font-size: 10px;
-  line-height: 1.5;
-  color: var(--text-secondary);
-  white-space: pre-wrap;
-  word-break: break-all;
-  max-height: 110px;
-  overflow-y: auto;
-  user-select: text;
-}
-
-.actions-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 10px;
-  flex-wrap: wrap;
-}
-
-.hint {
-  font-size: 11px;
+  line-height: 16px;
   color: var(--text-muted);
+  word-break: break-all;
 }
 
 /* ---------- 按钮 ---------- */
 .btn {
   appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-family: var(--font);
-  font-size: 11px;
-  padding: 4px 10px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-strong);
-  background: transparent;
-  color: var(--text);
+  font-size: 12px;
+  line-height: 18px;
+  height: 28px;
+  padding: 0 14px;
+  border-radius: 100px; /* 胶囊 */
+  border: none;
   cursor: pointer;
-  transition: background-color 0.15s ease;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, border-color 0.15s ease,
+    opacity 0.15s ease;
 }
 
-.btn:hover {
+/* 主按钮(启动服务 / 更新 / 安装):反白 */
+.btn-primary {
+  background: var(--primary-fill);
+  color: var(--primary-fg);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+/* 次按钮(更多 / 重试):透明 + 描边 */
+.btn-outline {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.btn-outline:hover:not(:disabled) {
   background: var(--surface-2);
+  color: var(--text-secondary);
 }
 
 .btn:disabled {
@@ -263,106 +222,271 @@ body {
   cursor: default;
 }
 
-.btn-primary {
-  background: var(--brand);
-  border-color: transparent;
-  color: #ffffff;
+.btn:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
 }
 
-.btn-primary:hover {
-  background: var(--brand-hover);
-}
-
-.btn-ghost {
-  border-color: transparent;
-}
-
-/* ---------- 版本列表卡(窄版:每行两段,版本与操作同行、日期另起) ---------- */
-.banner {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 8px;
-  padding: 6px 10px;
-  border-radius: var(--radius-md);
-  background: var(--brand-weak);
-  color: var(--brand);
-  font-size: 11px;
-}
-
-.banner-version {
-  font-weight: 600;
-  font-family: var(--mono);
-}
-
-.offline {
-  margin-bottom: 8px;
-  padding: 6px 10px;
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--warn) 10%, var(--surface));
-  color: var(--warn);
-  font-size: 11px;
-}
-
-.version-table {
-  display: flex;
-  flex-direction: column;
-}
-
-.vrow {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px 2px;
-  border-top: 1px solid var(--border);
-}
-
-.vrow:first-child {
-  border-top: none;
-}
-
-.vrow-top {
+/* ---------- 行布局(DSH 版本行 / 侧边栏名称行) ----------
+ * 名称(链接) + 徽标 + 右侧按钮/文案;超长时徽标与按钮保持可见 */
+.row-line {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
 }
 
-.v-version {
-  font-family: var(--mono);
+/* 可点击链接(版本号 / 插件名):与正文同色,悬停显示下划线 */
+.row-link {
+  color: var(--text);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.row-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.row-link:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* 最新 / 版本 徽标:小圆角描边标签(18px,与设计稿一致) */
+.v-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
   font-size: 11px;
-  font-weight: 600;
+  line-height: 16px;
+  color: var(--text-muted);
+  white-space: nowrap;
   flex: none;
 }
 
-.v-badges {
-  display: flex;
-  gap: 4px;
-  flex: none;
-}
-
-.badge {
-  font-size: 9px;
-  padding: 1px 6px;
-  border-radius: 999px;
-}
-
-.badge-latest {
-  background: var(--brand);
-  color: #ffffff;
-}
-
-.badge-current {
-  background: var(--surface-2);
-  color: var(--text-secondary);
-}
-
+/* 更新按钮:靠右 */
 .v-update {
   margin-left: auto;
   flex: none;
+  height: 28px;
+  padding: 0 12px;
 }
 
+.plugin-action {
+  margin-left: auto;
+  flex: none;
+  height: 28px;
+  padding: 0 14px;
+}
+
+/* 「当前」/「已安装」:绿色文案(与运行中同语义色),不占按钮形态 */
+.state-current {
+  margin-left: auto;
+  flex: none;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--ok);
+  white-space: nowrap;
+}
+
+/* 发布日期(DSH 最新版本) */
 .v-date {
-  font-size: 10px;
+  font-size: 12px;
+  line-height: 18px;
   color: var(--text-muted);
+}
+
+/* 侧边栏插件说明:换行小字 */
+.plugin-desc {
+  font-size: 11px;
+  line-height: 17px;
+  color: var(--text-muted);
+  word-break: break-word;
+}
+
+/* 行内名称(插件市场等,无链接的纯文本) */
+.row-name {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- 开关(「在 DSH 侧边栏显示插件市场入口」) ---------- */
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 2px;
+  cursor: pointer;
+}
+
+.switch-label {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-secondary);
+}
+
+/* 开关本体:33×18 胶囊,开 = 反白填充 + 白点右;关 = 描边 + 灰点左 */
+.switch {
+  position: relative;
+  flex: none;
+  width: 33px;
+  height: 18px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.switch-knob {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: left 0.15s ease, background-color 0.15s ease;
+}
+
+.switch.switch-on {
+  background: var(--primary-fill);
+  border-color: var(--primary-fill);
+}
+
+.switch.switch-on .switch-knob {
+  left: 16px;
+  background: var(--primary-fg);
+}
+
+.switch:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+/* ---------- 骨架屏(加载中灰色占位 + 扫光动画) ----------
+ * 各动态板块(服务状态 / DSH / 通知 / 插件市场 / 侧边栏)独立骨架,
+ * 数据到达(渲染函数被调)即隐藏骨架显示真实数据;查询失败同样隐藏。
+ * 配色用面板自身的 surface-2(浅色浅灰 / 深色深灰),扫光分亮暗两档。 */
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sk-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 18px;
+}
+
+.sk {
+  position: relative;
+  overflow: hidden;
+  display: inline-block;
+  flex: none;
+  height: 14px;
+  border-radius: 4px;
+  background: var(--surface-2);
+}
+
+.sk::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    100deg,
+    transparent 20%,
+    light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.14)) 50%,
+    transparent 80%
+  );
+  animation: sk-sweep 1.3s ease-in-out infinite;
+}
+
+@keyframes sk-sweep {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* 骨架块尺寸变体(模拟真实内容形态:文本条、徽标、按钮、开关) */
+.sk-w-sm { width: 52px; }
+.sk-w-md { width: 96px; }
+.sk-w-lg { width: 150px; }
+.sk-w-xl { width: 210px; }
+.sk-w-full { width: 100%; }
+.sk-h-pill { height: 22px; border-radius: 5px; }
+.sk-h-btn { height: 28px; border-radius: 100px; }
+.sk-h-switch { height: 18px; border-radius: 10px; }
+
+/* ---------- 查询失败 / 缓存回退 ---------- */
+.version-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+}
+
+.error-text {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-muted);
+}
+
+.cache-note {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--warn);
+  text-align: center;
+}
+
+/* ---------- 滚动条(dsh 会话区同款规格,默认隐藏 + 面板内任意位置 hover 显示) ----------
+ * 规格实测 @deepseek-ai/dsh-client-ui-theme scrollbar.css:8px 宽高 / track 与
+ * corner 透明 / thumb 4px 圆角;色值 = dsh-scrollbar 主题 token 的具体中性色
+ * (--dsw-static-neutral-200/300 亮、700/600 暗)。
+ * Chromium 的 scrollbar 伪元素只匹配全局无前缀选择器,祖先限定(含 :hover / 类)
+ * 一律失效 → 显示/隐藏走「变量 rebind」:body(面板)默认把 thumb 变量置透明;
+ * body:hover(鼠标位于页面区域内任意位置,不必滑到滚动条上)时置 dsh 色;
+ * 离开页面区域 :hover 解除 → 立刻回透明隐藏。全局伪元素规则读变量。 */
+body {
+  --st-sb-thumb: transparent;
+  --st-sb-thumb-hover: transparent;
+}
+
+body:hover {
+  --st-sb-thumb: light-dark(rgb(229, 229, 229), rgb(60, 60, 61));
+  --st-sb-thumb-hover: light-dark(rgb(212, 212, 212), rgb(84, 85, 87));
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background: var(--st-sb-thumb);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--st-sb-thumb-hover);
 }

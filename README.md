@@ -42,7 +42,7 @@ npm start
 │    │               └─ spawn ─→ bash / shell        │     → 继承 App 的
 │    ├─ WebContentsView 顶栏 (topbar.html)           │        macOS 权限(TCC)
 │    ├─ WebContentsView 内容 (加载页 → WebUI)        │  自定义标题栏 / 内缩+圆角
-│    └─ WebContentsView 右侧面板 (dsh-status.html)   │  可选展开:≈1/5 宽服务面板
+│    └─ WebContentsView 右侧面板 (dsh-status.html)   │  异常态兜底(服务未起/崩溃)
 │            ▲ contextBridge                         │
 │            │                                       │
 │        preload.js (最小 IPC 桥,不暴露 Node)         │
@@ -55,15 +55,22 @@ npm start
   2. **打进 App 的 dsh**(打包后是 `app.asar.unpacked/node_modules/@deepseek-ai/dsh`,开发时是项目 `node_modules`)——默认走这个;
   3. PATH 里的 `dsh`(兜底)。
   用 `ELECTRON_RUN_AS_NODE=1` + 当前可执行文件运行,所以**用户机器上不需要装 Node,也不需要装 dsh**。`DSH_HOME` 默认用 App 自己的数据目录(`~/Library/Application Support/DSH Box/dsh-home`),与浏览器 WebUI 的 `~/.dsh` 隔离,避免两个 dsh 服务并发读写同一会话导致弹层闪烁(见「常见问题」)。
-- **顶栏视图** (`src/renderer/topbar.*`) 是独立的自定义标题栏:整条可拖动、双击最大化,左侧留红绿灯空间且**不显示应用名**;右侧 `.actions` 是功能入口区,当前放 **dsh 状态入口**和 **GitHub 仓库按钮**(28×28 无背景,悬停显示背景,图标 20×20 随 light/dark 变色,点击在系统浏览器打开 `https://github.com/hifengzy/dsh-box`)。
-- **右侧「dsh 服务与版本」面板**(`src/renderer/dsh-status.*` + `src/main/sidebar-layout.js`):不是独立窗口,而是窗口内右侧面板,**由顶栏状态按钮(或菜单)开关,面板自身无关闭按钮**。展示核心依赖 dsh 的运行状态 + 版本列表,并支持**应用内一键升级**:
-  - **布局策略(尽量大 + 自动收起)**:面板与内容区间隙 4px(与窗口左右内缩一致);面板展开时 dsh 内容区保底 **960px**(实测 dsh 至 720px 均无横向滚动);面板 = 内宽 − 960 − 4,**上限 480px**——1280 默认窗口下面板 **308px**/内容 960,1440 下面板 468px,≥1452 触顶 480px;窗口窄到面板放不下(<240px,即窗口 <≈1212px)时**自动收起面板**,dsh 内容区拿回全宽;重新展开需窗口拉宽到 ≈1262px(50px 缓冲防抖动)。纯函数 `computeSidebar()` 单测覆盖(含滞回边界)。
-  - **展开/收起动画**:与 dsh 左侧边栏同款规格(实测其主框架 `transition: grid-template-columns 0.3s cubic-bezier(.4,0,.2,1)`):面板宽度以 **300ms + cubic-bezier(.4,0,.2,1)** 逐帧动画(主进程按帧 setBounds 两个视图),dsh 内容区同步平滑重排;窗口缩放/全屏切换时为快照布局(取消动画);动画期间快速切换可反向(开→关→开)不卡死。
-  - 上卡 = 当前服务:运行中(绿)/ 启动失败(红 + 失败原因)/ 未运行(灰),显示版本、端口、PID、日志路径,按状态提供「启动 / 停止 / 重启」;
-  - 下卡 = 版本列表:**每次打开面板(视图重建)自动查一次 npm registry**(`https://registry.npmjs.org/@deepseek-ai/dsh` JSON API,非网页),按发布时间倒序,置顶为最新版;仅「比当前运行版本新」的行显示「更新」按钮;
-  - 每次启动应用也会静默查一次 npm,有新版 → 顶栏入口红点;面板展开时顶栏按钮呈激活态(品牌蓝),再点一次收起、dsh 内容区恢复整宽;
+- **顶栏视图** (`src/renderer/topbar.*`) 是独立的自定义标题栏:整条可拖动、双击最大化,左侧留红绿灯空间且**不显示应用名**;右侧 `.actions` 是功能入口区,当前放 **dsh 状态入口**、**侧栏插件两个面板开关**和 **GitHub 仓库按钮**(28×28 无背景,悬停显示背景,图标 20×20 随 light/dark 变色,点击在系统浏览器打开 `https://github.com/hifengzy/dsh-box`)。
+  - **侧栏插件两个面板开关**(右侧栏 / 底部面板,在状态入口与 GitHub 之间):控制 dsh-better-sidebar 插件的侧栏/底栏开合。链路:顶栏按钮 → preload IPC → 主进程 → `executeJavaScript` 注入桥(`src/main/plugin-ui-inject.js` 的 `PLUGIN_BRIDGE_JS`)→ 桥模拟点击插件自己的 toggle 按钮(React store 全同步);开合状态经插件公开的布局钩子(`body[data-dsh-sidebar-collapsed]` 与 `--dsh-sidebar-height`)实时回显到顶栏按钮(展开 = 品牌蓝高亮);**插件未安装或当前没有活跃会话时按钮禁用**。插件自带的右上角两个入口被注入的 `PLUGIN_HIDE_CSS` 隐藏(visibility 保留空位,零布局扰动)。
+- **「服务状态」面板(双轨:内容区注入共享面板 + 异常态兜底)**:由顶栏状态按钮(或菜单)开关。
+  - **常态 = 内容区内的注入共享面板**(`src/main/status-ui-inject.js` 的 `STATUS_BRIDGE_JS_FN`,与侧边栏/市场桥同一注入层):dsh 服务就绪时,顶栏按钮经主进程 `executeJavaScript` 调桥展开一个**从右侧滑入的面板**(`position: fixed`,相对视口定位、**不扩展文档滚动区域**——滑出动画不会让窗口底部闪现横向滚动条,与插件侧栏装在 fixed host 内同效)——与 dsh-better-sidebar 侧栏同款动画(transform translate(102%)↔0,时长/缓动读 dsh 主题变量 `--ds-transition-duration-slow` / `--ds-ease-in-out`,缺失回退 300ms + 同款缓动),展开时**挤压「对话区」列**(与插件底栏同手法:只压缩中心列 `[data-pane="conversation"]` 的 `margin-right: var(--dshbox-status-panel-width)`,**不改变 `#root` 整宽 → dsh 左侧边栏/右侧详情栏完全不受右侧面板影响**)。对话区挤压与面板滑入**同速过渡(300ms,同一主题缓动)**:选择器 `#root#root` 双 id 特异性稳压 better-sidebar 后注入的同锚样式(否则其 `transition: margin-bottom` 会整条覆盖本注入的过渡,对话区瞬跳、与面板滑入割裂),过渡同时声明 `margin-right + margin-bottom`(代言插件底栏过渡,不破坏插件的底栏挤压动画)。**宽度可拖拽面板左缘调整(240~640px),拖拽结束持久化到 `settings.yaml` 的 `dsh-box.statusPanelWidth`**;页面重载(服务重启)后面板默认关闭。**动态数据骨架屏**:五个动态板块(服务状态 `getInfo` / DSH `checkUpdates` / 插件市场 `getMarketInfo` / 侧边栏 `getPluginInfo` / 通知 `getNotificationSettings`)各带灰色占位骨架(扫光动画),查询进行中显示、数据到达(渲染函数被调)即替换——各板块按各自查询速度**独立替换**,互不影响;查询失败同样收起骨架交给错误态(取代旧「正在检查…」文字)。**滚动条 = dsh 会话区同款**(实测 `@deepseek-ai/dsh-client-ui-theme` scrollbar.css:8px 宽高/透明 track 与 corner/4px 圆角 thumb/thumb 色取主题中性色 亮 `rgb(229,229,229)`·hover `rgb(212,212,212)`、暗 `rgb(60,60,61)`·hover `rgb(84,85,87)`)。**默认隐藏**(thumb 透明,内容超出也不可见);**触发 = 鼠标位于面板区域内任意位置**(Chromium 的 scrollbar 伪元素不认祖先限定选择器——含 `:hover`/类,实测无效,故走 dsh 同款「变量 rebind」:面板滚动容器默认把 `--dsh-scrollbar-thumb` 置透明,`#dshbox-status-panel:hover`/`body:hover` 时置色);**鼠标离开面板区域立刻隐藏**(hover 解除即回透明,无过渡延迟)。
+  - **与 dsh-better-sidebar 侧栏互斥展开 + 并行换边**(`src/main/status-panel-router.js` 的 `runMutualOpen`,主进程编排):两者不能同时展开——展开 A 时若 B 已展开,采用**并行换边**:收起 B 与展开 A **同帧发起、动画重叠进行**(`Promise.all`),总时长 = 单侧动画(≈300ms,串行时 ≈700ms),且不产生「内容区先回全宽再收窄」的中间态——配合对话区挤压,**切换时 dsh 左侧边栏稳定不动**(不再「展开→折叠」晃动)。收起方向不触发互斥;自动展开/折叠时两侧顶栏按钮高亮随桥上报实时同步(现有 `report` 机制,零额外 IPC)。数据/操作全部复用内容视图既有的 `window.dsh.*` preload 桥,主进程仅新增「开合上报 + 宽度持久化」两个小通道;主题跟随 `body[data-ds-dark-theme]`,每次打开都重新查 npm / 插件。
+  - **异常态兜底 = 独立 statusView**(`src/renderer/dsh-status.*` + `src/main/sidebar-layout.js`):dsh 未启动/崩溃/重启中时内容视图在加载页,注入面板不存在,主进程自动回退到独立 WebContentsView 面板(**宽度由 `computeSidebar`「内容优先」计算,展开 300ms 动画,窗口过窄自动收起**)。两种形态以「内容视图是否为 dsh origin」自动切换,互不干扰;注入桥异常(executeJavaScript 失败)时也会整会话回退兜底。
+  - 内容板块(两种形态共用同一套状态机):
+  - 上卡 = 服务状态:只展示 DSH 版本号、端口、PID;**状态只有「运行中(绿)/ 停止(灰)」两态**,仅停止时显示「启动服务」按钮;版本号过长自动截断为 …,完整值悬停可见;**启动失败时按钮自动重置为「启动服务」并展示「服务启动失败:原因」,不卡在「启动中…」**;
+  - 中卡 = 侧边栏(dsh-better-sidebar):插件名(链接,悬停下划线)+ 最新版本徽标 + 说明文案;**状态机:未安装 →「安装」;已装且版本 == 最新 →「已安装」绿色文案;已装但低于最新 →「更新」;查询失败 →「网络服务异常」+「重试」(已装时徽标回退本地版本并警示);安装/更新失败时按钮自动重置为「安装/更新」并展示「安装失败:原因」,不卡在「××中…」**。安装/更新由主进程执行 `dsh plugin --profile web add dsh-better-sidebar@<版本>`(`src/main/plugin-manager.js`),成功后**自动重启 dsh 服务**让新 bundle 生效,并写入 `openByDefault: true`(与浏览器 WebUI 对齐,可在插件设置页改回)。安装/更新失败不阻塞,可重试。
+  - 下卡 = 插件市场(dshmarket):名称 `dsh-market` + 最新版本徽标 + 说明文案「浏览、搜索、安装、更新、卸载社区插件。」;**状态机:未安装 →「安装」;已装且版本 == 最新 →「已安装」绿色文案;已装但低于最新 →「更新」;查询失败 →「网络服务异常」+「重试」**。已安装后显示**「在 DSH 侧边栏显示插件市场入口」开关**(默认关),开关状态持久化到 `settings.yaml` 的 `dsh-box.marketSidebarEntry` 自定义域,即时控制左侧边栏「插件」入口的显隐。安装/更新与侧边栏插件同链路(`dsh plugin --profile web add dshmarket@<版本>`)
+  - 下卡 = DSH:只展示**最新一条版本**(版本号链接 `deepseek-harness` 仓库,悬停下划线)+「最新」徽标 + 发布日期;**当前运行版本 < 最新 →「更新」按钮;一致 →「当前」绿色文案**;查询失败显示「网络服务异常」+「重试」(有缓存回退展示并提示)。每次打开面板(视图重建)自动查一次 npm registry(`https://registry.npmjs.org/@deepseek-ai/dsh` JSON API,非网页);
+  - 每次启动应用也会静默查一次 npm 和插件 registry,有新版 → 顶栏入口红点(本体或插件任一有更新即亮);面板展开时顶栏按钮呈激活态(品牌蓝),再点一次收起。共享面板叠加在内容区上,不改变 dsh 内容区宽度;兜底模式收起后内容区恢复整宽;
   - 升级链路(`src/main/dsh-upgrade.js`):下载 tarball → **sha512 校验**(registry 的 `dist.integrity`)→ 系统 tar 解压 → 停服 → **原子替换**(旧包留 `.bak` 备份)→ 启服;任何一步失败自动回滚,不留下半截状态。升级会短暂停止服务,完成后自动恢复。
-  - 离线/查询失败时回退到上次缓存结果(userData/cache)并提示;中国网络可用 `DSH_NPM_REGISTRY` 切换镜像(如 `https://registry.npmmirror.com`)。
+  - 离线/查询失败回退到上次缓存结果(userData/cache)并提示;中国网络可用 `DSH_NPM_REGISTRY` 切换镜像(如 `https://registry.npmmirror.com`)。
+  - **实机验收指引(侧栏插件)**:1) 首次进入「服务状态」面板 → 侧边栏插件卡 → 点「安装」(联网,约 30-60s)→ 自动重启 dsh;2) 在 dsh 里打开/新建一个**活跃会话**(插件侧栏 per-session,无会话时顶栏按钮禁用):3) 点顶栏两个面板开关(在状态入口与 GitHub 之间)→ dsh 页面内右侧栏/底部面板展开收起,按钮随面板开合高亮;4) 插件自带的页面右上角两个小按钮已被隐藏;5) 插件有新版时「服务状态」面板显示「更新」按钮,顶栏红点也会亮起(本体或插件任一有更新)。
+- **插件市场外壳定制**(`src/main/plugin-ui-inject.js` 的 `MARKET_BRIDGE_JS_FN`,与侧边栏桥同一注入层):1) **设置弹窗导航图标替换**——dsh 设置弹窗左侧导航里「插件市场」标签页按钮的默认齿轮图标替换为 `demo/0.3.0/chajian.svg`(方块网格,currentColor);2) **左侧边栏「插件」入口**——**完全克隆「设置」按钮**(同渲染 class + 同内部结构,只换 chajian 图标与「插件」文本)→ dsh 对侧栏按钮的样式(宽/窄两态、hover、label 隐藏)全部继承,与「设置」零差异;点击打开设置并直接激活插件市场页。3) **折叠(rail)适配**——dsh 的 rail 收缩规则绑定「设置」槽位,克隆按钮同 class 也不命中,注入脚本按「设置」按钮宽度感知折叠,折叠时把「插件」按钮收敛为 36×36 icon-only、与「设置」上下排列(抬高 foot 区高度容纳两枚按钮),展开时还原。定位锚点为文本/data-slot/克隆类名,**不修改 dsh 与 dshmarket 任何源码**——dsh 或插件迭代只会让注入项降级失效,不影响本体。
 - **内容视图** 显示加载页,就绪后加载 dsh WebUI;窗口层内缩 4px + 圆角 10px,**不碰页面布局**,不会产生滚动条。
 
 ### 窗口外观
@@ -90,18 +97,23 @@ src/
     dsh-version.js   运行时 dsh 版本单一事实来源(从实际入口反查 package.json)
     npm-check.js     npm registry 版本查询:缓存 / 离线降级 / semver 比较
     dsh-upgrade.js   应用内升级:下载 → sha512 → 解压 → 原子替换 → 回滚
-    sidebar-layout.js 右侧面板宽度策略纯函数(内容优先 + 面板拿剩余)
+    sidebar-layout.js 右侧面板宽度策略纯函数(内容优先 + 面板拿剩余;现为异常态兜底布局)
+    plugin-manager.js 第三方插件生命周期(参数化:侧边栏插件 / 插件市场):本地版本 / registry 查询 / dsh plugin add / openByDefault 写入
+    plugin-ui-inject.js 注入桥(PLUGIN_BRIDGE_JS 侧栏 toggle / MARKET_BRIDGE_JS_FN 市场图标+侧边栏入口)与样式(PLUGIN_HIDE_CSS)
+    status-ui-inject.js 「服务状态」共享面板注入体(STATUS_BRIDGE_JS_FN:右侧滑入面板 + 四板块 + 拖拽调宽 + 互斥编排原语 requestOpen/requestClose + 主题)与样式(STATUS_PANEL_CSS:滑入动画 + 对话区挤压过渡 300ms,双 id 特异性稳压插件后注入 + 各板块骨架屏) — 兜底页 src/renderer/dsh-status.* 同款骨架屏
+    status-panel-router.js 互斥展开编排纯函数(服务状态 ↔ 插件侧栏,不能同时展开)
+    box-settings.js    DSH Box 自定义设置持久化(settings.yaml 的 dsh-box 域,文本级读写:布尔 + 数值)
   preload/
-    preload.js       contextBridge 最小桥(getInfo / onStatus / retry / checkUpdates / upgrade / toggleSidebar / …)
+    preload.js       contextBridge 最小桥(getInfo / onStatus / retry / checkUpdates / upgrade / toggleSidebar / getPluginInfo / installPlugin / togglePluginPanel / …)
   renderer/
     index.html       启动页(等待 dsh 就绪)
     renderer.js      启动页逻辑(状态渲染、重试)
     style.css
     about.html       关于弹窗页面(about.css / about.js 配套)
-    dsh-status.html  「dsh 服务与版本」右侧面板(状态卡 + 版本列表 + 更新,窄版竖排)
+    dsh-status.html  「dsh 服务与版本」面板页(异常态兜底用;常态为内容区注入共享面板)
     dsh-status.js
     dsh-status.css
-    topbar.html      自定义顶栏(菜单栏:GitHub / dsh 状态入口 + 红点)
+    topbar.html      自定义顶栏(GitHub / dsh 状态入口 + 红点 / 侧栏插件两个面板开关)
 scripts/
   doctor.js          环境诊断:npm run doctor
   smoke.js           核心链路冒烟测试(纯 Node):npm run smoke
@@ -122,7 +134,7 @@ docs/
 npm run doctor    # 环境体检:Node / dsh / Electron / 端口
 npm run smoke     # 核心链路冒烟测试(纯 Node,不弹窗口)
 npm run smoke:e2e # 完整 E2E:启动真实 App → 拉起 dsh → 加载 WebUI → 退出
-npm run test:regression # 回归套件:面板宽度策略 / URL 信任边界 / 重开窗口 / 加载页可见性 / 端口冲突 / 崩溃反馈 / 菜单栏 Tray / 应用菜单与关于弹窗 / 顶栏 / 服务与版本面板 / 升级链路
+npm run test:regression # 回归套件:dsh 服务 stop→start 语义 / 面板宽度策略 / URL 信任边界 / 重开窗口 / 加载页可见性 / 端口冲突 / 崩溃反馈 / 菜单栏 Tray / 应用菜单与关于弹窗 / 顶栏 / 服务与版本面板(独立页 + 注入共享面板:滑入/挤压/互斥) / 升级链路 / 侧边栏插件真实环境 e2e / 插件市场真实环境 e2e
 ```
 
 > `smoke:e2e` 会短暂弹出应用窗口,并把临时数据放到 `.runtime/`(已 gitignore)。`--no-sandbox` 只用于测试环境(沙箱受限的 CI/容器)。
@@ -162,7 +174,11 @@ npm run dist:dmg    # 只生成 .dmg
 运行 `npm run doctor` 看提示。打包后的 App 自带 dsh;开发模式下先确认 `npm install` 装过 `@deepseek-ai/dsh`。也可用 `DSH_BIN` 强制指定。
 
 **启动后一直停在加载页**
-看日志:主进程终端会打印 `[dsh:err] ...`,完整日志在 `~/Library/Application Support/DSH Box/logs/`。最常见原因:端口被占用(换 `DSH_APP_PORT`)或 DSH_HOME 里的 profile 配置损坏。
+看日志:主进程终端会打印 `[dsh:err] ...`,完整日志在 `~/Library/Application Support/DSH Box/logs/`。最常见的两类原因:
+1. **端口被占用**(换 `DSH_APP_PORT`);
+2. **插件加载失败导致 dsh 启动即退出**——「服务状态」页/加载页会直接展示日志里提取的可读原因(如 `duplicate prefix route "/sidebar/api"`)与修复提示,不再是笼统的「端口可能被占用」。
+
+> 已知案例:**聚合插件与已装插件重复加载**。从插件市场安装聚合包(如 `@linxin666/dsh-web-ui-all`,它内部聚合了 `dsh-better-sidebar` 等多个插件)时,若 `dsh-better-sidebar` 已单独装过,二者会被同时记入 profile 的 `dsh.profile.bundles`,同一插件的路由重复注册 → dsh 启动崩溃(`duplicate prefix route`)。修复:编辑 `<DSH_HOME>/profiles/web/package.json`,在 `dsh.profile.bundles` 里移除重复的 `dsh-better-sidebar` 条目(聚合包仍会把它加载一次,功能保留),或卸载其中一个插件。
 
 **启动页总是闪一下红色「服务启动失败」但服务其实正常**
 最常见原因:**同时跑了两个实例**(比如 `npm start` 的 dev 版和已安装的打包版同时打开)。两个实例的 userData 不同,Electron 自带单实例锁管不住,会争抢同一个端口,后启动者的 dsh 绑定失败(EADDRINUSE)却从先启动者的服务加载 UI → 误报。App 现已用**全局单实例锁**(所有实例共享,与 userData 无关),后启动的实例会直接退出。若仍出现,检查是否有残留进程:`pkill -f "bin.js web"` 后重开。

@@ -34,9 +34,6 @@ contextBridge.exposeInMainWorld("dsh", {
   /** 打开外部链接(仅 http/https,主进程校验) */
   openExternal: (url) => ipcRenderer.invoke("shell:open-external", url),
 
-  /** 上报 dsh UI 当前解析出的主题('dark'|'light'),外壳据此跟随 */
-  reportTheme: (scheme) => ipcRenderer.send("shell:theme-changed", scheme),
-
   /** 查一次 npm 上的 dsh 版本(进入「服务与版本」页时调用),返回完整列表 */
   checkUpdates: () => ipcRenderer.invoke("dsh:check-updates"),
 
@@ -68,4 +65,47 @@ contextBridge.exposeInMainWorld("dsh", {
     ipcRenderer.on("dsh:sidebar-state", listener);
     return () => ipcRenderer.removeListener("dsh:sidebar-state", listener);
   },
+
+  /** 查询侧边栏插件信息(本地版本 + registry 最新);进入状态页时调用 */
+  getPluginInfo: () => ipcRenderer.invoke("dsh:plugin-info"),
+
+  /** 安装(version=null)或更新(version=最新版)侧边栏插件;成功后自动重启服务 */
+  installPlugin: (version) => ipcRenderer.invoke("dsh:plugin-install", version ?? null),
+
+  /** 顶栏「侧栏/底栏」切换:经桥模拟点击插件自己的 toggle 按钮 */
+  togglePluginPanel: (which) => ipcRenderer.invoke("dsh:toggle-plugin-panel", which),
+
+  /** 订阅插件面板开合状态(顶栏按钮高亮/灰显);返回取消订阅函数 */
+  onPluginPanels: (callback) => {
+    const listener = (_event, state) => callback(state);
+    ipcRenderer.on("dsh:plugin-panels", listener);
+    return () => ipcRenderer.removeListener("dsh:plugin-panels", listener);
+  },
+
+  /** 内容页里注入的桥脚本上报插件面板状态(仅内容视图实际调用) */
+  reportPluginPanels: (state) => ipcRenderer.send("shell:plugin-panels", state),
+
+  /** 查询插件市场信息(本地版本 + registry 最新);进入状态页时调用 */
+  getMarketInfo: () => ipcRenderer.invoke("dsh:market-info"),
+
+  /** 安装(version=null)或更新(version=最新版)插件市场;成功后自动重启服务 */
+  installMarket: (version) => ipcRenderer.invoke("dsh:market-install", version ?? null),
+
+  /** 读「在 DSH 侧边栏显示插件市场入口」开关(返回 { ok, enabled }) */
+  getMarketSwitch: () => ipcRenderer.invoke("dsh:market-switch"),
+
+  /** 写开关(true/false):持久化到 settings.yaml + 注入层即时生效 */
+  setMarketSwitch: (enabled) => ipcRenderer.invoke("dsh:market-switch", !!enabled),
+
+  /** 「服务状态」共享面板:注入层上报开合状态(仅内容视图实际调用) */
+  reportStatusPanel: (state) => ipcRenderer.send("shell:status-panel", state),
+
+  /** 「服务状态」共享面板:拖拽结束持久化宽度(仅内容视图注入层调用) */
+  setStatusPanelWidth: (width) => ipcRenderer.invoke("dsh:status-panel-width", width),
+
+  /** 读通知开关 + macOS 通知权限:返回 { banner, sound, permission } */
+  getNotificationSettings: () => ipcRenderer.invoke("dsh:notify-settings"),
+
+  /** 写通知开关(传 { banner?, sound? }):持久化 + 首次开启横幅触发系统授权 */
+  setNotificationSettings: (next) => ipcRenderer.invoke("dsh:notify-settings", next ?? {}),
 });

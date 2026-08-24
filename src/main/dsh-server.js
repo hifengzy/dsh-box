@@ -40,6 +40,47 @@ const STOP_GRACE_MS = 5_000;
 const DSH_BIN_JS = path.join("lib", "bin.js");
 
 /**
+ * 从 dsh 崩溃日志中提取可读的失败原因(供界面展示;无则 null)。
+ * 日志 = 子进程 stdout/stderr 原文,dsh 启动崩溃时以 "Error: <msg>" 行
+ * 呈现(boot 级或 cause 链根因行)。优先取含根因关键词的行
+ * (duplicate/EADDR/模块缺失/插件树失败等),避免取到无信息的堆栈行。
+ * @param {string} logFile dsh 日志文件路径
+ * @returns {string|null}
+ */
+function extractCrashReason(logFile) {
+  let raw;
+  try {
+    raw = fs.readFileSync(logFile, "utf8");
+  } catch {
+    return null;
+  }
+  const lines = raw.split("\n");
+  const prefer = lines.find((l) =>
+    /^Error:\s*(?:duplicate|EADDR|Cannot find module|listen|failed|plugin tree|Unexpected|Syntax)/i.test(l)
+  );
+  const any = lines.find((l) => /^Error:\s*\S/.test(l));
+  const line = prefer || any;
+  if (!line) return null;
+  const msg = line.replace(/^Error:\s*/, "").trim();
+  return msg.length > 240 ? msg.slice(0, 240) + "…" : msg;
+}
+
+/** 常见崩溃原因的可操作建议(无匹配返回 "") */
+function crashAdvice(reason) {
+  if (!reason) return "";
+  if (/duplicate\s+prefix\s+route/i.test(reason)) {
+    return (
+      "插件重复加载:常见于聚合插件(如 dsh-web-ui-all)与已装的同一插件并存。" +
+      "可在 <DSH_HOME>/profiles/web/package.json 的 dsh.profile.bundles 里移除重复条目,或卸载其一后重试"
+    );
+  }
+  if (/EADDRINUSE|address already in use/i.test(reason)) {
+    return "端口被占用:请结束占用该端口的进程后重试";
+  }
+  return "";
+}
+
+/**
  * 打包后的 dsh 脚本路径候选:
  * 本项目用 asar:false 打包(ELECTRON_RUN_AS_NODE 模式读不了 asar 归档,
  * 且 dsh 依赖树需要真实路径),所以打包后是 Resources/app/node_modules/…;
@@ -193,8 +234,11 @@ class DshServer extends EventEmitter {
     //   binary → 直接运行
     // 注:dsh 的 HMR 插件需要 --expose-internals(Node < 25 默认不给),
     // 所以跑 script 时显式带上;对较新的 Node 也是无害的。
+    // 注:dsh web 启动成功后默认会用「系统默认浏览器打开页面」;DSH Box 本身
+    // 就是浏览器/客户端(内容视图加载 dsh UI),必须 --no-open 禁用,否则每次
+    // 服务启动/升级重启都会弹系统浏览器(实测跳出 Chrome)。
     let command;
-    const args = ["web", "--port", String(this.port)];
+    const args = ["web", "--port", String(this.port), "--no-open"];
     if (dshType === "script") {
       command = process.execPath;
       args.unshift("--expose-internals", this.dshBin);
@@ -294,6 +338,11 @@ class DshServer extends EventEmitter {
       });
     });
     this.child = null;
+    // 关键复位:ready 必须置 false —— main.js 的 startServer() 用
+    // `if (server.ready || server.child) return;` 做防重入短路,若停止后
+    // 不复位,安装/更新插件后、升级 dsh 后的「自动重启」会被该短路直接
+    // 跳过(服务停着但不再拉起)。
+    this.ready = false;
     this.stopping = false;
     console.log("[dsh] 已停止");
   }
@@ -303,10 +352,17 @@ class DshServer extends EventEmitter {
     const deadline = Date.now() + START_TIMEOUT_MS;
     while (Date.now() < deadline) {
       if (this.stopping) throw new Error("服务已停止");
-      // 子进程提前退出(典型:端口被别的服务占用,EADDRINUSE)→ 立即失败,
+      // 子进程提前退出(典型:插件树加载失败 / 端口被占用)→ 立即失败,
       // 不要等满超时,也不要被端口上其它服务返回的 2xx 骗过。
       if (this.childExitCode !== null) {
-        throw new Error(`dsh 进程启动后立即退出 (code=${this.childExitCode}),端口 ${this.port} 可能被占用`);
+        // 读日志给出可读原因(避免只抛误导性的"端口可能被占用"猜测)
+        const reason = extractCrashReason(this.logFile);
+        const advice = crashAdvice(reason);
+        throw new Error(
+          reason
+            ? `dsh 进程启动后立即退出 (code=${this.childExitCode}); 原因: ${reason}${advice ? `; ${advice}` : ""}`
+            : `dsh 进程启动后立即退出 (code=${this.childExitCode}),端口 ${this.port} 可能被占用`
+        );
       }
       try {
         const res = await fetch(this.url, {
@@ -379,4 +435,12 @@ class DshServer extends EventEmitter {
   }
 }
 
-module.exports = { DshServer, resolveDsh, bundledDshPath, defaultDshHome, DEFAULT_PORT };
+module.exports = {
+  DshServer,
+  resolveDsh,
+  bundledDshPath,
+  defaultDshHome,
+  DEFAULT_PORT,
+  extractCrashReason,
+  crashAdvice,
+};

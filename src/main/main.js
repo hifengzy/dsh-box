@@ -23,10 +23,11 @@
  *   并且顶栏里将来可以随意加搜索框等功能入口(纯 HTML)。
  */
 
-const { app, BrowserWindow, Menu, session, shell, ipcMain, WebContentsView, nativeTheme } = require("electron");
+const { app, BrowserWindow, Menu, session, shell, ipcMain, WebContentsView, nativeTheme, Notification, systemPreferences } = require("electron");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { spawn } = require("node:child_process");
 const { DshServer, DEFAULT_PORT } = require("./dsh-server");
 const { isServerOrigin, isTrustedOrigin } = require("./url-guard");
 const { createTray } = require("./tray");
@@ -34,9 +35,26 @@ const { createAppMenu } = require("./menu");
 const { showAboutWindow } = require("./about");
 const { getRuntimeDshInfo } = require("./dsh-version");
 const npmCheck = require("./npm-check");
-const { upgradeDsh } = require("./dsh-upgrade");
+const { upgradeDsh, restoreDshBackup, verifyDshBoot, findNewestBackup } = require("./dsh-upgrade");
 const { computeSidebar, SIDEBAR_GAP } = require("./sidebar-layout");
 const { SIDEBAR_ANIM_MS, easeSidebar } = require("./sidebar-anim");
+const pluginManager = require("./plugin-manager");
+const { readSettingValue, readSettingBool, writeSettingValue, writeSettingBool } = require("./box-settings");
+const {
+  PLUGIN_BRIDGE_JS,
+  PLUGIN_HIDE_CSS,
+  MARKET_BRIDGE_JS_FN,
+} = require("./plugin-ui-inject");
+const {
+  STATUS_PANEL_CSS,
+  STATUS_BRIDGE_JS_FN,
+  STATUS_WIDTH_MIN,
+  STATUS_WIDTH_MAX,
+  STATUS_WIDTH_DEFAULT,
+} = require("./status-ui-inject");
+const { runMutualOpen } = require("./status-panel-router");
+const { readThemePreference, applyThemePreference, watchThemePreference } = require("./theme-sync");
+const { createNotifyWatcher } = require("./notify-watch");
 
 const APP_NAME = "DSH Box";
 const isMac = process.platform === "darwin";
@@ -127,33 +145,61 @@ function main() {
   let upgrading = false;
   /** 最近一次 npm 更新检查结果(顶栏红点用) */
   let lastUpdateCheck = null;
+  /** 最近一次插件检查结果(侧边栏插件板块 + 红点) */
+  let lastPluginCheck = null;
+  /** 是否正在安装/更新插件(防止并发) */
+  let pluginInstalling = false;
+  /** 插件市场(dshmarket)最近一次检查结果 */
+  let lastMarketCheck = null;
+  /** 是否正在安装/更新插件市场 */
+  let marketInstalling = false;
+  /** 「在 DSH 侧边栏显示插件市场入口」开关(启动时读 settings.yaml) */
+  let marketSidebarEntry = false;
+  /** 「服务状态」共享面板(内容视图注入层)开合镜像;null 语义同 false */
+  let statusPanelOpen = false;
+  /** 注入桥缺失(executeJavaScript 失败/无返回值)→ 本会话回退 statusView */
+  let statusInjectBroken = false;
+  /** 插件侧栏/底栏最近一次上报状态(互斥编排用) */
+  let lastPluginPanels = null;
+  /** 「服务状态」共享面板宽度(拖拽持久化,启动时读 settings.yaml) */
+  let statusPanelWidth = STATUS_WIDTH_DEFAULT;
+  /** 横幅通知开关(默认关;持久化 dsh-box.notificationBanner) */
+  let notifyBanner = false;
+  /** 声音通知开关(默认关;持久化 dsh-box.notificationSound) */
+  let notifySound = false;
+  /** 本次运行是否已发过「开启横幅」测试通知(首次触发 macOS 系统授权弹窗) */
+  let notifyPrompted = false;
+  /** dsh 服务是否就绪(通知事件流依赖 dsh 服务在线) */
+  let notifyReady = false;
+  /** dsh 事件流 watcher(createNotifyWatcher 实例);null = 未运行 */
+  let notifyWatcher = null;
+  /** 提示音文件(随 App 打包的 assets/message.m4a,dev 与打包同相对路径) */
+  const NOTIFY_SOUND_PATH = path.join(__dirname, "..", "..", "assets", "message.m4a");
 
   const port = Number(process.env.DSH_APP_PORT) || DEFAULT_PORT;
 
   app.setName(APP_NAME);
 
-  // ---------- 启动即应用已持久化的外观主题 ----------
-  // dsh UI 的「外观」偏好持久化在 <DSH_HOME>/settings.yaml 的
-  // settings.theme.preference(light/dark/system)。窗口创建前读取并设置
-  // nativeTheme.themeSource,让启动页(prefers-color-scheme)与毛玻璃
-  // 从第一帧就跟随用户已设置的主题,而不是先闪一下系统主题。
-  // 之后 dsh UI 加载完成会通过 shell:theme-changed 持续同步。
-  (function applyPersistedTheme() {
-    try {
-      const home = process.env.DSH_HOME || path.join(app.getPath("userData"), "dsh-home");
-      const raw = fs.readFileSync(path.join(home, "settings.yaml"), "utf8");
-      // 实测 settings.yaml 的键是 ui-theme(settings 命名空间 "settings.theme"
-      // 持久化后写作 ui-theme);两种写法都兼容
-      const match = raw.match(/^ui-theme:\s*\n\s*preference:\s*["']?(light|dark|system)["']?/m)
-        ?? raw.match(/^settings\.theme:\s*\n\s*preference:\s*["']?(light|dark|system)["']?/m);
-      const preference = match ? match[1] : null;
-      if (preference === "dark" || preference === "light") {
-        nativeTheme.themeSource = preference;
-        console.log(`[app] 启动应用已持久化的外观主题: ${preference}`);
-      }
-    } catch {
-      /* settings.yaml 不存在或读不到 → 保持跟随系统 */
+  // ---------- 外观主题偏好 → nativeTheme.themeSource ----------
+  // 只同步「偏好」(light/dark/system),绝不镜像「解析后的浅/深」:镜像会把
+  // themeSource 锁死,使 dsh 前端 prefers-color-scheme 永远读不到真实系统
+  // 配色(「跟随系统」失效,见 theme-sync.js 说明)。偏好持久化在
+  // <DSH_HOME>/settings.yaml(ui-theme.preference):窗口创建前应用一次,让
+  // 启动页(prefers-color-scheme)与毛玻璃从第一帧就正确;之后 fs.watchFile
+  // 监听文件,用户在 dsh 设置里切换外观时实时生效,无需重启。
+  (function initThemeSync() {
+    const home = process.env.DSH_HOME || path.join(app.getPath("userData"), "dsh-home");
+    const themeSettingsPath = path.join(home, "settings.yaml");
+    const preference = readThemePreference(themeSettingsPath);
+    if (preference) {
+      applyThemePreference(nativeTheme, preference);
+      console.log(`[app] 应用外观偏好: ${preference}`);
     }
+    watchThemePreference(themeSettingsPath, (next) => {
+      if (applyThemePreference(nativeTheme, next)) {
+        console.log(`[app] 外观偏好实时同步: ${next}`);
+      }
+    });
   })();
 
   const VIEW_PRELOAD = {
@@ -385,6 +431,9 @@ function main() {
       lastError = null;
       serviceState = "ready";
       broadcastStatus({ state: "ready", message: `服务已就绪: ${url}` });
+      // 通知事件流依赖 dsh 服务:就绪 → 若开关有开启则启动 watcher
+      notifyReady = true;
+      ensureNotifyWatcher();
       if (contentView && !contentView.webContents.isDestroyed()) {
         contentView.webContents.loadURL(url);
       }
@@ -393,11 +442,15 @@ function main() {
       console.error("[app] dsh 启动失败:", error);
       lastError = error.message;
       serviceState = "error";
+      notifyReady = false;
+      stopNotifyWatcher();
       broadcastStatus({ state: "error", message: lastError });
     });
     server.on("exited", ({ code, signal }) => {
       lastError = `dsh 服务意外退出 (code=${code}, signal=${signal})。点击重试重新启动。`;
       serviceState = "error";
+      notifyReady = false;
+      stopNotifyWatcher();
       broadcastStatus({ state: "error", message: lastError });
       // 若内容视图正显示 WebUI(服务已死,页面已无响应),切回加载页
       // 展示错误与重试入口,而不是让用户对着一块死页面。
@@ -446,41 +499,52 @@ function main() {
     })();
   `;
 
-  // 主题同步:dsh UI 设置里切换外观(浅色/深色/跟随系统)时,前端会在
-  // document.body 上设置/移除 data-ds-dark-theme(有=深色,无=浅色)。
-  // 这里监听该属性并把解析结果上报给主进程,让外壳跟随。
-  const THEME_WATCHER_JS = `
-    (() => {
-      if (window.__dshDesktopThemeWatcher) return;
-      window.__dshDesktopThemeWatcher = true;
-      const report = () => {
-        const dark = document.body ? document.body.hasAttribute('data-ds-dark-theme') : false;
-        if (window.dsh && window.dsh.reportTheme) {
-          window.dsh.reportTheme(dark ? 'dark' : 'light');
-        }
-      };
-      const start = () => {
-        if (!document.body) { setTimeout(start, 100); return; }
-        new MutationObserver(report).observe(document.body, {
-          attributes: true,
-          attributeFilter: ['data-ds-dark-theme']
-        });
-        report();
-      };
-      start();
-    })();
-  `;
-
   function installWebUIInjection() {
     if (!contentView) return;
     const wc = contentView.webContents;
     wc.on("did-finish-load", () => {
       if (!server || !isServerOrigin(wc.getURL(), server.url)) return;
       wc.executeJavaScript(POINTER_DUP_GUARD_JS, true).catch(() => {});
-      wc.executeJavaScript(THEME_WATCHER_JS, true).catch(() => {});
+      wc.executeJavaScript(PLUGIN_BRIDGE_JS, true).catch(() => {});
+      wc.executeJavaScript(MARKET_BRIDGE_JS_FN(marketSidebarEntry), true).catch(() => {});
+      wc.executeJavaScript(STATUS_BRIDGE_JS_FN(statusPanelWidth), true).catch(() => {});
+      wc.insertCSS(PLUGIN_HIDE_CSS).catch(() => {});
+      wc.insertCSS(STATUS_PANEL_CSS).catch(() => {});
       const css = readCustomCss();
       if (css) wc.insertCSS(css).catch(() => {});
     });
+  }
+
+  // ---------- 升级中断自愈 ----------
+  // 升级的「下载+闭包安装」阶段不触碰线上 dsh,「原子替换」窗口毫秒级;但历史
+  // 版本(根树整树 install)可能留下「换上新版但闭包缺失」的坏态。启动时冒烟
+  // 检查当前 dsh 能否运行(与真实启动同运行时跑 dsh --version),失败则自动从
+  // 最新备份恢复,保证 App 永远能回到上次可用的版本。
+  async function healInterruptedUpgrade() {
+    try {
+      const info = getRuntimeDshInfo();
+      if (!info || !info.packageDir) return;
+      const probeHome = path.join(app.getPath("userData"), "boot-probe");
+      const smoker = async (pkgDir) =>
+        verifyDshBoot({ pkgDir, dshHome: probeHome, log: console }).catch(() => ({ ok: false, error: "自检进程异常" }));
+      const first = await smoker(info.packageDir);
+      if (first.ok) return; // 冒烟通过,无需自愈
+      if (!fs.existsSync(path.join(info.packageDir, "lib", "bin.js"))) {
+        console.warn("[app] 自愈: dsh 入口缺失(升级中断残留坏态)");
+      }
+      const backup = findNewestBackup(info.packageDir);
+      if (!backup) {
+        console.warn("[app] 自愈: dsh 无法启动且无备份可恢复(继续,由加载页展示错误)");
+        return;
+      }
+      const rb = restoreDshBackup(info.packageDir, backup);
+      console.log(`[app] 自愈: dsh 自检失败(${first.error}),已从备份恢复 → ${rb.ok ? backup : rb.error || "失败"}`);
+      if (!rb.ok) return;
+      const second = await smoker(info.packageDir);
+      if (!second.ok) console.error("[app] 自愈后 dsh 仍无法启动:", second.error);
+    } catch (error) {
+      console.warn("[app] 启动自愈检查跳过:", error.message);
+    }
   }
 
   async function startServer() {
@@ -519,9 +583,29 @@ function main() {
   }
 
   // ---------- 右侧「dsh 服务与版本」面板(顶栏按钮/菜单控制开关) ----------
+  /**
+   * 「服务状态」共享面板(内容视图注入层)是否可用:仅当 dsh 服务就绪且内容
+   * 视图正显示 dsh WebUI 时成立。异常态(未启动/崩溃/重启中)内容视图在加载页
+   * (file://),注入面板不存在→ 自然回退到 statusView 兜底,两者互不干扰。
+   */
+  function statusInjectActive() {
+    return (
+      !statusInjectBroken &&
+      !!server &&
+      server.ready &&
+      contentView &&
+      !contentView.webContents.isDestroyed() &&
+      isServerOrigin(contentView.webContents.getURL(), server.url)
+    );
+  }
+
   /** @returns {{ open: boolean, canOpen: boolean }} 当前面板状态 */
   function sidebarState() {
-    // 传 open:滞回判定(展开态不参与 canOpen;闭合态按重开阈值)
+    // 注入模式:overlay 面板不挤占内容区,不受窗口宽度约束 → 恒可开
+    if (statusInjectActive()) {
+      return { open: statusPanelOpen, canOpen: true };
+    }
+    // 兜底模式(独立 statusView):宽度布局滞回判定
     const layout = computeSidebar(currentInnerWidth(), { open: sidebarOpen });
     return { open: sidebarOpen, canOpen: layout.canOpen };
   }
@@ -615,6 +699,14 @@ function main() {
     // 面板内容不透明,主题适配底色(页面自带同色背景,避免首帧闪色)
     statusView.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#151517" : "#f9fafb");
     statusView.setBorderRadius(CONTENT_RADIUS);
+    // 面板里的链接(DSH 仓库 / 插件仓库)一律交系统默认浏览器,绝不在
+    // Electron 里开新窗口(target="_blank" 兜底拦截,与内容视图同策略)
+    statusView.webContents.setWindowOpenHandler(({ url }) => {
+      if (url.startsWith("http://") || url.startsWith("https://")) {
+        shell.openExternal(url);
+      }
+      return { action: "deny" };
+    });
     mainWindow.contentView.addChildView(statusView);
     // 先按 0 宽摆位,再从 0 动画展开到目标宽度
     applySidebarWidth(0);
@@ -649,18 +741,101 @@ function main() {
   }
 
   function toggleStatusSidebar() {
-    if (sidebarOpen) {
-      closeStatusSidebar();
-      return sidebarState();
+    // 注入模式(dsh WebUI 页面内)常态:控制内容视图里的共享面板
+    if (statusInjectActive()) {
+      const desiredOpen = !statusPanelOpen;
+      if (desiredOpen) {
+        // 互斥展开:插件侧栏已展开 → 先收起(等动画完成)再展开服务状态;
+        // 编排失败(桥缺失等)→ 回退 statusView 兜底,不让按钮失效
+        runMutualOpen("open-status", {
+          statusOpen: false,
+          pluginSideOpen: !!(lastPluginPanels && lastPluginPanels.side),
+          closePluginSide: () => closePluginSideWithAnimation(),
+          openStatus: () => execStatusBridge("requestOpen()"),
+        }).catch(() => markInjectBroken());
+      } else {
+        execStatusBridge("requestClose()").catch(() => markInjectBroken());
+      }
+      // 预判翻转结果:按钮即时反馈,真实结果随后经桥上报/broadcast 校正
+      return { open: desiredOpen, canOpen: true };
     }
-    openStatusSidebar();
+    fallbackStatusSidebar();
     return sidebarState();
   }
 
+  /** 桥调用失败(注入缺失/异常):标记并整会话回退 statusView 兜底 */
+  function markInjectBroken() {
+    statusInjectBroken = true;
+    console.warn("[app] 服务状态注入桥不可用,回退独立状态面板");
+  }
+
+  /** 兜底路径:独立 WebContentsView 状态面板(statusView,异常态用) */
+  function fallbackStatusSidebar() {
+    if (sidebarOpen) closeStatusSidebar();
+    else openStatusSidebar();
+  }
+
+  /** 调服务状态桥的异步原语(如 requestOpen()/requestClose());桥缺失/超时抛错 */
+  async function execStatusBridge(expr) {
+    if (!contentView || contentView.webContents.isDestroyed()) {
+      throw new Error("内容视图不可用");
+    }
+    const res = await contentView.webContents.executeJavaScript(
+      `window.__dshBoxStatusBridge && window.__dshBoxStatusBridge.${expr}`,
+      true
+    );
+    if (!res || typeof res.open !== "boolean") throw new Error("桥未响应");
+    return res;
+  }
+
+  /** 读 dsh 主题的慢速过渡时长(互斥等待插件动画完成用;缺失回退 300ms) */
+  async function readThemeSlowMs() {
+    if (!contentView || contentView.webContents.isDestroyed()) return 300;
+    try {
+      const v = await contentView.webContents.executeJavaScript(
+        `getComputedStyle(document.documentElement).getPropertyValue('--ds-transition-duration-slow').trim()`,
+        true
+      );
+      const m = /^([\d.]+)(ms|s)$/.exec(v || "");
+      if (m) return parseFloat(m[1]) * (m[2] === "s" ? 1000 : 1);
+    } catch {
+      /* 回退 */
+    }
+    return 300;
+  }
+
+  /** 收起插件侧栏并等待动画完成(读主题时长 + 余量;插件动画无事件可 hook) */
+  async function closePluginSideWithAnimation() {
+    const slow = await readThemeSlowMs();
+    await contentView.webContents.executeJavaScript(
+      'window.__dshBoxPluginBridge && window.__dshBoxPluginBridge.toggle("side")',
+      true
+    );
+    await new Promise((resolve) => setTimeout(resolve, slow + 50));
+  }
+
   // ---------- npm 更新检查(启动查一次 → 顶栏红点) ----------
+  /** 当前红点标志 = dsh 本体更新 或 侧边栏插件更新,任一为真即亮 */
+  function currentUpdateFlag() {
+    return {
+      ...(lastUpdateCheck ?? { hasUpdate: false }),
+      hasUpdate: !!(
+        lastUpdateCheck?.hasUpdate ||
+        lastPluginCheck?.hasUpdate ||
+        lastMarketCheck?.hasUpdate
+      ),
+      plugin: lastPluginCheck
+        ? { hasUpdate: lastPluginCheck.hasUpdate, installed: lastPluginCheck.installed, latest: lastPluginCheck.latest }
+        : null,
+      market: lastMarketCheck
+        ? { hasUpdate: lastMarketCheck.hasUpdate, installed: lastMarketCheck.installed, latest: lastMarketCheck.latest }
+        : null,
+    };
+  }
+
   function broadcastUpdateFlag() {
     if (topBarView && !topBarView.webContents.isDestroyed()) {
-      topBarView.webContents.send("dsh:update-flag", lastUpdateCheck);
+      topBarView.webContents.send("dsh:update-flag", currentUpdateFlag());
     }
   }
 
@@ -677,7 +852,9 @@ function main() {
     }
   }
 
-  // ---------- 升级编排:停服 → 换文件 → 恢复服务 → 刷新红点 ----------
+  // ---------- 升级编排:停服 → 换文件+依赖调和 → 恢复服务 → 刷新红点 ----------
+  // upgradeDsh 已做依赖调和 + 启动自检并自动回滚;这里再兜底:真实启动仍
+  // 失败时用备份回滚,绝不让「升级」把服务留在不可用状态。
   async function performUpgrade(version) {
     const wasReady = server?.ready ?? false;
     broadcastStatus({ state: "starting", message: `正在升级 dsh 至 ${version}…` });
@@ -691,9 +868,264 @@ function main() {
       if (wasReady) await startServer();
       return result;
     }
-    if (wasReady) await startServer();
+    if (wasReady) {
+      await startServer();
+      if (!server.ready && result.backupDir) {
+        // 升级成功但真实启动失败 → 回滚到原版本再试
+        const bootErr = lastError || "dsh 启动失败";
+        const pkgDir = getRuntimeDshInfo().packageDir;
+        const rollback = restoreDshBackup(pkgDir, result.backupDir);
+        if (rollback.ok) {
+          lastError = null;
+          serviceState = "stopped";
+          await startServer();
+          await refreshUpdateFlag();
+          if (server.ready) {
+            return {
+              ok: false,
+              error: `升级后服务无法启动(${bootErr});已回滚到原版本 ${result.previous}`,
+              previous: result.previous,
+            };
+          }
+          return { ok: false, error: `升级后服务无法启动(${bootErr});已回滚,但原版本也无法启动` };
+        }
+        return {
+          ok: false,
+          error: `升级后服务无法启动(${bootErr});且回滚失败(${rollback.error || "文件操作失败"})`,
+        };
+      }
+    }
     await refreshUpdateFlag();
     return result;
+  }
+
+  // ---------- 侧边栏插件检查(服务状态页板块 + 红点) ----------
+  /** 查一次插件(本地版本 + registry 最新),刷新红点并广播;永远不抛错。 */
+  async function refreshPluginCheck() {
+    const dshHome = appDshHome();
+    try {
+      lastPluginCheck = await pluginManager.checkPlugin(dshHome, "dsh-better-sidebar");
+    } catch {
+      lastPluginCheck = {
+        name: "dsh-better-sidebar",
+        installed: pluginManager.getInstalledVersion(dshHome, "dsh-better-sidebar"),
+        latest: null,
+        hasUpdate: false,
+        error: "插件检查失败",
+      };
+    }
+    broadcastUpdateFlag();
+    return lastPluginCheck;
+  }
+
+  // ---------- 插件市场(dshmarket)检查 + 侧边栏入口开关 ----------
+  /** 查一次插件市场(本地版本 + registry 最新),刷新红点并广播;永远不抛错。 */
+  async function refreshMarketCheck() {
+    const dshHome = appDshHome();
+    try {
+      lastMarketCheck = await pluginManager.checkPlugin(dshHome, "dshmarket");
+    } catch {
+      lastMarketCheck = {
+        name: "dshmarket",
+        installed: pluginManager.getInstalledVersion(dshHome, "dshmarket"),
+        latest: null,
+        hasUpdate: false,
+        error: "插件检查失败",
+      };
+    }
+    broadcastUpdateFlag();
+    return lastMarketCheck;
+  }
+
+  /**
+   * 安装(version=null)或更新(version=最新版)侧边栏插件。
+   * 服务运行中则先停后启,让新 bundle 在启动时加载;服务未运行时不动它。
+   * 安装成功后写入 openByDefault 偏好(与浏览器 WebUI 对齐)。
+   */
+  async function performPluginInstall(version = null) {
+    const dshHome = appDshHome();
+    const wasReady = server?.ready ?? false;
+    const installedBefore = pluginManager.getInstalledVersion(dshHome, "dsh-better-sidebar");
+    const label = installedBefore ? "更新" : "安装";
+    broadcastStatus({
+      state: "starting",
+      message: `正在${label}侧边栏插件${version ? ` ${version}` : ""}…`,
+    });
+    if (server) await server.stop();
+    serviceState = "stopped";
+    const result = await pluginManager.installPlugin(dshHome, "dsh-better-sidebar", version);
+    if (!result.ok) {
+      if (wasReady) await startServer();
+      return { ...result, previouslyInstalled: installedBefore };
+    }
+    const installed = pluginManager.getInstalledVersion(dshHome, "dsh-better-sidebar") || version || "unknown";
+    // 装包成功后的任何异常(如写入偏好抛错)都不得让服务停着不恢复:
+    // wasReady 时无论成败都尝试拉回服务;写偏好失败只记录 warning,不判安装失败。
+    let warning = null;
+    try {
+      pluginManager.ensureOpenByDefault(dshHome);
+    } catch (error) {
+      warning = `写入开屏偏好失败: ${error.message || error}`;
+      console.error("[app] 侧边栏插件写入开屏偏好失败:", error);
+    }
+    if (wasReady) {
+      try {
+        await startServer();
+      } catch (error) {
+        console.error("[app] 侧边栏插件安装后重启服务失败:", error);
+        return {
+          ok: false,
+          error: `插件已装,但重启服务失败: ${error.message || error}`,
+          installed,
+          previouslyInstalled: installedBefore,
+          restarted: false,
+        };
+      }
+    }
+    await refreshPluginCheck();
+    return { ok: true, installed, previouslyInstalled: installedBefore, restarted: wasReady, warning };
+  }
+
+  /**
+   * 安装(version=null)或更新(version=最新版)插件市场。
+   * 服务运行中则先停后启,让新 bundle 在启动时加载;服务未运行时不动它。
+   * 插件市场无「开屏偏好」配置,不写 openByDefault。
+   */
+  async function performMarketInstall(version = null) {
+    const dshHome = appDshHome();
+    const wasReady = server?.ready ?? false;
+    const installedBefore = pluginManager.getInstalledVersion(dshHome, "dshmarket");
+    const label = installedBefore ? "更新" : "安装";
+    broadcastStatus({
+      state: "starting",
+      message: `正在${label}插件市场${version ? ` ${version}` : ""}…`,
+    });
+    if (server) await server.stop();
+    serviceState = "stopped";
+    const result = await pluginManager.installPlugin(dshHome, "dshmarket", version);
+    if (!result.ok) {
+      if (wasReady) await startServer();
+      return { ...result, previouslyInstalled: installedBefore };
+    }
+    const installed = pluginManager.getInstalledVersion(dshHome, "dshmarket") || version || "unknown";
+    if (wasReady) {
+      try {
+        await startServer();
+      } catch (error) {
+        console.error("[app] 插件市场安装后重启服务失败:", error);
+        return {
+          ok: false,
+          error: `插件市场已装,但重启服务失败: ${error.message || error}`,
+          installed,
+          previouslyInstalled: installedBefore,
+          restarted: false,
+        };
+      }
+    }
+    await refreshMarketCheck();
+    return { ok: true, installed, previouslyInstalled: installedBefore, restarted: wasReady };
+  }
+
+  /** DSH_HOME:继承环境变量,否则 App 自己的隔离目录(与启动 dsh 一致) */
+  function appDshHome() {
+    return process.env.DSH_HOME || path.join(app.getPath("userData"), "dsh-home");
+  }
+
+  // ---------- 消息通知(横幅 / 声音)----------
+  /**
+   * macOS 通知权限状态(macOS 10.14+ 由系统授权,Electron 无显式申请 API:
+   * 首次 show 通知时系统自动弹授权窗;这里只负责「探测 + 引导」)。
+   * @returns {"granted"|"denied"|"unknown"|"unsupported"}
+   */
+  function notificationPermission() {
+    if (!isMac) return "unsupported";
+    try {
+      const s = systemPreferences.getNotificationSettings();
+      if (!s || typeof s !== "object") return "unknown";
+      if (s.canDisplayAlerts === true) return "granted";
+      if (s.hasSetting) return "denied"; // 用户已做选择但通知被关
+      return "unknown"; // 尚未选择(首次开启横幅时由系统弹窗询问)
+    } catch {
+      return "unknown";
+    }
+  }
+
+  /** 发一条系统横幅(app 名即系统通知里的标题,正文自定);失败静默 */
+  function showBanner(body) {
+    try {
+      if (!Notification.isSupported()) return false;
+      const n = new Notification({ title: APP_NAME, body, silent: true });
+      n.show();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** 播放提示音(macOS 自带 afplay,播放打包的 message.m4a;失败静默) */
+  function playNotifySound() {
+    if (!isMac) return;
+    try {
+      if (!fs.existsSync(NOTIFY_SOUND_PATH)) return;
+      const child = spawn("afplay", [NOTIFY_SOUND_PATH]);
+      child.on("error", () => { /* afplay 缺失/失败忽略 */ });
+    } catch {
+      /* 忽略播放失败 */
+    }
+  }
+
+  /**
+   * 事件流归一化事件 → 横幅 / 声音。
+   * @param {{kind:string, sessionId?:string, title:string, message:string}} ev
+   */
+  function deliverNotifyEvent(ev) {
+    const trunc = (s, n) => (s && s.length > n ? s.slice(0, n) + "…" : s || "");
+    let body = "";
+    switch (ev.kind) {
+      case "task-end":
+        body = ev.title ? `「${ev.title}」任务已完成` : "任务已完成";
+        break;
+      case "task-fail":
+        body = ev.title
+          ? `「${ev.title}」任务失败:${ev.message ? " " + ev.message : "异常终止"}`
+          : `任务失败:${ev.message ? " " + ev.message : "异常终止"}`;
+        break;
+      case "question":
+        body = `有待回答的问题:${ev.message ? " " + ev.message : ""}`;
+        break;
+      case "approval":
+        body = `请求授权:${ev.message ? " " + ev.message : ""}`;
+        break;
+      default:
+        return;
+    }
+    body = trunc(body, 180);
+    if (notifyBanner) showBanner(body);
+    if (notifySound) playNotifySound();
+  }
+
+  /** 停掉事件流 watcher(幂等) */
+  function stopNotifyWatcher() {
+    if (notifyWatcher) {
+      notifyWatcher.stop();
+      notifyWatcher = null;
+    }
+  }
+
+  /** 按「开关开且服务就绪」启停 watcher(开关或服务状态变化后调用) */
+  function ensureNotifyWatcher() {
+    const shouldRun = (notifyBanner || notifySound) && notifyReady;
+    if (shouldRun && !notifyWatcher) {
+      const base = (server && server.url ? server.url : `http://127.0.0.1:${port}`).replace(/^http/, "ws");
+      notifyWatcher = createNotifyWatcher({
+        muxUrl: base + "/api/events.mux",
+        hostUrl: base + "/api/events.host",
+        onEvent: deliverNotifyEvent,
+      });
+      notifyWatcher.start();
+    } else if (!shouldRun) {
+      stopNotifyWatcher();
+    }
   }
 
   // ---------- IPC(preload 桥) ----------
@@ -725,8 +1157,8 @@ function main() {
     if (!result) return { error: "无法获取 npm 版本信息", hasUpdate: false, rows: [] };
     return result;
   });
-  // 顶栏红点查询(启动时已静默查过一次)
-  ipcMain.handle("dsh:get-update-flag", () => lastUpdateCheck ?? { hasUpdate: false });
+  // 顶栏红点查询(启动时已静默查过一次;含插件更新)
+  ipcMain.handle("dsh:get-update-flag", () => currentUpdateFlag());
   // 打开/关闭右侧「dsh 服务与版本」面板(顶栏按钮 / 菜单共用)
   ipcMain.handle("dsh:toggle-sidebar", () => toggleStatusSidebar());
   // 面板当前状态(顶栏按钮激活态/禁用与红点无关)
@@ -756,18 +1188,165 @@ function main() {
     }
   });
 
-  // ---------- 主题同步(dsh UI → 外壳) ----------
-  // dsh UI 在设置里切换外观(浅色/深色/跟随系统)时,dsh 前端会在
-  // document.body 上设置/移除 data-ds-dark-theme;注入脚本把解析结果
-  // 报过来,这里镜像到 nativeTheme.themeSource,让毛玻璃材质、红绿灯、
-  // 顶栏文字(light-dark())一起跟随 dsh 的主题。
-  ipcMain.on("shell:theme-changed", (_event, scheme) => {
-    if (scheme !== "dark" && scheme !== "light") return;
-    if (nativeTheme.themeSource !== scheme) {
-      nativeTheme.themeSource = scheme;
-      console.log(`[app] 外壳主题跟随 dsh UI: ${scheme}`);
+  // ---------- 侧边栏插件(dsh-better-sidebar) ----------
+  // 服务状态页的「侧边栏插件」板块:每次进入查一次(本地版本 + registry 最新)
+  ipcMain.handle("dsh:plugin-info", async () => {
+    const info = await refreshPluginCheck();
+    return info ?? { name: pluginManager.PLUGIN_NAME, error: "无法获取插件信息" };
+  });
+  // 安装(version=null) / 更新(version=最新版):单飞,成功后自动重启服务
+  ipcMain.handle("dsh:plugin-install", async (_event, version) => {
+    if (pluginInstalling) return { ok: false, error: "已有插件安装/更新任务进行中,请稍候" };
+    if (version != null && (typeof version !== "string" || !/^\d+\.\d+\.\d+(?:[-+].*)?$/.test(version))) {
+      return { ok: false, error: "版本号格式不正确" };
+    }
+    pluginInstalling = true;
+    try {
+      return await performPluginInstall(version ?? null);
+    } catch (error) {
+      console.error("[app] 插件安装失败:", error);
+      return { ok: false, error: error.message || String(error) };
+    } finally {
+      pluginInstalling = false;
     }
   });
+  // 顶栏「侧栏/底栏」切换按钮 → 桥 → 模拟点击插件自己的 toggle 按钮。
+  // 互斥:展开「侧栏」时若服务状态面板已展开 → 先收起服务状态(等动画完成)再展开。
+  ipcMain.handle("dsh:toggle-plugin-panel", async (_event, which) => {
+    if (which !== "side" && which !== "bottom") return { ok: false, error: "参数错误" };
+    if (!contentView || contentView.webContents.isDestroyed()) {
+      return { ok: false, error: "内容视图不可用" };
+    }
+    // 本次是「展开侧栏」(当前折叠)且服务状态面板展开 → 先收服务状态
+    const sideCollapsed = !(lastPluginPanels && lastPluginPanels.side);
+    if (which === "side" && sideCollapsed && statusPanelOpen) {
+      try {
+        await execStatusBridge("requestClose()");
+      } catch (error) {
+        markInjectBroken();
+        return { ok: false, error: `收起服务状态失败: ${error.message || error}` };
+      }
+    }
+    try {
+      const res = await contentView.webContents.executeJavaScript(
+        `window.__dshBoxPluginBridge && window.__dshBoxPluginBridge.toggle(${JSON.stringify(which)})`,
+        true
+      );
+      if (res && res.ok) return res;
+      return { ok: false, error: (res && res.error) || "插件未挂载" };
+    } catch (error) {
+      return { ok: false, error: error.message || String(error) };
+    }
+  });
+  // 桥上报的面板开合状态 → 记录(互斥编排用)并转发给顶栏(按钮高亮/灰显)
+  ipcMain.on("shell:plugin-panels", (_event, state) => {
+    if (!state || typeof state !== "object") return;
+    lastPluginPanels = state;
+    if (topBarView && !topBarView.webContents.isDestroyed()) {
+      topBarView.webContents.send("dsh:plugin-panels", state);
+    }
+  });
+
+  // ---------- 插件市场(dshmarket) ----------
+  // 服务状态页「插件市场」板块:每次进入查一次(本地版本 + registry 最新)
+  ipcMain.handle("dsh:market-info", async () => {
+    const info = await refreshMarketCheck();
+    return info ?? { name: "dshmarket", error: "无法获取插件市场信息" };
+  });
+  // 安装(version=null) / 更新(version=最新版):单飞,成功后自动重启服务
+  ipcMain.handle("dsh:market-install", async (_event, version) => {
+    if (marketInstalling) return { ok: false, error: "已有插件市场安装/更新任务进行中,请稍候" };
+    if (version != null && (typeof version !== "string" || !/^\d+\.\d+\.\d+(?:[-+].*)?$/.test(version))) {
+      return { ok: false, error: "版本号格式不正确" };
+    }
+    marketInstalling = true;
+    try {
+      return await performMarketInstall(version ?? null);
+    } catch (error) {
+      console.error("[app] 插件市场安装失败:", error);
+      return { ok: false, error: error.message || String(error) };
+    } finally {
+      marketInstalling = false;
+    }
+  });
+  // 「在 DSH 侧边栏显示插件市场入口」开关:读(返回当前值)/写(持久化 + 注入层即时生效)
+  ipcMain.handle("dsh:market-switch", (_event, next) => {
+    if (next === undefined) {
+      return { ok: true, enabled: marketSidebarEntry };
+    }
+    if (typeof next !== "boolean") return { ok: false, error: "参数错误" };
+    marketSidebarEntry = next;
+    writeSettingBool(appDshHome(), "marketSidebarEntry", next);
+    // 通知注入层即时移除/插入侧边栏入口(Spa 重载后由注入参数兜底)
+    if (contentView && !contentView.webContents.isDestroyed()) {
+      contentView.webContents
+        .executeJavaScript(
+          `window.__dshBoxMarketBridge && window.__dshBoxMarketBridge.setEnabled(${next ? "true" : "false"})`,
+          true
+        )
+        .catch(() => {});
+    }
+    return { ok: true, enabled: marketSidebarEntry };
+  });
+
+  // ---------- 「服务状态」共享面板(内容视图注入层) ----------
+  // 注入层上报开合:同步顶栏按钮高亮;并复位「桥缺失」标记(桥重新注入成功
+  // 即上报,页面重载后注入失败标记随之清除)
+  ipcMain.on("shell:status-panel", (_event, state) => {
+    if (!state || typeof state.open !== "boolean") return;
+    statusInjectBroken = false;
+    statusPanelOpen = state.open;
+    // 注入面板打开时,异常态 statusView 兜底若还开着(如服务异常时打开过),
+    // 一并收起,避免两块面板同时遮挡内容
+    if (statusPanelOpen && sidebarOpen && statusView) closeStatusSidebar();
+    broadcastSidebarState();
+  });
+  // 拖拽结束持久化面板宽度(240~640 钳制)
+  ipcMain.handle("dsh:status-panel-width", (_event, width) => {
+    const w = Math.max(
+      STATUS_WIDTH_MIN,
+      Math.min(STATUS_WIDTH_MAX, Math.round(Number(width) || STATUS_WIDTH_DEFAULT))
+    );
+    statusPanelWidth = w;
+    writeSettingValue(appDshHome(), "statusPanelWidth", w);
+    return { ok: true, width: w };
+  });
+
+  // ---------- 消息通知:读/写开关(横幅 / 声音)+ 权限状态 ----------
+  // getter(无参)/setter(传 {banner?, sound?}):持久化到 settings.yaml
+  // dsh-box.notificationBanner / notificationSound;「横幅」首次开启 → 发一条
+  // 测试通知,触发 macOS 系统授权弹窗(需求 5:用户首次开启时引导系统授权);
+  // 返回 {banner, sound, permission},面板据此回显开关 + 权限被拒提示。
+  ipcMain.handle("dsh:notify-settings", (_event, next) => {
+    if (next === undefined || next === null) {
+      return { banner: notifyBanner, sound: notifySound, permission: notificationPermission() };
+    }
+    if (typeof next !== "object") return { ok: false, error: "参数错误" };
+    const patch = {};
+    if (typeof next.banner === "boolean") patch.banner = next.banner;
+    if (typeof next.sound === "boolean") patch.sound = next.sound;
+    if (Object.keys(patch).length === 0) return { ok: false, error: "参数错误" };
+
+    if (typeof patch.banner === "boolean") {
+      notifyBanner = patch.banner;
+      writeSettingBool(appDshHome(), "notificationBanner", notifyBanner);
+      // 首次开启横幅 → 发测试通知:macOS 在首条通知时自动弹出系统授权窗
+      if (notifyBanner && !notifyPrompted) {
+        notifyPrompted = true;
+        showBanner("横幅通知已开启:任务完成、失败、提问和授权时会在此提醒你");
+      }
+    }
+    if (typeof patch.sound === "boolean") {
+      notifySound = patch.sound;
+      writeSettingBool(appDshHome(), "notificationSound", notifySound);
+    }
+    ensureNotifyWatcher();
+    return { banner: notifyBanner, sound: notifySound, permission: notificationPermission() };
+  });
+
+  // (外观主题同步已上移到 initThemeSync:偏好 → nativeTheme.themeSource,
+  //  由 fs.watchFile 监听 settings.yaml 实时生效;不再镜像解析后的浅/深,
+  //  避免锁死 prefers-color-scheme 导致「跟随系统」失效,见 theme-sync.js)
 
   // ---------- 权限:本应用只信任本机 dsh 服务 ----------
   // (必须在 app ready 之后才能访问 session,所以放在 whenReady 里)
@@ -842,6 +1421,24 @@ function main() {
 
     // 启动时自动查一次 npm(非阻塞,失败静默):有新版 → 顶栏入口红点
     refreshUpdateFlag().catch(() => {});
+    // 启动时静默查一次侧边栏插件(本地 + registry):插件有新版同样亮红点
+    refreshPluginCheck().catch(() => {});
+    // 启动时读「侧边栏显示插件市场入口」开关(注入参数用);并静默查插件市场
+    marketSidebarEntry = readSettingBool(appDshHome(), "marketSidebarEntry");
+    // 启动时读「服务状态」共享面板宽度(注入参数用;拖拽后持久化)
+    {
+      const rawW = readSettingValue(appDshHome(), "statusPanelWidth");
+      statusPanelWidth = Math.max(
+        STATUS_WIDTH_MIN,
+        Math.min(STATUS_WIDTH_MAX, Math.round(Number(rawW) || STATUS_WIDTH_DEFAULT))
+      );
+    }
+    // 启动时读「消息通知」开关(横幅 / 声音,默认关;服务就绪后按需启动 watcher)
+    notifyBanner = readSettingBool(appDshHome(), "notificationBanner");
+    notifySound = readSettingBool(appDshHome(), "notificationSound");
+    // 启动读完后补一次编排:服务若已就绪则立即启动 watcher(ready 事件可能先于本段触发)
+    ensureNotifyWatcher();
+    refreshMarketCheck().catch(() => {});
 
     // 测试钩子:冒烟测试模式 — 就绪后打印标记并退出(CI / 自检用)
     if (process.env.DSH_SMOKE === "1") {
@@ -865,7 +1462,8 @@ function main() {
   });
 
   app.on("will-quit", () => {
-    // 尽力清理 dsh 子进程(SIGTERM);进程退出后由 OS 兜底
+    // 尽力清理:停掉通知事件流 watcher 与 dsh 子进程(SIGTERM);进程退出后由 OS 兜底
+    stopNotifyWatcher();
     if (server) server.stop().catch(() => {});
   });
 }

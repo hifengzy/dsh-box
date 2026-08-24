@@ -33,19 +33,21 @@ body {
   user-select: none;
 }
 
-/* 功能入口区:no-drag 保证里面的控件可点击 */
+/* 功能入口区:no-drag 保证里面的控件可点击;按钮 28×28,相邻间距 4(icon 视觉密度) */
 .actions {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   -webkit-app-region: no-drag;
 }
 
-/* GitHub / dsh 状态入口:28×28 无背景按钮(适配 40px 顶栏),悬停才显示背景色,
- * 图标 20×20 居中。 */
+/* GitHub / dsh 状态 / 插件面板 入口:28×28 圆形按钮(适配 40px 顶栏),
+ * 默认无背景;背景色仅用于 hover(激活态不常亮 — 激活由 icon 素材表达),
+ * 图标 16×16 居中。 */
 .github-btn,
-.status-btn {
+.status-btn,
+.panel-btn {
   position: relative;
   width: 28px;
   height: 28px;
@@ -53,34 +55,39 @@ body {
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 8px;
+  border-radius: 50%; /* 圆形按钮 */
   background: transparent; /* 默认不显示按钮背景 */
   cursor: pointer;
   -webkit-app-region: no-drag;
   transition: background-color 0.15s ease;
 }
 
+/* 背景色仅用于鼠标悬停(hover);按下瞬时微反馈沿用同一套 hover 底色 */
 .github-btn:hover,
-.status-btn:hover {
+.status-btn:hover,
+.panel-btn:hover:not(:disabled) {
   background-color: var(--bar-hover);
 }
 
 .github-btn:active,
-.status-btn:active {
-  background-color: var(--bar-active);
+.status-btn:active,
+.panel-btn:active:not(:disabled) {
+  background-color: var(--bar-hover);
 }
 
 .github-btn:focus-visible,
-.status-btn:focus-visible {
+.status-btn:focus-visible,
+.panel-btn:focus-visible {
   outline: 1px solid var(--bar-text);
   outline-offset: -1px;
 }
 
-/* 图标:mask 把 svg 镂空成纯色,随 light/dark 自动变色 */
+/* 图标:16×16,mask 把 svg 镂空成纯色,随 light/dark 自动变色 */
 .github-icon,
-.status-icon {
-  width: 20px;
-  height: 20px;
+.status-icon,
+.panel-icon {
+  width: 16px;
+  height: 16px;
   background-color: var(--bar-text);
 }
 
@@ -90,30 +97,57 @@ body {
 }
 
 .status-icon {
-  -webkit-mask: url("../../assets/dsh-status.svg") no-repeat center / contain;
-  mask: url("../../assets/dsh-status.svg") no-repeat center / contain;
+  -webkit-mask: url("../../assets/dashboard.svg") no-repeat center / contain;
+  mask: url("../../assets/dashboard.svg") no-repeat center / contain;
 }
 
-/* 更新红点:有可升级版本时,状态入口右上角亮起(红色,带一圈与玻璃适配的描边) */
+/* 侧边栏插件两个面板开关:右侧栏 / 底部面板(与 dsh UI 同款线框图标) */
+.panel-icon-side {
+  -webkit-mask: url("../../assets/sidebar.svg") no-repeat center / contain;
+  mask: url("../../assets/sidebar.svg") no-repeat center / contain;
+}
+
+.panel-icon-bottom {
+  -webkit-mask: url("../../assets/bottom.svg") no-repeat center / contain;
+  mask: url("../../assets/bottom.svg") no-repeat center / contain;
+}
+
+/* 更新红点:有可升级版本时,状态入口右上角亮起(红色,带一圈与玻璃适配的描边)。
+ * 直径 4.5px = 原 9px 的一半(等比缩放:位置 3→1.5、描边 1.5→0.75,保持贴角观感) */
 .status-dot {
   position: absolute;
-  top: 3px;
-  right: 3px;
-  width: 9px;
-  height: 9px;
+  top: 1.5px;
+  right: 1.5px;
+  width: 4.5px;
+  height: 4.5px;
   border-radius: 50%;
   background: light-dark(rgb(236, 19, 19), rgb(242, 90, 90));
-  box-shadow: 0 0 0 1.5px light-dark(rgba(255, 255, 255, 0.85), rgba(20, 26, 36, 0.85));
+  box-shadow: 0 0 0 0.75px light-dark(rgba(255, 255, 255, 0.85), rgba(20, 26, 36, 0.85));
   pointer-events: none;
 }
 
-/* 状态按钮激活态:面板展开时点亮(品牌蓝图标 + 淡色底),与红点互不干扰 */
-.status-btn.status-btn-active {
-  background-color: var(--bar-active);
+/* 状态按钮激活态:面板展开时「替换 icon 素材」点亮(常态线框 → 实心填充 -1 版),
+ * 颜色保持主题色(var(--bar-text));不再常亮背景色(hover 才显示);与红点互不干扰 */
+.status-btn.status-btn-active .status-icon {
+  -webkit-mask: url("../../assets/dashboard-1.svg") no-repeat center / contain;
+  mask: url("../../assets/dashboard-1.svg") no-repeat center / contain;
 }
 
-.status-btn.status-btn-active .status-icon {
-  background-color: light-dark(rgb(65, 118, 230), rgb(103, 158, 254));
+/* 插件面板按钮激活态:对应面板在页面内展开时替换 icon 素材(-1 实心版),无常亮背景 */
+.panel-btn.panel-btn-active .panel-icon-side {
+  -webkit-mask: url("../../assets/sidebar-1.svg") no-repeat center / contain;
+  mask: url("../../assets/sidebar-1.svg") no-repeat center / contain;
+}
+
+.panel-btn.panel-btn-active .panel-icon-bottom {
+  -webkit-mask: url("../../assets/bottom-1.svg") no-repeat center / contain;
+  mask: url("../../assets/bottom-1.svg") no-repeat center / contain;
+}
+
+/* 插件未安装/未挂载:置灰禁用 */
+.panel-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 /* 窗口过窄无法展开面板时:置灰禁用 */
