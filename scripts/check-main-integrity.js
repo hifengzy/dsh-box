@@ -46,6 +46,9 @@ const REQUIRED_MAIN = [
 const REQUIRED_MAIN_SNIPPETS = [
   ["theme-sync 接入", /require\(["']\.\/theme-sync["']\)/],
   ["notify-watch 接入", /require\(["']\.\/notify-watch["']\)/],
+  ["应用自更新接入", /require\(["']\.\/app-updater["']\)/],
+  ["应用自更新初始化", /initAppUpdateCheck\s*\(/],
+  ["应用自更新安装 IPC", /ipcMain\.handle\(["']dsh:app-update-install["']/],
   ["通知设置 IPC", /ipcMain\.handle\(["']dsh:notify-settings["']/],
   ["通知事件流 watcher 启动", /createNotifyWatcher\s*\(/],
   ["升级回滚工具接入", /restoreDshBackup/],

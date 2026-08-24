@@ -150,6 +150,89 @@ body {
   cursor: default;
 }
 
+/* ---------- 应用自更新「新版本」按钮(github 左侧,出现时插入) ----------
+ * 标签化 pill 按钮(28 高,非圆形,与圆形图标按钮区分文案形态):
+ *   available  「新版本」        描边弱强调(点击 → 开始下载)
+ *   downloading「下载中 n%」      背景从左到右涂色(fill 宽度 = 进度%)
+ *   downloaded 「安装」          反白主按钮(fill 100% 恰好涂满)
+ *   installing 「安装中…」       禁用
+ *   error      「重试」          红色描边(点击 → 重新下载)
+ * 与 github 按钮间距 ≥30px = actions gap 4 + 本按钮右侧 margin 26;
+ * hidden 时 display:none,不留空位(其他按钮间距不受影响)。 */
+.app-update-btn {
+  position: relative;
+  height: 28px;
+  padding: 0; /* 内边距移到 label 层:fill 的 width:100% 才能涂满含 padding 的整宽 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  /* 描边用 inset box-shadow 而非 border:border 占布局宽度,box-sizing:border-box
+     下会让 fill 的 100%(padding-box)永远差描边 2px 涂不满;inset shadow 不占布局 */
+  box-shadow: inset 0 0 0 1px var(--bar-text);
+  border-radius: 100px;
+  background: transparent;
+  color: var(--bar-text);
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+  cursor: pointer;
+  overflow: hidden;
+  margin-right: 26px; /* 配合 .actions gap 4 = 与 github 间距 30px */
+  -webkit-app-region: no-drag;
+  transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+
+.app-update-btn:hover:not(:disabled) {
+  background-color: var(--bar-hover);
+}
+
+.app-update-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.app-update-btn:focus-visible {
+  outline: 1px solid var(--bar-text);
+  outline-offset: -1px;
+}
+
+/* 进度涂色层:下载中背景从左到右涂满(宽度 = 下载进度),100% 恰好涂满按钮 */
+.app-update-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: calc(var(--app-update-progress, 0) * 1%);
+  background: var(--bar-active);
+  border-radius: 100px;
+  transition: width 0.12s linear;
+  pointer-events: none;
+}
+
+/* 下载完成(「安装」):fill 100% 涂满 + 反白主按钮 */
+.app-update-btn[data-state="downloaded"] .app-update-fill {
+  background: var(--bar-text);
+}
+
+.app-update-btn[data-state="downloaded"] {
+  color: light-dark(rgba(249, 250, 251, 0.95), rgba(20, 26, 36, 0.92));
+}
+
+/* 错误(「重试」):红色描边与文案 */
+.app-update-btn[data-state="error"] {
+  color: light-dark(rgb(208, 30, 30), rgb(255, 110, 110));
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
+/* 文案层压在涂色/背景之上;内边距在此(label 撑开按钮宽,fill 不受 padding 影响) */
+.app-update-label {
+  position: relative;
+  z-index: 1;
+  padding: 0 12px;
+  pointer-events: none;
+}
+
 /* 窗口过窄无法展开面板时:置灰禁用 */
 .status-btn:disabled {
   opacity: 0.45;

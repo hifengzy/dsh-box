@@ -50,6 +50,25 @@ contextBridge.exposeInMainWorld("dsh", {
   /** 应用内升级捆绑的 dsh 到指定版本(主进程会停服→替换→恢复) */
   upgrade: (version) => ipcRenderer.invoke("dsh:upgrade", version),
 
+  /** 查询应用自更新状态({state,percent,version,error});dev 模式为 disabled */
+  getAppUpdateState: () => ipcRenderer.invoke("dsh:app-update-state"),
+
+  /** 订阅应用自更新状态变化(顶栏「新版本」按钮);返回取消订阅函数 */
+  onAppUpdate: (callback) => {
+    const listener = (_event, state) => callback(state);
+    ipcRenderer.on("dsh:app-update", listener);
+    return () => ipcRenderer.removeListener("dsh:app-update", listener);
+  },
+
+  /** 主动检查应用更新(菜单「检查更新…」) */
+  checkAppUpdate: () => ipcRenderer.invoke("dsh:app-update-check"),
+
+  /** 开始下载应用新版本(顶栏「新版本」→ 下载中) */
+  downloadAppUpdate: () => ipcRenderer.invoke("dsh:app-update-download"),
+
+  /** 安装已下载的应用新版本(顶栏「安装」→ Squirrel 退出+替换+重启) */
+  installAppUpdate: () => ipcRenderer.invoke("dsh:app-update-install"),
+
   /** 停止 dsh 服务(状态页「停止」按钮) */
   stopServer: () => ipcRenderer.invoke("dsh:stop"),
 
