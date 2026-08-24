@@ -27,9 +27,11 @@ app.whenReady().then(async () => {
   try {
     let aboutCalled = 0;
     let statusCalled = 0;
+    let updateCalled = 0;
     const menu = createAppMenu({
       onAbout: () => { aboutCalled += 1; },
       onOpenStatus: () => { statusCalled += 1; },
+      onCheckUpdate: () => { updateCalled += 1; },
     });
     const functional = (submenu) => submenu.items.filter((i) => i.type !== "separator");
     const appMenu = menu.items[0];
@@ -46,6 +48,7 @@ app.whenReady().then(async () => {
     const expect = [
       "关于 DSH Box",
       MENU_LABELS.dshStatus,
+      MENU_LABELS.checkUpdates,
       "服务",
       "隐藏 DSH Box",
       "隐藏其他",
@@ -71,6 +74,13 @@ app.whenReady().then(async () => {
     statusItem.click();
     if (statusCalled !== 1) throw new Error("「dsh 服务与版本…」未触发 onOpenStatus");
     console.log(`[3.5] 「${MENU_LABELS.dshStatus}」→ onOpenStatus ✓`);
+
+    // 3.6 「检查更新…」触发 onCheckUpdate(应用自更新检查)
+    const updateItem = appMenu.submenu.items.find((i) => i.label === MENU_LABELS.checkUpdates);
+    if (!updateItem) throw new Error(`缺少「${MENU_LABELS.checkUpdates}」`);
+    updateItem.click();
+    if (updateCalled !== 1) throw new Error("「检查更新…」未触发 onCheckUpdate");
+    console.log(`[3.6] 「${MENU_LABELS.checkUpdates}」→ onCheckUpdate ✓`);
 
     // 4. 编辑 / 窗口菜单齐全
     const editLabels = functional(menu.items.find((i) => i.label === "编辑").submenu).map((i) => i.label);

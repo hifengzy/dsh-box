@@ -20,6 +20,7 @@ const MENU_LABELS = {
   appName: "DSH Box",
   about: "关于 DSH Box",
   dshStatus: "dsh 服务与版本…",
+  checkUpdates: "检查更新…",
   services: "服务",
   hide: "隐藏 DSH Box",
   hideOthers: "隐藏其他",
@@ -50,12 +51,13 @@ const MENU_LABELS = {
 
 /**
  * 构建应用菜单。
- * @param {{ onAbout?: () => void, onOpenStatus?: () => void }} [handlers]
+ * @param {{ onAbout?: () => void, onOpenStatus?: () => void, onCheckUpdate?: () => void }} [handlers]
  *   onAbout: 点「关于 DSH Box」→ 打开品牌弹窗
  *   onOpenStatus: 点「dsh 服务与版本…」→ 打开服务状态/版本窗口
+ *   onCheckUpdate: 点「检查更新…」→ 触发应用自更新检查
  * @returns {Menu}
  */
-function createAppMenu({ onAbout = () => {}, onOpenStatus = () => {} } = {}) {
+function createAppMenu({ onAbout = () => {}, onOpenStatus = () => {}, onCheckUpdate = () => {} } = {}) {
   const isMac = process.platform === "darwin";
 
   const template = [
@@ -67,6 +69,7 @@ function createAppMenu({ onAbout = () => {}, onOpenStatus = () => {} } = {}) {
             submenu: [
               { label: MENU_LABELS.about, click: () => onAbout() },
               { label: MENU_LABELS.dshStatus, click: () => onOpenStatus() },
+              { label: MENU_LABELS.checkUpdates, click: () => onCheckUpdate() },
               { type: "separator" },
               { label: MENU_LABELS.services, role: "services" },
               { type: "separator" },
