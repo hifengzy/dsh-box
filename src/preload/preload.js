@@ -34,9 +34,6 @@ contextBridge.exposeInMainWorld("dsh", {
   /** 打开外部链接(仅 http/https,主进程校验) */
   openExternal: (url) => ipcRenderer.invoke("shell:open-external", url),
 
-  /** 上报 dsh UI 当前解析出的主题('dark'|'light'),外壳据此跟随 */
-  reportTheme: (scheme) => ipcRenderer.send("shell:theme-changed", scheme),
-
   /** 查一次 npm 上的 dsh 版本(进入「服务与版本」页时调用),返回完整列表 */
   checkUpdates: () => ipcRenderer.invoke("dsh:check-updates"),
 
@@ -105,4 +102,10 @@ contextBridge.exposeInMainWorld("dsh", {
 
   /** 「服务状态」共享面板:拖拽结束持久化宽度(仅内容视图注入层调用) */
   setStatusPanelWidth: (width) => ipcRenderer.invoke("dsh:status-panel-width", width),
+
+  /** 读通知开关 + macOS 通知权限:返回 { banner, sound, permission } */
+  getNotificationSettings: () => ipcRenderer.invoke("dsh:notify-settings"),
+
+  /** 写通知开关(传 { banner?, sound? }):持久化 + 首次开启横幅触发系统授权 */
+  setNotificationSettings: (next) => ipcRenderer.invoke("dsh:notify-settings", next ?? {}),
 });

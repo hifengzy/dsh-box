@@ -44,11 +44,7 @@ function syncSidebar(state) {
   statusBtn.setAttribute("aria-pressed", String(open));
   // 展开时始终可点(用于关闭);闭合时才按 canOpen 决定是否禁用(窗口太窄)
   statusBtn.disabled = !open && !canOpen;
-  statusBtn.title = open
-    ? "关闭 dsh 服务与版本"
-    : canOpen
-      ? "dsh 服务与版本"
-      : "窗口太窄,无法展开 dsh 服务面板";
+  // tooltip 固定为「管理」(需求指定);禁用/激活态仍由视觉与 aria 表达
 }
 
 statusBtn.addEventListener("click", async () => {
@@ -82,20 +78,20 @@ window.dsh.onUpdateFlag(renderUpdateDot);
 const pluginSideBtn = document.querySelector("#pluginSideBtn");
 const pluginBottomBtn = document.querySelector("#pluginBottomBtn");
 
-function bindPanelBtn(btn, which, labelOpen, labelClosed) {
+function bindPanelBtn(btn, which) {
   btn.addEventListener("click", () => {
     window.dsh.togglePluginPanel(which).catch(() => {});
   });
   btn.addEventListener("dblclick", (event) => {
     event.stopPropagation(); // 不触发顶栏双击最大化
   });
-  btn._labels = { open: labelOpen, closed: labelClosed };
 }
 
-bindPanelBtn(pluginSideBtn, "side", "折叠侧边栏", "展开侧边栏");
-bindPanelBtn(pluginBottomBtn, "bottom", "折叠底部面板", "展开底部面板");
+bindPanelBtn(pluginSideBtn, "side");
+bindPanelBtn(pluginBottomBtn, "bottom");
 
-/** 桥上报状态:installed/active=false → 禁用;否则按开合渲染激活态 + 标题 */
+/** 桥上报状态:installed/active=false → 禁用;否则按开合渲染激活态。
+    tooltip 固定为「侧边栏 / 底部面板」(需求指定,不随状态变化)。 */
 function renderPluginPanels(state) {
   const s = state || {};
   const enabled = s.installed !== false && s.active !== false;
@@ -104,11 +100,6 @@ function renderPluginPanels(state) {
     const open = whichOf(btn) === "side" ? !!s.side : !!s.bottom;
     btn.classList.toggle("panel-btn-active", enabled && open);
     btn.setAttribute("aria-pressed", String(enabled && open));
-    if (!enabled) {
-      btn.title = s.installed === false ? "侧边栏插件未安装" : "打开会话后可切换侧边栏";
-    } else {
-      btn.title = open ? btn._labels.open : btn._labels.closed;
-    }
   });
 }
 

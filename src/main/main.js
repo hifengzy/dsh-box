@@ -23,10 +23,11 @@
  *   并且顶栏里将来可以随意加搜索框等功能入口(纯 HTML)。
  */
 
-const { app, BrowserWindow, Menu, session, shell, ipcMain, WebContentsView, nativeTheme } = require("electron");
+const { app, BrowserWindow, Menu, session, shell, ipcMain, WebContentsView, nativeTheme, Notification, systemPreferences } = require("electron");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { spawn } = require("node:child_process");
 const { DshServer, DEFAULT_PORT } = require("./dsh-server");
 const { isServerOrigin, isTrustedOrigin } = require("./url-guard");
 const { createTray } = require("./tray");
@@ -34,7 +35,7 @@ const { createAppMenu } = require("./menu");
 const { showAboutWindow } = require("./about");
 const { getRuntimeDshInfo } = require("./dsh-version");
 const npmCheck = require("./npm-check");
-const { upgradeDsh } = require("./dsh-upgrade");
+const { upgradeDsh, restoreDshBackup, verifyDshBoot, findNewestBackup } = require("./dsh-upgrade");
 const { computeSidebar, SIDEBAR_GAP } = require("./sidebar-layout");
 const { SIDEBAR_ANIM_MS, easeSidebar } = require("./sidebar-anim");
 const pluginManager = require("./plugin-manager");
@@ -52,6 +53,8 @@ const {
   STATUS_WIDTH_DEFAULT,
 } = require("./status-ui-inject");
 const { runMutualOpen } = require("./status-panel-router");
+const { readThemePreference, applyThemePreference, watchThemePreference } = require("./theme-sync");
+const { createNotifyWatcher } = require("./notify-watch");
 
 const APP_NAME = "DSH Box";
 const isMac = process.platform === "darwin";
@@ -160,33 +163,43 @@ function main() {
   let lastPluginPanels = null;
   /** 「服务状态」共享面板宽度(拖拽持久化,启动时读 settings.yaml) */
   let statusPanelWidth = STATUS_WIDTH_DEFAULT;
+  /** 横幅通知开关(默认关;持久化 dsh-box.notificationBanner) */
+  let notifyBanner = false;
+  /** 声音通知开关(默认关;持久化 dsh-box.notificationSound) */
+  let notifySound = false;
+  /** 本次运行是否已发过「开启横幅」测试通知(首次触发 macOS 系统授权弹窗) */
+  let notifyPrompted = false;
+  /** dsh 服务是否就绪(通知事件流依赖 dsh 服务在线) */
+  let notifyReady = false;
+  /** dsh 事件流 watcher(createNotifyWatcher 实例);null = 未运行 */
+  let notifyWatcher = null;
+  /** 提示音文件(随 App 打包的 assets/message.m4a,dev 与打包同相对路径) */
+  const NOTIFY_SOUND_PATH = path.join(__dirname, "..", "..", "assets", "message.m4a");
 
   const port = Number(process.env.DSH_APP_PORT) || DEFAULT_PORT;
 
   app.setName(APP_NAME);
 
-  // ---------- 启动即应用已持久化的外观主题 ----------
-  // dsh UI 的「外观」偏好持久化在 <DSH_HOME>/settings.yaml 的
-  // settings.theme.preference(light/dark/system)。窗口创建前读取并设置
-  // nativeTheme.themeSource,让启动页(prefers-color-scheme)与毛玻璃
-  // 从第一帧就跟随用户已设置的主题,而不是先闪一下系统主题。
-  // 之后 dsh UI 加载完成会通过 shell:theme-changed 持续同步。
-  (function applyPersistedTheme() {
-    try {
-      const home = process.env.DSH_HOME || path.join(app.getPath("userData"), "dsh-home");
-      const raw = fs.readFileSync(path.join(home, "settings.yaml"), "utf8");
-      // 实测 settings.yaml 的键是 ui-theme(settings 命名空间 "settings.theme"
-      // 持久化后写作 ui-theme);两种写法都兼容
-      const match = raw.match(/^ui-theme:\s*\n\s*preference:\s*["']?(light|dark|system)["']?/m)
-        ?? raw.match(/^settings\.theme:\s*\n\s*preference:\s*["']?(light|dark|system)["']?/m);
-      const preference = match ? match[1] : null;
-      if (preference === "dark" || preference === "light") {
-        nativeTheme.themeSource = preference;
-        console.log(`[app] 启动应用已持久化的外观主题: ${preference}`);
-      }
-    } catch {
-      /* settings.yaml 不存在或读不到 → 保持跟随系统 */
+  // ---------- 外观主题偏好 → nativeTheme.themeSource ----------
+  // 只同步「偏好」(light/dark/system),绝不镜像「解析后的浅/深」:镜像会把
+  // themeSource 锁死,使 dsh 前端 prefers-color-scheme 永远读不到真实系统
+  // 配色(「跟随系统」失效,见 theme-sync.js 说明)。偏好持久化在
+  // <DSH_HOME>/settings.yaml(ui-theme.preference):窗口创建前应用一次,让
+  // 启动页(prefers-color-scheme)与毛玻璃从第一帧就正确;之后 fs.watchFile
+  // 监听文件,用户在 dsh 设置里切换外观时实时生效,无需重启。
+  (function initThemeSync() {
+    const home = process.env.DSH_HOME || path.join(app.getPath("userData"), "dsh-home");
+    const themeSettingsPath = path.join(home, "settings.yaml");
+    const preference = readThemePreference(themeSettingsPath);
+    if (preference) {
+      applyThemePreference(nativeTheme, preference);
+      console.log(`[app] 应用外观偏好: ${preference}`);
     }
+    watchThemePreference(themeSettingsPath, (next) => {
+      if (applyThemePreference(nativeTheme, next)) {
+        console.log(`[app] 外观偏好实时同步: ${next}`);
+      }
+    });
   })();
 
   const VIEW_PRELOAD = {
@@ -418,6 +431,9 @@ function main() {
       lastError = null;
       serviceState = "ready";
       broadcastStatus({ state: "ready", message: `服务已就绪: ${url}` });
+      // 通知事件流依赖 dsh 服务:就绪 → 若开关有开启则启动 watcher
+      notifyReady = true;
+      ensureNotifyWatcher();
       if (contentView && !contentView.webContents.isDestroyed()) {
         contentView.webContents.loadURL(url);
       }
@@ -426,11 +442,15 @@ function main() {
       console.error("[app] dsh 启动失败:", error);
       lastError = error.message;
       serviceState = "error";
+      notifyReady = false;
+      stopNotifyWatcher();
       broadcastStatus({ state: "error", message: lastError });
     });
     server.on("exited", ({ code, signal }) => {
       lastError = `dsh 服务意外退出 (code=${code}, signal=${signal})。点击重试重新启动。`;
       serviceState = "error";
+      notifyReady = false;
+      stopNotifyWatcher();
       broadcastStatus({ state: "error", message: lastError });
       // 若内容视图正显示 WebUI(服务已死,页面已无响应),切回加载页
       // 展示错误与重试入口,而不是让用户对着一块死页面。
@@ -479,38 +499,12 @@ function main() {
     })();
   `;
 
-  // 主题同步:dsh UI 设置里切换外观(浅色/深色/跟随系统)时,前端会在
-  // document.body 上设置/移除 data-ds-dark-theme(有=深色,无=浅色)。
-  // 这里监听该属性并把解析结果上报给主进程,让外壳跟随。
-  const THEME_WATCHER_JS = `
-    (() => {
-      if (window.__dshDesktopThemeWatcher) return;
-      window.__dshDesktopThemeWatcher = true;
-      const report = () => {
-        const dark = document.body ? document.body.hasAttribute('data-ds-dark-theme') : false;
-        if (window.dsh && window.dsh.reportTheme) {
-          window.dsh.reportTheme(dark ? 'dark' : 'light');
-        }
-      };
-      const start = () => {
-        if (!document.body) { setTimeout(start, 100); return; }
-        new MutationObserver(report).observe(document.body, {
-          attributes: true,
-          attributeFilter: ['data-ds-dark-theme']
-        });
-        report();
-      };
-      start();
-    })();
-  `;
-
   function installWebUIInjection() {
     if (!contentView) return;
     const wc = contentView.webContents;
     wc.on("did-finish-load", () => {
       if (!server || !isServerOrigin(wc.getURL(), server.url)) return;
       wc.executeJavaScript(POINTER_DUP_GUARD_JS, true).catch(() => {});
-      wc.executeJavaScript(THEME_WATCHER_JS, true).catch(() => {});
       wc.executeJavaScript(PLUGIN_BRIDGE_JS, true).catch(() => {});
       wc.executeJavaScript(MARKET_BRIDGE_JS_FN(marketSidebarEntry), true).catch(() => {});
       wc.executeJavaScript(STATUS_BRIDGE_JS_FN(statusPanelWidth), true).catch(() => {});
@@ -519,6 +513,38 @@ function main() {
       const css = readCustomCss();
       if (css) wc.insertCSS(css).catch(() => {});
     });
+  }
+
+  // ---------- 升级中断自愈 ----------
+  // 升级的「下载+闭包安装」阶段不触碰线上 dsh,「原子替换」窗口毫秒级;但历史
+  // 版本(根树整树 install)可能留下「换上新版但闭包缺失」的坏态。启动时冒烟
+  // 检查当前 dsh 能否运行(与真实启动同运行时跑 dsh --version),失败则自动从
+  // 最新备份恢复,保证 App 永远能回到上次可用的版本。
+  async function healInterruptedUpgrade() {
+    try {
+      const info = getRuntimeDshInfo();
+      if (!info || !info.packageDir) return;
+      const probeHome = path.join(app.getPath("userData"), "boot-probe");
+      const smoker = async (pkgDir) =>
+        verifyDshBoot({ pkgDir, dshHome: probeHome, log: console }).catch(() => ({ ok: false, error: "自检进程异常" }));
+      const first = await smoker(info.packageDir);
+      if (first.ok) return; // 冒烟通过,无需自愈
+      if (!fs.existsSync(path.join(info.packageDir, "lib", "bin.js"))) {
+        console.warn("[app] 自愈: dsh 入口缺失(升级中断残留坏态)");
+      }
+      const backup = findNewestBackup(info.packageDir);
+      if (!backup) {
+        console.warn("[app] 自愈: dsh 无法启动且无备份可恢复(继续,由加载页展示错误)");
+        return;
+      }
+      const rb = restoreDshBackup(info.packageDir, backup);
+      console.log(`[app] 自愈: dsh 自检失败(${first.error}),已从备份恢复 → ${rb.ok ? backup : rb.error || "失败"}`);
+      if (!rb.ok) return;
+      const second = await smoker(info.packageDir);
+      if (!second.ok) console.error("[app] 自愈后 dsh 仍无法启动:", second.error);
+    } catch (error) {
+      console.warn("[app] 启动自愈检查跳过:", error.message);
+    }
   }
 
   async function startServer() {
@@ -826,7 +852,9 @@ function main() {
     }
   }
 
-  // ---------- 升级编排:停服 → 换文件 → 恢复服务 → 刷新红点 ----------
+  // ---------- 升级编排:停服 → 换文件+依赖调和 → 恢复服务 → 刷新红点 ----------
+  // upgradeDsh 已做依赖调和 + 启动自检并自动回滚;这里再兜底:真实启动仍
+  // 失败时用备份回滚,绝不让「升级」把服务留在不可用状态。
   async function performUpgrade(version) {
     const wasReady = server?.ready ?? false;
     broadcastStatus({ state: "starting", message: `正在升级 dsh 至 ${version}…` });
@@ -840,7 +868,33 @@ function main() {
       if (wasReady) await startServer();
       return result;
     }
-    if (wasReady) await startServer();
+    if (wasReady) {
+      await startServer();
+      if (!server.ready && result.backupDir) {
+        // 升级成功但真实启动失败 → 回滚到原版本再试
+        const bootErr = lastError || "dsh 启动失败";
+        const pkgDir = getRuntimeDshInfo().packageDir;
+        const rollback = restoreDshBackup(pkgDir, result.backupDir);
+        if (rollback.ok) {
+          lastError = null;
+          serviceState = "stopped";
+          await startServer();
+          await refreshUpdateFlag();
+          if (server.ready) {
+            return {
+              ok: false,
+              error: `升级后服务无法启动(${bootErr});已回滚到原版本 ${result.previous}`,
+              previous: result.previous,
+            };
+          }
+          return { ok: false, error: `升级后服务无法启动(${bootErr});已回滚,但原版本也无法启动` };
+        }
+        return {
+          ok: false,
+          error: `升级后服务无法启动(${bootErr});且回滚失败(${rollback.error || "文件操作失败"})`,
+        };
+      }
+    }
     await refreshUpdateFlag();
     return result;
   }
@@ -975,6 +1029,103 @@ function main() {
   /** DSH_HOME:继承环境变量,否则 App 自己的隔离目录(与启动 dsh 一致) */
   function appDshHome() {
     return process.env.DSH_HOME || path.join(app.getPath("userData"), "dsh-home");
+  }
+
+  // ---------- 消息通知(横幅 / 声音)----------
+  /**
+   * macOS 通知权限状态(macOS 10.14+ 由系统授权,Electron 无显式申请 API:
+   * 首次 show 通知时系统自动弹授权窗;这里只负责「探测 + 引导」)。
+   * @returns {"granted"|"denied"|"unknown"|"unsupported"}
+   */
+  function notificationPermission() {
+    if (!isMac) return "unsupported";
+    try {
+      const s = systemPreferences.getNotificationSettings();
+      if (!s || typeof s !== "object") return "unknown";
+      if (s.canDisplayAlerts === true) return "granted";
+      if (s.hasSetting) return "denied"; // 用户已做选择但通知被关
+      return "unknown"; // 尚未选择(首次开启横幅时由系统弹窗询问)
+    } catch {
+      return "unknown";
+    }
+  }
+
+  /** 发一条系统横幅(app 名即系统通知里的标题,正文自定);失败静默 */
+  function showBanner(body) {
+    try {
+      if (!Notification.isSupported()) return false;
+      const n = new Notification({ title: APP_NAME, body, silent: true });
+      n.show();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** 播放提示音(macOS 自带 afplay,播放打包的 message.m4a;失败静默) */
+  function playNotifySound() {
+    if (!isMac) return;
+    try {
+      if (!fs.existsSync(NOTIFY_SOUND_PATH)) return;
+      const child = spawn("afplay", [NOTIFY_SOUND_PATH]);
+      child.on("error", () => { /* afplay 缺失/失败忽略 */ });
+    } catch {
+      /* 忽略播放失败 */
+    }
+  }
+
+  /**
+   * 事件流归一化事件 → 横幅 / 声音。
+   * @param {{kind:string, sessionId?:string, title:string, message:string}} ev
+   */
+  function deliverNotifyEvent(ev) {
+    const trunc = (s, n) => (s && s.length > n ? s.slice(0, n) + "…" : s || "");
+    let body = "";
+    switch (ev.kind) {
+      case "task-end":
+        body = ev.title ? `「${ev.title}」任务已完成` : "任务已完成";
+        break;
+      case "task-fail":
+        body = ev.title
+          ? `「${ev.title}」任务失败:${ev.message ? " " + ev.message : "异常终止"}`
+          : `任务失败:${ev.message ? " " + ev.message : "异常终止"}`;
+        break;
+      case "question":
+        body = `有待回答的问题:${ev.message ? " " + ev.message : ""}`;
+        break;
+      case "approval":
+        body = `请求授权:${ev.message ? " " + ev.message : ""}`;
+        break;
+      default:
+        return;
+    }
+    body = trunc(body, 180);
+    if (notifyBanner) showBanner(body);
+    if (notifySound) playNotifySound();
+  }
+
+  /** 停掉事件流 watcher(幂等) */
+  function stopNotifyWatcher() {
+    if (notifyWatcher) {
+      notifyWatcher.stop();
+      notifyWatcher = null;
+    }
+  }
+
+  /** 按「开关开且服务就绪」启停 watcher(开关或服务状态变化后调用) */
+  function ensureNotifyWatcher() {
+    const shouldRun = (notifyBanner || notifySound) && notifyReady;
+    if (shouldRun && !notifyWatcher) {
+      const base = (server && server.url ? server.url : `http://127.0.0.1:${port}`).replace(/^http/, "ws");
+      notifyWatcher = createNotifyWatcher({
+        muxUrl: base + "/api/events.mux",
+        hostUrl: base + "/api/events.host",
+        onEvent: deliverNotifyEvent,
+      });
+      notifyWatcher.start();
+    } else if (!shouldRun) {
+      stopNotifyWatcher();
+    }
   }
 
   // ---------- IPC(preload 桥) ----------
@@ -1161,18 +1312,41 @@ function main() {
     return { ok: true, width: w };
   });
 
-  // ---------- 主题同步(dsh UI → 外壳) ----------
-  // dsh UI 在设置里切换外观(浅色/深色/跟随系统)时,dsh 前端会在
-  // document.body 上设置/移除 data-ds-dark-theme;注入脚本把解析结果
-  // 报过来,这里镜像到 nativeTheme.themeSource,让毛玻璃材质、红绿灯、
-  // 顶栏文字(light-dark())一起跟随 dsh 的主题。
-  ipcMain.on("shell:theme-changed", (_event, scheme) => {
-    if (scheme !== "dark" && scheme !== "light") return;
-    if (nativeTheme.themeSource !== scheme) {
-      nativeTheme.themeSource = scheme;
-      console.log(`[app] 外壳主题跟随 dsh UI: ${scheme}`);
+  // ---------- 消息通知:读/写开关(横幅 / 声音)+ 权限状态 ----------
+  // getter(无参)/setter(传 {banner?, sound?}):持久化到 settings.yaml
+  // dsh-box.notificationBanner / notificationSound;「横幅」首次开启 → 发一条
+  // 测试通知,触发 macOS 系统授权弹窗(需求 5:用户首次开启时引导系统授权);
+  // 返回 {banner, sound, permission},面板据此回显开关 + 权限被拒提示。
+  ipcMain.handle("dsh:notify-settings", (_event, next) => {
+    if (next === undefined || next === null) {
+      return { banner: notifyBanner, sound: notifySound, permission: notificationPermission() };
     }
+    if (typeof next !== "object") return { ok: false, error: "参数错误" };
+    const patch = {};
+    if (typeof next.banner === "boolean") patch.banner = next.banner;
+    if (typeof next.sound === "boolean") patch.sound = next.sound;
+    if (Object.keys(patch).length === 0) return { ok: false, error: "参数错误" };
+
+    if (typeof patch.banner === "boolean") {
+      notifyBanner = patch.banner;
+      writeSettingBool(appDshHome(), "notificationBanner", notifyBanner);
+      // 首次开启横幅 → 发测试通知:macOS 在首条通知时自动弹出系统授权窗
+      if (notifyBanner && !notifyPrompted) {
+        notifyPrompted = true;
+        showBanner("横幅通知已开启:任务完成、失败、提问和授权时会在此提醒你");
+      }
+    }
+    if (typeof patch.sound === "boolean") {
+      notifySound = patch.sound;
+      writeSettingBool(appDshHome(), "notificationSound", notifySound);
+    }
+    ensureNotifyWatcher();
+    return { banner: notifyBanner, sound: notifySound, permission: notificationPermission() };
   });
+
+  // (外观主题同步已上移到 initThemeSync:偏好 → nativeTheme.themeSource,
+  //  由 fs.watchFile 监听 settings.yaml 实时生效;不再镜像解析后的浅/深,
+  //  避免锁死 prefers-color-scheme 导致「跟随系统」失效,见 theme-sync.js)
 
   // ---------- 权限:本应用只信任本机 dsh 服务 ----------
   // (必须在 app ready 之后才能访问 session,所以放在 whenReady 里)
@@ -1259,6 +1433,11 @@ function main() {
         Math.min(STATUS_WIDTH_MAX, Math.round(Number(rawW) || STATUS_WIDTH_DEFAULT))
       );
     }
+    // 启动时读「消息通知」开关(横幅 / 声音,默认关;服务就绪后按需启动 watcher)
+    notifyBanner = readSettingBool(appDshHome(), "notificationBanner");
+    notifySound = readSettingBool(appDshHome(), "notificationSound");
+    // 启动读完后补一次编排:服务若已就绪则立即启动 watcher(ready 事件可能先于本段触发)
+    ensureNotifyWatcher();
     refreshMarketCheck().catch(() => {});
 
     // 测试钩子:冒烟测试模式 — 就绪后打印标记并退出(CI / 自检用)
@@ -1283,7 +1462,8 @@ function main() {
   });
 
   app.on("will-quit", () => {
-    // 尽力清理 dsh 子进程(SIGTERM);进程退出后由 OS 兜底
+    // 尽力清理:停掉通知事件流 watcher 与 dsh 子进程(SIGTERM);进程退出后由 OS 兜底
+    stopNotifyWatcher();
     if (server) server.stop().catch(() => {});
   });
 }

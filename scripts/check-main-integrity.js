@@ -24,8 +24,10 @@ const path = require("node:path");
 
 const MAIN = path.resolve(__dirname, "..", "src", "main", "main.js");
 const PM = path.resolve(__dirname, "..", "src", "main", "plugin-manager.js");
+const DSH_SERVER = path.resolve(__dirname, "..", "src", "main", "dsh-server.js");
 const mainSource = fs.readFileSync(MAIN, "utf8");
 const pmSource = fs.readFileSync(PM, "utf8");
+const dsSource = fs.readFileSync(DSH_SERVER, "utf8");
 
 /** 名字 → 定义形态(函数声明优先) */
 const REQUIRED_MAIN = [
@@ -39,6 +41,26 @@ const REQUIRED_MAIN = [
   ["appDshHome", /function\s+appDshHome\s*\(/],
   ["currentUpdateFlag", /function\s+currentUpdateFlag\s*\(/],
 ];
+
+/** main.js 必含的关键片段(主题同步 / 通知事件流 / 升级回滚等关键链路) */
+const REQUIRED_MAIN_SNIPPETS = [
+  ["theme-sync 接入", /require\(["']\.\/theme-sync["']\)/],
+  ["notify-watch 接入", /require\(["']\.\/notify-watch["']\)/],
+  ["通知设置 IPC", /ipcMain\.handle\(["']dsh:notify-settings["']/],
+  ["通知事件流 watcher 启动", /createNotifyWatcher\s*\(/],
+  ["升级回滚工具接入", /restoreDshBackup/],
+  ["升级启动自愈接入", /healInterruptedUpgrade/],
+  ["升级自检(verifyDshBoot)接入", /verifyDshBoot/],
+];
+
+/** dsh-server.js 必含片段:禁用 dsh 自动开浏览器(否则每次服务启动/升级重启弹系统浏览器) */
+const REQUIRED_DSH_SERVER_SNIPPETS = [
+  ["dsh web --no-open", /--no-open/],
+];
+
+/** main.js 不得再出现的符号:解析镜像(shell:theme-changed)会把 themeSource
+    锁死,导致 dsh「跟随系统」失效(选浅一直浅、选深一直深)——见 theme-sync.js */
+const FORBIDDEN_MAIN = ["shell:theme-changed"];
 
 /** plugin-manager 必选导出与残留符号 */
 const REQUIRED_PM_EXPORTS = [
@@ -57,6 +79,17 @@ const fail = (msg) => { console.error(`FAIL ✗ ${msg}`); failed += 1; };
 // 1) main.js 关键函数定义
 for (const [name, re] of REQUIRED_MAIN) {
   if (!re.test(mainSource)) fail(`main.js 缺少「${name}」的定义(可能有调用但函数体被误删)`);
+}
+// 1b) main.js 关键片段 + 禁现符号
+for (const [name, re] of REQUIRED_MAIN_SNIPPETS) {
+  if (!re.test(mainSource)) fail(`main.js 缺少「${name}」`);
+}
+// 1c) dsh-server 关键片段(升级链路依赖的启动方式)
+for (const [name, re] of REQUIRED_DSH_SERVER_SNIPPETS) {
+  if (!re.test(dsSource)) fail(`dsh-server.js 缺少「${name}」`);
+}
+for (const sym of FORBIDDEN_MAIN) {
+  if (mainSource.includes(sym)) fail(`main.js 残留已删除符号「${sym}」(解析镜像会锁死主题跟随系统)`);
 }
 
 // 2) plugin-manager 残留符号 + 必选导出定义

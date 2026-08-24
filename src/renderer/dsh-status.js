@@ -27,8 +27,19 @@
 
 const $ = (id) => document.getElementById(id);
 
+/** 骨架屏:加载中灰色占位;数据到达(渲染函数被调)即隐藏替换。各板块独立异步。 */
+const showSk = (id) => {
+  const el = $(id);
+  if (el) el.hidden = false;
+};
+const hideSk = (id) => {
+  const el = $(id);
+  if (el) el.hidden = true;
+};
+
 const els = {
   // 服务状态
+  statusInfo: $("statusInfo"),
   versionLine: $("versionLine"),
   metaLine: $("metaLine"),
   statePill: $("statePill"),
@@ -67,6 +78,10 @@ const els = {
   marketError: $("marketError"),
   marketRetryBtn: $("marketRetryBtn"),
   marketHint: $("marketHint"),
+  // 通知(横幅 / 声音)
+  notifyBanner: $("notifyBanner"),
+  notifySound: $("notifySound"),
+  notifyHint: $("notifyHint"),
 };
 
 let currentInfo = null;
@@ -79,6 +94,10 @@ let lastPluginInfo = null;
 let lastMarketInfo = null;
 /** 侧边栏入口开关状态(默认关) */
 let marketSwitchOn = false;
+/** 通知开关状态 + macOS 通知权限(默认关) */
+let notifyBannerOn = false;
+let notifySoundOn = false;
+let notifyPermission = "unknown";
 
 // ---------- 服务状态 ----------
 
@@ -86,6 +105,8 @@ let marketSwitchOn = false;
 function renderStatus(info) {
   if (!info) return;
   currentInfo = info;
+  hideSk("skService"); // 数据到达 → 骨架替换为真实状态
+  els.statusInfo.hidden = false;
 
   const versionText = info.version ? `DSH ${info.version}` : "DSH(版本未知)";
   els.versionLine.textContent = versionText;
@@ -105,9 +126,11 @@ function renderStatus(info) {
 }
 
 async function refreshInfo() {
+  showSk("skService");
   try {
     renderStatus(await window.dsh.getInfo());
   } catch (error) {
+    hideSk("skService"); // 查询失败也不再显示骨架,由错误提示接管
     els.serviceHint.hidden = false;
     els.serviceHint.textContent = `获取服务信息失败: ${error}`;
   }
@@ -132,6 +155,7 @@ function fmtDate(iso) {
  * 含 latest / runtime / hasUpdate / rows;rows 按发布时间倒序)。
  */
 function renderDsh(res) {
+  hideSk("skDsh"); // 数据到达/失败 → 骨架替换
   // 无最新版本可用 → 失败态
   if (res.error || !res.latest || !res.rows || !res.rows.length) {
     els.dshError.hidden = false;
@@ -167,13 +191,10 @@ function renderDsh(res) {
 
 /** 查一次 npm 并渲染(每次进入页面都查) */
 async function loadVersions() {
-  els.upgradeHint.hidden = false;
-  els.upgradeHint.textContent = "正在检查…";
+  showSk("skDsh");
   try {
     renderDsh(await window.dsh.checkUpdates());
-    els.upgradeHint.hidden = true;
   } catch (error) {
-    els.upgradeHint.hidden = true;
     renderDsh({ error: String(error), rows: [] });
   }
 }
@@ -184,6 +205,7 @@ async function loadVersions() {
 
 /** 渲染插件板块(info = getPluginInfo 结果) */
 function renderPlugin(info) {
+  hideSk("skPlugin"); // 数据到达/失败 → 骨架替换
   lastPluginInfo = info;
   const installed = info.installed;
   const failed = !!info.error;
@@ -240,13 +262,10 @@ function renderPlugin(info) {
 
 /** 查一次插件(本地 + registry)并渲染;每次进入面板都查 */
 async function loadPluginInfo() {
-  els.pluginHint.hidden = false;
-  els.pluginHint.textContent = "正在检查…";
+  showSk("skPlugin");
   try {
     renderPlugin(await window.dsh.getPluginInfo());
-    els.pluginHint.hidden = true;
   } catch (error) {
-    els.pluginHint.hidden = true;
     renderPlugin({ error: String(error), installed: null });
   }
 }
@@ -302,6 +321,7 @@ function renderMarketSwitch(on) {
 
 /** 渲染插件市场板块(info = getMarketInfo 结果) */
 function renderMarket(info) {
+  hideSk("skMarket"); // 数据到达/失败 → 骨架替换
   lastMarketInfo = info;
   const installed = info.installed;
   const failed = !!info.error;
@@ -359,13 +379,10 @@ function renderMarket(info) {
 
 /** 查一次插件市场(本地 + registry)并渲染;每次进入面板都查 */
 async function loadMarketInfo() {
-  els.marketHint.hidden = false;
-  els.marketHint.textContent = "正在检查…";
+  showSk("skMarket");
   try {
     renderMarket(await window.dsh.getMarketInfo());
-    els.marketHint.hidden = true;
   } catch (error) {
-    els.marketHint.hidden = true;
     renderMarket({ error: String(error), installed: null });
   }
   // 已安装状态下同步一次侧边栏入口开关
@@ -410,6 +427,55 @@ async function doMarketInstall(version, btn, isInstall) {
     resetActionBtn(btn, isInstall);
   } finally {
     marketInstalling = false;
+  }
+}
+
+// ---------- 通知(横幅 / 声音)----------
+// 开关状态来自主进程 dsh:notify-settings:{ banner, sound, permission };
+// permission=="denied" 且横幅开 → 提示去系统设置开启(需求 5 的引导)。
+
+/** 渲染两个开关 + 权限提示(不触发 IPC) */
+function renderNotify(settings) {
+  if (!settings || typeof settings !== "object") return;
+  hideSk("skNotify"); // 开关状态到达 → 骨架替换为真实开关行
+  if (typeof settings.banner === "boolean") {
+    notifyBannerOn = settings.banner;
+    els.notifyBanner.classList.toggle("switch-on", notifyBannerOn);
+    els.notifyBanner.setAttribute("aria-checked", String(notifyBannerOn));
+  }
+  if (typeof settings.sound === "boolean") {
+    notifySoundOn = settings.sound;
+    els.notifySound.classList.toggle("switch-on", notifySoundOn);
+    els.notifySound.setAttribute("aria-checked", String(notifySoundOn));
+  }
+  // 数据到达 → 开关行显示(骨架隐藏由上面 hideSk 完成;开关行初始 hidden)
+  els.notifyBanner.closest("label").hidden = false;
+  els.notifySound.closest("label").hidden = false;
+  if (typeof settings.permission === "string") notifyPermission = settings.permission;
+  if (notifyBannerOn && notifyPermission === "denied") {
+    els.notifyHint.hidden = false;
+    els.notifyHint.textContent = "系统通知权限未开启,请在 Mac 系统设置 > 通知 中允许「DSH Box」";
+  } else {
+    els.notifyHint.hidden = true;
+  }
+}
+
+/** 进入页面读一次通知设置 */
+async function loadNotifySettings() {
+  showSk("skNotify");
+  try {
+    renderNotify(await window.dsh.getNotificationSettings());
+  } catch {
+    /* 读失败保持现状 */
+  }
+}
+
+/** 提交开关变更(主进程持久化 + 首次开启横幅触发系统授权);失败回读现状 */
+async function setNotify(patch) {
+  try {
+    renderNotify(await window.dsh.setNotificationSettings(patch));
+  } catch {
+    loadNotifySettings();
   }
 }
 
@@ -464,6 +530,7 @@ function bindExternalLink(el) {
 
 bindExternalLink(els.dshVersionLink);
 bindExternalLink(els.pluginNameLink);
+bindExternalLink(els.marketName);
 
 els.startBtn.addEventListener("click", async () => {
   if (upgrading) return;
@@ -522,6 +589,27 @@ els.marketSwitch.addEventListener("keydown", (event) => {
   }
 });
 
+// 通知开关(横幅 / 声音):乐观翻转 → 主进程持久化 + 回显(含权限提示)
+function bindNotifySwitch(el, key) {
+  const patchFor = (next) => (key === "banner" ? { banner: next } : { sound: next });
+  el.addEventListener("click", async () => {
+    const on = key === "banner" ? notifyBannerOn : notifySoundOn;
+    renderNotify({
+      banner: key === "banner" ? !on : notifyBannerOn,
+      sound: key === "sound" ? !on : notifySoundOn,
+    });
+    await setNotify(patchFor(!on));
+  });
+  el.addEventListener("keydown", (event) => {
+    if (event.key === " " || event.key === "Enter") {
+      event.preventDefault();
+      el.click();
+    }
+  });
+}
+bindNotifySwitch(els.notifyBanner, "banner");
+bindNotifySwitch(els.notifySound, "sound");
+
 els.pluginActionBtn.addEventListener("click", () => {
   doPluginInstall(lastPluginInfo?.latest ?? null, els.pluginActionBtn, !lastPluginInfo?.installed);
 });
@@ -538,7 +626,9 @@ window.dsh.onStatus((status) => {
 });
 
 // 进入页面:拉一次服务信息 + 查一次 npm 版本 + 查一次插件 + 查一次插件市场
+// + 读一次通知设置
 refreshInfo();
 loadVersions();
 loadPluginInfo();
 loadMarketInfo();
+loadNotifySettings();

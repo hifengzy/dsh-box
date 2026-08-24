@@ -14,7 +14,12 @@
  *     3. 同版本升级:返回 unchanged,不动文件;
  *     4. integrity 不匹配:升级被拒(sha512 校验失败),目标目录原封不动,
  *        不产生多余备份/半截状态;
- *     5. 不存在的版本:升级被拒。
+ *     5. 不存在的版本:升级被拒;
+ *     6. 依赖闭包安装失败(替换前中止):目标目录原封不动、无新备份;(闭包
+ *        安装/自检注入 fake,回归不碰真实 npm)
+ *     9. 启动自愈部件:verifyDshBoot 坏态失败 → findNewestBackup → 恢复 → 通过
+ *     7. 安装后自检失败(dsh --version 崩溃路径):升级被拒并自动回滚;
+ *     8. restoreDshBackup 单元:坏目录挪走 + 备份回位 + 现场保留;缺备份拒绝。
  *
  * 用法: electron scripts/regression-upgrade.js --no-sandbox
  */
@@ -29,7 +34,7 @@ const { spawnSync } = require("node:child_process");
 
 // 在主进程里直接驱动业务模块(不走 IPC,更快更直接)
 const npmCheck = require("../src/main/npm-check");
-const { upgradeDsh } = require("../src/main/dsh-upgrade");
+const { upgradeDsh, restoreDshBackup, verifyDshBoot, findNewestBackup } = require("../src/main/dsh-upgrade");
 
 app.setPath("userData", path.resolve(__dirname, "..", ".runtime", "regression", "upgrade-user"));
 
@@ -122,19 +127,26 @@ app.whenReady().then(async () => {
     if (!deco.rows.find((r) => r.version === "0.2.0").hasUpdate) throw new Error("比当前新的行应 hasUpdate");
     console.log("[1] npm-check:latest/倒序/徽标/有更新判定 ✓");
 
-    // ---------- 用例 2:正常升级 ----------
+    // ---------- 用例 2:正常升级(依赖闭包安装 + 自检注入 fake) ----------
     const targetDir = makeFixturePackage(work, "0.1.0-rc.6", "marker-old");
-    const r2 = await upgradeDsh("0.2.0", { targetDir, cacheDir, registryData: data });
+    const r2 = await upgradeDsh("0.2.0", {
+      targetDir,
+      cacheDir,
+      registryData: data,
+      runReconcile: async () => ({ ok: true }),
+      verifyBoot: async () => ({ ok: true }),
+    });
     if (!r2.ok) throw new Error(`升级 0.2.0 失败: ${r2.error}`);
     if (r2.previous !== "0.1.0-rc.6" || r2.installed !== "0.2.0")
       throw new Error(`升级结果错误: ${JSON.stringify(r2)}`);
+    if (r2.reconciled !== true) throw new Error(`升级应标记依赖闭包已安装: ${JSON.stringify(r2)}`);
     const installed = JSON.parse(fs.readFileSync(path.join(targetDir, "package.json"), "utf8"));
     if (installed.version !== "0.2.0") throw new Error(`升级后包版本错误: ${installed.version}`);
     if (!fs.readFileSync(path.join(targetDir, "lib", "bin.js"), "utf8").includes("v0.2.0"))
       throw new Error("升级后的文件内容不对");
     const backups = fs.readdirSync(path.dirname(targetDir)).filter((n) => /^\.dsh-.*-bak-\d+$/.test(n));
     if (!backups.length) throw new Error("升级后应有备份目录");
-    console.log(`[2] 正常升级 0.1.0-rc.6 → 0.2.0,备份 ${backups[0]} ✓`);
+    console.log(`[2] 正常升级 0.1.0-rc.6 → 0.2.0(依赖闭包安装),备份 ${backups[0]} ✓`);
 
     // ---------- 用例 3:同版本升级 → unchanged ----------
     const r3 = await upgradeDsh("0.2.0", { targetDir, cacheDir, registryData: data });
@@ -156,6 +168,85 @@ app.whenReady().then(async () => {
     const r5 = await upgradeDsh("9.9.9", { targetDir, cacheDir, registryData: data });
     if (r5.ok) throw new Error("不存在的版本应被拒绝");
     console.log("[5] 不存在的版本 → 拒绝 ✓");
+
+    // ---------- 用例 6:依赖闭包安装失败(替换前)→ 目标目录原封不动 ----------
+    const targetDir6 = makeFixturePackage(work, "0.1.0-rc.6", "marker-reconcile-fail");
+    const bakBefore6 = fs
+      .readdirSync(path.dirname(targetDir6))
+      .filter((n) => /^\.dsh-.*-bak-\d+$/.test(n)).length;
+    const r6 = await upgradeDsh("0.2.0", {
+      targetDir: targetDir6,
+      cacheDir,
+      registryData: data,
+      runReconcile: async () => ({ ok: false, error: "模拟 npm 离线失败" }),
+      verifyBoot: async () => ({ ok: true }),
+    });
+    if (r6.ok) throw new Error(`依赖闭包安装失败应拒绝升级,实际成功: ${JSON.stringify(r6)}`);
+    if (!r6.error.includes("依赖闭包安装失败")) throw new Error(`错误应说明闭包安装失败: ${r6.error}`);
+    if (!r6.error.includes("目标目录未改动")) throw new Error(`应说明目标目录未改动: ${r6.error}`);
+    const ver6 = JSON.parse(fs.readFileSync(path.join(targetDir6, "package.json"), "utf8")).version;
+    if (ver6 !== "0.1.0-rc.6") throw new Error(`目标目录应保持 0.1.0-rc.6,实际 ${ver6}`);
+    if (!fs.readFileSync(path.join(targetDir6, "lib", "bin.js"), "utf8").includes("marker-reconcile-fail"))
+      throw new Error("目标目录文件内容应保持旧版");
+    const bakAfter6 = fs
+      .readdirSync(path.dirname(targetDir6))
+      .filter((n) => /^\.dsh-.*-bak-\d+$/.test(n)).length;
+    if (bakAfter6 !== bakBefore6) throw new Error(`闭包失败不应产生新备份(${bakBefore6}→${bakAfter6})`);
+    console.log("[6] 依赖闭包安装失败(替换前)→ 目标目录原封不动、无新备份 ✓");
+
+    // ---------- 用例 7:安装后自检失败 → 自动回滚 ----------
+    const targetDir7 = makeFixturePackage(work, "0.1.0-rc.6", "marker-verify-fail");
+    const r7 = await upgradeDsh("0.2.0", {
+      targetDir: targetDir7,
+      cacheDir,
+      registryData: data,
+      runReconcile: async () => ({ ok: true }),
+      verifyBoot: async () => ({ ok: false, error: "模拟自检崩溃(.addHelpText is not a function)" }),
+    });
+    if (r7.ok) throw new Error(`自检失败应拒绝升级,实际成功: ${JSON.stringify(r7)}`);
+    if (!r7.error.includes("安装后自检失败")) throw new Error(`错误应说明自检失败: ${r7.error}`);
+    if (!r7.error.includes("已回滚")) throw new Error(`应提示已回滚: ${r7.error}`);
+    const ver7 = JSON.parse(fs.readFileSync(path.join(targetDir7, "package.json"), "utf8")).version;
+    if (ver7 !== "0.1.0-rc.6") throw new Error(`回滚后应回到 0.1.0-rc.6,实际 ${ver7}`);
+    console.log("[7] 安装后自检失败 → 自动回滚到旧版本 ✓");
+
+    // ---------- 用例 8:restoreDshBackup 单元 ----------
+    const unitDir = path.join(work, "unit");
+    fs.mkdirSync(path.join(unitDir, "pkg"), { recursive: true });
+    fs.writeFileSync(path.join(unitDir, "pkg", "package.json"), JSON.stringify({ version: "bad" }));
+    fs.mkdirSync(path.join(unitDir, "bak"), { recursive: true });
+    fs.writeFileSync(path.join(unitDir, "bak", "package.json"), JSON.stringify({ version: "good" }));
+    const rb = restoreDshBackup(path.join(unitDir, "pkg"), path.join(unitDir, "bak"));
+    if (!rb.ok) throw new Error(`restoreDshBackup 应成功: ${JSON.stringify(rb)}`);
+    const restored = JSON.parse(fs.readFileSync(path.join(unitDir, "pkg", "package.json"), "utf8")).version;
+    if (restored !== "good") throw new Error(`回滚后应为 good,实际 ${restored}`);
+    if (!fs.existsSync(rb.brokenDir)) throw new Error("坏目录应保留为 .dsh-broken 现场");
+    const rbMiss = restoreDshBackup(path.join(unitDir, "pkg"), path.join(unitDir, "no-such-bak"));
+    if (rbMiss.ok) throw new Error("缺备份应拒绝回滚");
+    console.log("[8] restoreDshBackup:坏目录挪走 + 备份回位 + 现场保留;缺备份拒绝 ✓");
+
+    // ---------- 用例 9:启动自愈部件(verifyDshBoot / findNewestBackup / restoreDshBackup) ----------
+    const healDir = path.join(work, "heal");
+    const pkgDir9 = path.join(healDir, "node_modules", "@deepseek-ai", "dsh");
+    fs.mkdirSync(path.join(pkgDir9, "lib"), { recursive: true });
+    fs.writeFileSync(path.join(pkgDir9, "package.json"), JSON.stringify({ name: "@deepseek-ai/dsh", version: "bad" }));
+    fs.writeFileSync(path.join(pkgDir9, "lib", "bin.js"), "process.exit(1);\n"); // 坏 dsh:自检必败
+    const bakDir9 = path.join(healDir, "node_modules", "@deepseek-ai", ".dsh-0.1.0-rc.6-bak-123");
+    fs.mkdirSync(path.join(bakDir9, "lib"), { recursive: true });
+    fs.writeFileSync(path.join(bakDir9, "package.json"), JSON.stringify({ name: "@deepseek-ai/dsh", version: "0.1.0-rc.6" }));
+    fs.writeFileSync(path.join(bakDir9, "lib", "bin.js"), "process.exit(0);\n"); // 好 dsh:自检通过
+    const healHome = path.join(work, "heal-home");
+    const probeBad = await verifyDshBoot({ pkgDir: pkgDir9, dshHome: healHome });
+    if (probeBad.ok) throw new Error("坏 dsh 自检应失败");
+    const nb9 = findNewestBackup(pkgDir9);
+    if (!nb9 || !nb9.endsWith(".dsh-0.1.0-rc.6-bak-123")) throw new Error(`应找到最新备份,实际 ${nb9}`);
+    const rh9 = restoreDshBackup(pkgDir9, nb9);
+    if (!rh9.ok) throw new Error(`自愈恢复失败: ${JSON.stringify(rh9)}`);
+    const healedVer = JSON.parse(fs.readFileSync(path.join(pkgDir9, "package.json"), "utf8")).version;
+    if (healedVer !== "0.1.0-rc.6") throw new Error(`自愈后应为 0.1.0-rc.6,实际 ${healedVer}`);
+    const probeGood = await verifyDshBoot({ pkgDir: pkgDir9, dshHome: healHome });
+    if (!probeGood.ok) throw new Error(`自愈后自检应通过: ${probeGood.error}`);
+    console.log("[9] 启动自愈部件:坏态自检失败 → findNewestBackup → 恢复 → 自检通过 ✓");
 
     server.close();
     console.log("\nPASS ✓ 升级链路回归通过");

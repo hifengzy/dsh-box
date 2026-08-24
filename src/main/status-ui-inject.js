@@ -36,6 +36,8 @@ const STATUS_PANEL_CSS = `
   --st-surface-2: #ebedf0;
   --st-border: rgba(0, 0, 0, 0.1);
   --st-border-weak: rgba(0, 0, 0, 0.06);
+  /* 面板左缘分割线 = dsh 原生左右栏中间边框(--dsw-alias-border-l1) */
+  --st-border-divider: rgba(0, 0, 0, 0.04);
   --st-text: #0f1115;
   --st-text-secondary: #61666b;
   --st-text-muted: #81858c;
@@ -56,6 +58,8 @@ const STATUS_PANEL_CSS = `
   --st-surface-2: #353638;
   --st-border: rgba(255, 255, 255, 0.12);
   --st-border-weak: rgba(255, 255, 255, 0.08);
+  /* 面板左缘分割线 = dsh 原生深色 --dsw-alias-border-l1 */
+  --st-border-divider: rgba(255, 255, 255, 0.06);
   --st-text: #f9fafb;
   --st-text-secondary: #cfd3d6;
   --st-text-muted: #adb2b8;
@@ -87,7 +91,7 @@ const STATUS_PANEL_CSS = `
   font-family: var(--st-font);
   font-size: 12px;
   line-height: 18px;
-  border-left: 1px solid var(--st-border);
+  border-left: 1px solid var(--st-border-divider);
   user-select: none;
   -webkit-font-smoothing: antialiased;
   /* 插件侧栏同款滑入/滑出:translate(102%) ↔ 0;时长/缓动读 dsh 主题变量
@@ -110,59 +114,111 @@ const STATUS_PANEL_CSS = `
     width var(--ds-transition-duration-slow, 300ms) var(--ds-ease-in-out, cubic-bezier(0.4, 0, 0.2, 1));
 }
 /* 布局挤压:面板展开时「对话区」让出宽度(与插件底栏同手法:只压缩中心列,
-   不改变 #root 整宽 → dsh 左侧边栏/右侧详情栏完全不受影响)。
+   不改变 #root 整宽 → dsh 左侧边栏/右侧详情栏完全不受影响)。!important
    变量只反映服务状态自身宽度,与插件侧栏(--dsh-sidebar-width)互不干扰。
-   选择器与插件底栏同款(已实测稳定),双写法兼容 dsh 版本差异。 */
-#root [data-dsh-frame] > [data-pane="conversation"],
-#root :has(> [data-slot="conversation"]) {
+   选择器与插件底栏同款(已实测稳定),双写法兼容 dsh 版本差异。
+
+   动画必须声明的两个原因(2026-08,实测 0.1.1-rc.2 页面):
+   1) 过渡会被插件覆盖:dsh-better-sidebar 用同一个 centerCol 选择器声明
+      transition: margin-bottom(底栏挤压)。插件样式注入在页面生命周期中
+      位于本 CSS 之后,同特异性 → 源顺序败 → 我们的 transition: margin-right
+      被整条覆盖,对话区挤压变成瞬跳(面板滑入 300ms 动画期间,对话区第一帧
+      即收窄完成,左右割裂)。修复:选择器双写 #root#root 把特异性提到
+      (2 id + attr),稳压插件*(或插件未来任何同锚样式)。
+   2) 覆盖插件过渡时必须一并代言:transition 属性「全有或全无」——我们在
+      centerCol 上打赢后,插件声明的 margin-bottom 过渡也会消失,其底栏
+      挤压会变瞬时。因此这里同时声明 margin-right + margin-bottom 双过渡
+      (同主题时长/缓动,与插件 lockstep 语义一致),插件底栏动画由我们
+      等价代言,三方观感统一。 */
+#root#root [data-dsh-frame] > [data-pane="conversation"],
+#root#root :has(> [data-slot="conversation"]) {
   margin-right: var(--dshbox-status-panel-width, 0px);
   transition:
-    margin-right var(--ds-transition-duration-slow, 300ms) var(--ds-ease-in-out, cubic-bezier(0.4, 0, 0.2, 1));
+    margin-right var(--ds-transition-duration-slow, 300ms) var(--ds-ease-in-out, cubic-bezier(0.4, 0, 0.2, 1)),
+    margin-bottom var(--ds-transition-duration-slow, 300ms) var(--ds-ease-in-out, cubic-bezier(0.4, 0, 0.2, 1));
 }
+/* 骨架屏:加载中灰色占位 + 扫光动画。各板块独立(服务状态/DSH/通知/插件市场/
+   侧边栏各自加载、各自替换),数据到达(渲染函数被调)即隐藏骨架、显示真实数据。
+   动态数据:getInfo / checkUpdates / getMarketInfo / getPluginInfo /
+   getNotificationSettings,任一查询进行中其板块展示骨架而非「正在检查…」文字。
+   动画:扫光(shimmer)仅用 transform,不触发重排;主题分亮/暗两档扫光色。 */
+#dshbox-status-panel .dshbox-st-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+#dshbox-status-panel .dshbox-st-sk-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 18px;
+}
+#dshbox-status-panel .dshbox-st-sk {
+  position: relative;
+  overflow: hidden;
+  display: inline-block;
+  flex: none;
+  height: 14px;
+  border-radius: 4px;
+  background: var(--st-surface-2);
+}
+#dshbox-status-panel .dshbox-st-sk::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(100deg, transparent 20%, rgba(0, 0, 0, 0.08) 50%, transparent 80%);
+  animation: dshbox-st-sk-sweep 1.3s ease-in-out infinite;
+}
+#dshbox-status-panel.dshbox-st-dark .dshbox-st-sk::after {
+  background: linear-gradient(100deg, transparent 20%, rgba(255, 255, 255, 0.14) 50%, transparent 80%);
+}
+@keyframes dshbox-st-sk-sweep {
+  to {
+    transform: translateX(100%);
+  }
+}
+/* 骨架块尺寸变体(宽 / 高,模拟真实内容形态:文本条、徽标、按钮、开关) */
+#dshbox-status-panel .dshbox-st-sk-w-sm { width: 52px; }
+#dshbox-status-panel .dshbox-st-sk-w-md { width: 96px; }
+#dshbox-status-panel .dshbox-st-sk-w-lg { width: 150px; }
+#dshbox-status-panel .dshbox-st-sk-w-xl { width: 210px; }
+#dshbox-status-panel .dshbox-st-sk-w-full { width: 100%; }
+#dshbox-status-panel .dshbox-st-sk-h-pill { height: 22px; border-radius: 5px; }
+#dshbox-status-panel .dshbox-st-sk-h-btn { height: 28px; border-radius: 100px; }
+#dshbox-status-panel .dshbox-st-sk-h-switch { height: 18px; border-radius: 10px; }
 /* 拖拽调宽时禁用面板过渡,配合 body 属性让对话区挤压跟手 */
 #dshbox-status-panel[data-dragging] {
   transition: none;
 }
-body[data-dshbox-status-dragging] #root [data-dsh-frame] > [data-pane="conversation"],
-body[data-dshbox-status-dragging] #root :has(> [data-slot="conversation"]) {
+body[data-dshbox-status-dragging] #root#root [data-dsh-frame] > [data-pane="conversation"],
+body[data-dshbox-status-dragging] #root#root :has(> [data-slot="conversation"]) {
   transition: none !important;
 }
-/* 拖拽把手(左缘 6px):展开 = 面板变宽;收起 = 变窄 */
+/* 插件拖拽(底栏调高/侧栏调宽)时同样禁用中心列过渡,配合插件的
+   body[data-dsh-sidebar-dragging] 让挤压跟手(特异性须压过上面的双写) */
+body[data-dsh-sidebar-dragging] #root#root [data-dsh-frame] > [data-pane="conversation"],
+body[data-dsh-sidebar-dragging] #root#root :has(> [data-slot="conversation"]) {
+  transition: none;
+}
+/* 拖拽把手(左缘 8px 中置条带,与 dsh-better-sidebar 的 .panelResize 同规格:
+   「8px 命中条压住 1px 分割线,hover 只变 col-resize 光标,拖拽中才显示
+   accent 填充」——不再有 hover 色带) */
 #dshbox-status-panel .dshbox-st-resizer {
   position: absolute;
-  left: -3px;
+  left: -4px;
   top: 0;
   bottom: 0;
-  width: 6px;
-  cursor: ew-resize;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
   z-index: 2;
 }
-#dshbox-status-panel .dshbox-st-resizer:hover {
-  background: rgba(103, 158, 254, 0.25);
-}
-/* 右上角关闭按钮(浮动,不占布局) */
-#dshbox-status-panel .dshbox-st-close {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 2;
-  appearance: none;
-  border: none;
-  background: transparent;
-  color: var(--st-text-muted);
-  width: 22px;
-  height: 22px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 5px;
-  cursor: pointer;
-  font-size: 10px;
-  line-height: 1;
-}
-#dshbox-status-panel .dshbox-st-close:hover {
-  background: var(--st-surface-2);
-  color: var(--st-text-secondary);
+/* 拖拽中显色(同 better-sidebar 的 .panelResizeActive):颜色直接引用 dsh
+   主题 token --dsw-alias-interactive-bg-hover-accent(亮/暗自动切换),
+   缺失时回退浅色 accent。拖拽状态 = 面板 data-dragging 属性。 */
+#dshbox-status-panel[data-dragging] .dshbox-st-resizer {
+  background: var(--dsw-alias-interactive-bg-hover-accent, rgba(38, 49, 72, 0.14));
 }
 /* 内容滚动区 */
 #dshbox-status-panel .dshbox-st-scroll {
@@ -171,19 +227,47 @@ body[data-dshbox-status-dragging] #root :has(> [data-slot="conversation"]) {
   overflow-y: auto;
   overflow-x: hidden;
 }
+/* 滚动条 = dsh 会话区同款规格(实测 @deepseek-ai/dsh-client-ui-theme scrollbar.css):
+   8px 宽高 / track 与 corner 透明 / thumb 4px 圆角 / thumb 色继承 dsh 主题变量
+   --dsh-scrollbar-thumb(其全局 ::-webkit-scrollbar-thumb 规则读该变量)。
+   Chromium 的 scrollbar 伪元素只匹配「全局无前缀选择器」,带祖先限定(类/属性/:hover)
+   的选择器一律失效 —— 实测铁证(2026-08):body:hover 为 true 但 thumb 仍透明。
+   因此显示/隐藏走「变量 rebind」:默认(非 hover)面板滚动容器把
+   --dsh-scrollbar-thumb(及其 hover)置为 transparent → 隐藏;面板容器 hover
+   (#dshbox-status-panel:hover —— 普通属性上的祖先 :hover,可靠生效)时 rebind
+   为 dsh 具体中性色 → 显示。触发条件 = 鼠标位于服务状态页面区域内**任意位置**
+   (不必滑到滚动条上);离开面板区域 :hover 解除 → 立刻回 transparent 隐藏。
+   色值 = dsh 主题 token 的具体中性色:亮 --dsw-static-neutral-200(229)/300(212),
+   暗 -700(60)/-600(84)。其它滚动条(如 dsh 会话区)不受影响:rebind 仅作用于
+   面板滚动容器作用域。 */
+#dshbox-status-panel .dshbox-st-scroll {
+  --dsh-scrollbar-thumb: transparent;
+  --dsh-scrollbar-thumb-hover: transparent;
+}
+#dshbox-status-panel:hover .dshbox-st-scroll {
+  --dsh-scrollbar-thumb: rgb(229, 229, 229); /* --dsw-static-neutral-200(浅色主题) */
+  --dsh-scrollbar-thumb-hover: rgb(212, 212, 212); /* --dsw-static-neutral-300(浅色悬停 thumb) */
+}
+#dshbox-status-panel.dshbox-st-dark:hover .dshbox-st-scroll {
+  --dsh-scrollbar-thumb: rgb(60, 60, 61); /* --dsw-static-neutral-700(深色主题) */
+  --dsh-scrollbar-thumb-hover: rgb(84, 85, 87); /* --dsw-static-neutral-600(深色悬停 thumb) */
+}
 #dshbox-status-panel .dshbox-st-scroll::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
-#dshbox-status-panel .dshbox-st-scroll::-webkit-scrollbar-track {
+#dshbox-status-panel .dshbox-st-scroll::-webkit-scrollbar-track,
+#dshbox-status-panel .dshbox-st-scroll::-webkit-scrollbar-corner {
   background: transparent;
 }
+/* 兜底:若 dsh 主题未注入(异常环境),面板自带一份等价的全局规则也能渲染
+   (此处仅作用于读得到 --dsh-scrollbar-thumb 的滚动容器,见上变量 rebind) */
 #dshbox-status-panel .dshbox-st-scroll::-webkit-scrollbar-thumb {
   border-radius: 4px;
-  background: var(--st-border);
+  background: var(--dsh-scrollbar-thumb, transparent);
 }
 #dshbox-status-panel .dshbox-st-scroll::-webkit-scrollbar-thumb:hover {
-  background: var(--st-text-muted);
+  background: var(--dsh-scrollbar-thumb-hover, transparent);
 }
 #dshbox-status-panel .dshbox-st-content {
   padding: 16px;
@@ -400,7 +484,11 @@ body[data-dshbox-status-dragging] #root :has(> [data-slot="conversation"]) {
   color: var(--st-text-secondary);
 }
 #dshbox-status-panel .dshbox-st-switch {
+  /* border-box:33×18 含 1px 边框 → 内腔 31×16,14px 圆形 top/left 1px 即
+     垂直/水平居中(dsh 页面未对 button 做全局 box-sizing 重置,需显式声明,
+     否则外盒 35×20 导致圆形偏上) */
   position: relative;
+  box-sizing: border-box;
   flex: none;
   width: 33px;
   height: 18px;
@@ -460,7 +548,7 @@ body[data-dshbox-status-dragging] #root :has(> [data-slot="conversation"]) {
  *   - toggle():开/合面板,返回 { ok, open }(顶栏按钮经主进程调这里);
  *   - state(): 返回 { open };
  *   - setWidth(w): 运行时改宽(持久化交给拖拽结束回调,一般不用);
- * 面板每次打开都重新查 npm / 插件(与旧 statusView「进入即查」语义一致)。
+ * 面板每次打开都重新查 npm / 插件 / 通知开关(与旧 statusView「进入即查」语义一致)。
  * 开合变化 → window.dsh.reportStatusPanel({ open })(主进程据此同步顶栏按钮
  * 高亮 + 关闭异常态 statusView 兜底,避免双开)。
  * 拖拽结束 → window.dsh.setStatusPanelWidth(width)(持久化 settings.yaml)。
@@ -474,15 +562,22 @@ function STATUS_BRIDGE_JS_FN(width) {
     Math.min(STATUS_WIDTH_MAX, Math.round(Number(width) || STATUS_WIDTH_DEFAULT))
   );
 
-  // 面板骨架(与 src/renderer/dsh-status.html 同构;id 只在面板作用域内使用)
+  // 面板骨架(与 src/renderer/dsh-status.html 同构;id 只在面板作用域内使用)。
+  // 骨架屏:每个动态板块(dshbox-st-skeleton,首帧即显示)在数据到达前占位;
+  // 数据区(stStatusInfo / stDshRow / 开关行 / stMarketRow / stPluginRow)初始
+  // hidden,渲染函数(renderStatus/renderDsh/renderNotify/renderMarket/renderPlugin)
+  // 被调用时隐藏骨架并显示真实数据——各板块按各自查询速度独立替换。
   const SKELETON = `
     <div class="dshbox-st-resizer" title="拖动调整宽度"></div>
-    <button class="dshbox-st-close" type="button" aria-label="关闭服务状态">✕</button>
     <div class="dshbox-st-scroll">
       <main class="dshbox-st-content">
         <section class="dshbox-st-section">
           <h1 class="dshbox-st-section-title">服务状态</h1>
-          <div class="dshbox-st-status-info">
+          <div class="dshbox-st-skeleton" id="stSkService">
+            <div class="dshbox-st-sk-row"><span class="dshbox-st-sk dshbox-st-sk-w-xl"></span><span class="dshbox-st-sk dshbox-st-sk-h-pill dshbox-st-sk-w-sm"></span></div>
+            <div class="dshbox-st-sk-row"><span class="dshbox-st-sk dshbox-st-sk-w-md"></span></div>
+          </div>
+          <div class="dshbox-st-status-info" id="stStatusInfo" hidden>
             <div class="dshbox-st-status-text">
               <div class="dshbox-st-version-line" id="stVersionLine" title="">DSH 1.0.0</div>
               <div class="dshbox-st-meta-line" id="stMetaLine">端口 - · PID -</div>
@@ -500,6 +595,10 @@ function STATUS_BRIDGE_JS_FN(width) {
 
         <section class="dshbox-st-section">
           <h1 class="dshbox-st-section-title">DSH</h1>
+          <div class="dshbox-st-skeleton" id="stSkDsh">
+            <div class="dshbox-st-sk-row"><span class="dshbox-st-sk dshbox-st-sk-w-md"></span><span class="dshbox-st-sk dshbox-st-sk-h-pill dshbox-st-sk-w-sm"></span><span class="dshbox-st-sk dshbox-st-sk-h-btn dshbox-st-sk-w-sm"></span></div>
+            <div class="dshbox-st-sk-row"><span class="dshbox-st-sk dshbox-st-sk-w-sm"></span></div>
+          </div>
           <div class="dshbox-st-row-line" id="stDshRow" hidden>
             <a class="dshbox-st-row-link" id="stDshVersionLink" href="https://github.com/deepseek-ai/deepseek-harness/" target="_blank" rel="noreferrer" title="">-</a>
             <span class="dshbox-st-v-badge">最新</span>
@@ -516,27 +615,35 @@ function STATUS_BRIDGE_JS_FN(width) {
         </section>
 
         <section class="dshbox-st-section">
-          <h1 class="dshbox-st-section-title">侧边栏</h1>
-          <div class="dshbox-st-row-line" id="stPluginRow" hidden>
-            <a class="dshbox-st-row-link" id="stPluginNameLink" href="https://github.com/omdsh-dev/DSH-better-sidebar" target="_blank" rel="noreferrer" title="dsh-better-sidebar">dsh-better-sidebar</a>
-            <span class="dshbox-st-v-badge" id="stPluginVersionBadge">-</span>
-            <button class="dshbox-st-btn dshbox-st-btn-primary dshbox-st-plugin-action" id="stPluginActionBtn" type="button" hidden>安装</button>
-            <span class="dshbox-st-state-current" id="stPluginInstalledLabel" hidden>已安装</span>
+          <h1 class="dshbox-st-section-title">通知</h1>
+          <p class="dshbox-st-plugin-desc">允许 DSH 在任务完成、失败和等待审批时向你推送消息提醒。请在 Mac 系统设置 &gt; 通知中开启</p>
+          <div class="dshbox-st-skeleton" id="stSkNotify">
+            <div class="dshbox-st-sk-row"><span class="dshbox-st-sk dshbox-st-sk-w-sm"></span><span class="dshbox-st-sk dshbox-st-sk-h-switch"></span></div>
+            <div class="dshbox-st-sk-row"><span class="dshbox-st-sk dshbox-st-sk-w-sm"></span><span class="dshbox-st-sk dshbox-st-sk-h-switch"></span></div>
           </div>
-          <p class="dshbox-st-plugin-desc" id="stPluginDesc" hidden>
-            支持文件渲染编辑、终端、Git、子代理、子会话,以及第三方插件注册为新 Tab。
-          </p>
-          <div class="dshbox-st-version-error" id="stPluginError" hidden>
-            <p class="dshbox-st-error-text">网络服务异常</p>
-            <button class="dshbox-st-btn dshbox-st-btn-outline" id="stPluginRetryBtn" type="button">重试</button>
-          </div>
-          <div class="dshbox-st-hint" id="stPluginHint" hidden></div>
+          <label class="dshbox-st-switch-row" hidden>
+            <span class="dshbox-st-switch-label">横幅</span>
+            <span class="dshbox-st-switch" id="stNotifyBanner" role="switch" aria-checked="false" tabindex="0">
+              <span class="dshbox-st-switch-knob"></span>
+            </span>
+          </label>
+          <label class="dshbox-st-switch-row" hidden>
+            <span class="dshbox-st-switch-label">声音</span>
+            <span class="dshbox-st-switch" id="stNotifySound" role="switch" aria-checked="false" tabindex="0">
+              <span class="dshbox-st-switch-knob"></span>
+            </span>
+          </label>
+          <div class="dshbox-st-hint" id="stNotifyHint" hidden></div>
         </section>
 
         <section class="dshbox-st-section">
           <h1 class="dshbox-st-section-title">插件市场</h1>
+          <div class="dshbox-st-skeleton" id="stSkMarket">
+            <div class="dshbox-st-sk-row"><span class="dshbox-st-sk dshbox-st-sk-w-md"></span><span class="dshbox-st-sk dshbox-st-sk-h-pill dshbox-st-sk-w-sm"></span><span class="dshbox-st-sk dshbox-st-sk-h-btn dshbox-st-sk-w-sm"></span></div>
+            <div class="dshbox-st-sk-row"><span class="dshbox-st-sk dshbox-st-sk-w-full"></span></div>
+          </div>
           <div class="dshbox-st-row-line" id="stMarketRow" hidden>
-            <span class="dshbox-st-row-name" id="stMarketName">dsh-market</span>
+            <a class="dshbox-st-row-link" id="stMarketName" href="https://github.com/dsh-market/dsh-market" target="_blank" rel="noreferrer" title="dsh-market">dsh-market</a>
             <span class="dshbox-st-v-badge" id="stMarketVersionBadge">-</span>
             <button class="dshbox-st-btn dshbox-st-btn-primary dshbox-st-plugin-action" id="stMarketActionBtn" type="button" hidden>安装</button>
             <span class="dshbox-st-state-current" id="stMarketInstalledLabel" hidden>已安装</span>
@@ -556,6 +663,28 @@ function STATUS_BRIDGE_JS_FN(width) {
           </div>
           <div class="dshbox-st-hint" id="stMarketHint" hidden></div>
         </section>
+
+        <section class="dshbox-st-section">
+          <h1 class="dshbox-st-section-title">侧边栏</h1>
+          <div class="dshbox-st-skeleton" id="stSkPlugin">
+            <div class="dshbox-st-sk-row"><span class="dshbox-st-sk dshbox-st-sk-w-md"></span><span class="dshbox-st-sk dshbox-st-sk-h-pill dshbox-st-sk-w-sm"></span><span class="dshbox-st-sk dshbox-st-sk-h-btn dshbox-st-sk-w-sm"></span></div>
+            <div class="dshbox-st-sk-row"><span class="dshbox-st-sk dshbox-st-sk-w-full"></span></div>
+          </div>
+          <div class="dshbox-st-row-line" id="stPluginRow" hidden>
+            <a class="dshbox-st-row-link" id="stPluginNameLink" href="https://github.com/omdsh-dev/DSH-better-sidebar" target="_blank" rel="noreferrer" title="dsh-better-sidebar">dsh-better-sidebar</a>
+            <span class="dshbox-st-v-badge" id="stPluginVersionBadge">-</span>
+            <button class="dshbox-st-btn dshbox-st-btn-primary dshbox-st-plugin-action" id="stPluginActionBtn" type="button" hidden>安装</button>
+            <span class="dshbox-st-state-current" id="stPluginInstalledLabel" hidden>已安装</span>
+          </div>
+          <p class="dshbox-st-plugin-desc" id="stPluginDesc" hidden>
+            支持文件渲染编辑、终端、Git、子代理、子会话,以及第三方插件注册为新 Tab。
+          </p>
+          <div class="dshbox-st-version-error" id="stPluginError" hidden>
+            <p class="dshbox-st-error-text">网络服务异常</p>
+            <button class="dshbox-st-btn dshbox-st-btn-outline" id="stPluginRetryBtn" type="button">重试</button>
+          </div>
+          <div class="dshbox-st-hint" id="stPluginHint" hidden></div>
+        </section>
       </main>
     </div>`;
 
@@ -568,6 +697,15 @@ function STATUS_BRIDGE_JS_FN(width) {
 
     // ---------- 工具 ----------
     const $ = (id) => panel.querySelector('#' + id);
+    /** 骨架屏显隐:加载中显示灰色占位,数据到达(渲染函数被调)即隐藏替换 */
+    const showSk = (id) => {
+      const el = $(id);
+      if (el) el.hidden = false;
+    };
+    const hideSk = (id) => {
+      const el = $(id);
+      if (el) el.hidden = true;
+    };
     const theme = () =>
       document.body && document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light';
     const applyTheme = () => {
@@ -619,11 +757,16 @@ function STATUS_BRIDGE_JS_FN(width) {
     let lastPluginInfo = null;
     let lastMarketInfo = null;
     let marketSwitchOn = false;
+    let notifyBannerOn = false;
+    let notifySoundOn = false;
+    let notifyPermission = "unknown";
 
     // ---------- 服务状态 ----------
     const renderStatus = (info) => {
       if (!info) return;
       currentInfo = info;
+      hideSk('stSkService'); // 数据到达 → 骨架替换为真实状态
+      $('stStatusInfo').hidden = false;
       const versionText = info.version ? 'DSH ' + info.version : 'DSH(版本未知)';
       const vLine = $('stVersionLine');
       vLine.textContent = versionText;
@@ -640,9 +783,11 @@ function STATUS_BRIDGE_JS_FN(width) {
       startBtn.textContent = info.state === 'starting' ? '启动中…' : '启动服务';
     };
     const refreshInfo = async () => {
+      showSk('stSkService');
       try {
         renderStatus(await window.dsh.getInfo());
       } catch (error) {
+        hideSk('stSkService'); // 查询失败也不再显示骨架,由错误提示接管
         $('stServiceHint').hidden = false;
         $('stServiceHint').textContent = '获取服务信息失败: ' + error;
       }
@@ -659,6 +804,7 @@ function STATUS_BRIDGE_JS_FN(width) {
 
     // ---------- DSH(最新一条) ----------
     const renderDsh = (res) => {
+      hideSk('stSkDsh'); // 数据到达/失败 → 骨架替换
       if (res.error || !res.latest || !res.rows || !res.rows.length) {
         $('stDshError').hidden = false;
         $('stDshCacheNote').hidden = true;
@@ -685,20 +831,17 @@ function STATUS_BRIDGE_JS_FN(width) {
       $('stDshDate').textContent = fmtDate(latestRow.publishedAt) || String(latestVersion);
     };
     const loadVersions = async () => {
-      const hint = $('stUpgradeHint');
-      hint.hidden = false;
-      hint.textContent = '正在检查…';
+      showSk('stSkDsh');
       try {
         renderDsh(await window.dsh.checkUpdates());
-        hint.hidden = true;
       } catch (error) {
-        hint.hidden = true;
         renderDsh({ error: String(error), rows: [] });
       }
     };
 
     // ---------- 侧边栏插件 ----------
     const renderPlugin = (info) => {
+      hideSk('stSkPlugin'); // 数据到达/失败 → 骨架替换
       lastPluginInfo = info;
       const installed = info.installed;
       const failed = !!info.error;
@@ -744,14 +887,10 @@ function STATUS_BRIDGE_JS_FN(width) {
       }
     };
     const loadPluginInfo = async () => {
-      const hint = $('stPluginHint');
-      hint.hidden = false;
-      hint.textContent = '正在检查…';
+      showSk('stSkPlugin');
       try {
         renderPlugin(await window.dsh.getPluginInfo());
-        hint.hidden = true;
       } catch (error) {
-        hint.hidden = true;
         renderPlugin({ error: String(error), installed: null });
       }
     };
@@ -799,6 +938,7 @@ function STATUS_BRIDGE_JS_FN(width) {
       sw.setAttribute('aria-checked', String(on));
     };
     const renderMarket = (info) => {
+      hideSk('stSkMarket'); // 数据到达/失败 → 骨架替换
       lastMarketInfo = info;
       const installed = info.installed;
       const failed = !!info.error;
@@ -847,14 +987,10 @@ function STATUS_BRIDGE_JS_FN(width) {
       $('stMarketSwitchRow').hidden = isInstall;
     };
     const loadMarketInfo = async () => {
-      const hint = $('stMarketHint');
-      hint.hidden = false;
-      hint.textContent = '正在检查…';
+      showSk('stSkMarket');
       try {
         renderMarket(await window.dsh.getMarketInfo());
-        hint.hidden = true;
       } catch (error) {
-        hint.hidden = true;
         renderMarket({ error: String(error), installed: null });
       }
       if (lastMarketInfo && lastMarketInfo.installed) {
@@ -895,6 +1031,50 @@ function STATUS_BRIDGE_JS_FN(width) {
         resetActionBtn(btn, isInstall);
       } finally {
         marketInstalling = false;
+      }
+    };
+
+    // ---------- 通知(横幅 / 声音)----------
+    // 读主进程 dsh:notify-settings:{ banner, sound, permission } 回显两个开关;
+    // permission=="denied" 且横幅开 → 提示去系统设置开启(需求 5 的引导)。
+    const renderNotify = (settings) => {
+      if (!settings || typeof settings !== "object") return;
+      hideSk('stSkNotify'); // 开关状态到达 → 骨架替换为真实开关行
+      if (typeof settings.banner === "boolean") {
+        notifyBannerOn = settings.banner;
+        $("stNotifyBanner").classList.toggle("dshbox-st-on", notifyBannerOn);
+        $("stNotifyBanner").setAttribute("aria-checked", String(notifyBannerOn));
+      }
+      if (typeof settings.sound === "boolean") {
+        notifySoundOn = settings.sound;
+        $("stNotifySound").classList.toggle("dshbox-st-on", notifySoundOn);
+        $("stNotifySound").setAttribute("aria-checked", String(notifySoundOn));
+      }
+      // 数据到达 → 开关行显示(骨架隐藏由上面 hideSk 完成;开关行初始 hidden)
+      $("stNotifyBanner").closest("label").hidden = false;
+      $("stNotifySound").closest("label").hidden = false;
+      if (typeof settings.permission === "string") notifyPermission = settings.permission;
+      const hint = $("stNotifyHint");
+      if (notifyBannerOn && notifyPermission === "denied") {
+        hint.hidden = false;
+        hint.textContent = "系统通知权限未开启,请在 Mac 系统设置 > 通知 中允许「DSH Box」";
+      } else {
+        hint.hidden = true;
+      }
+    };
+    const loadNotifySettings = async () => {
+      if (!window.dsh || !window.dsh.getNotificationSettings) return;
+      showSk('stSkNotify');
+      try {
+        renderNotify(await window.dsh.getNotificationSettings());
+      } catch { /* 读失败保持现状 */ }
+    };
+    const setNotify = async (patch) => {
+      try {
+        if (!window.dsh || !window.dsh.setNotificationSettings) return;
+        renderNotify(await window.dsh.setNotificationSettings(patch));
+      } catch {
+        loadNotifySettings(); // 失败回读现状(乐观翻转回滚)
       }
     };
 
@@ -972,6 +1152,7 @@ function STATUS_BRIDGE_JS_FN(width) {
 
       bindExternalLink($('stDshVersionLink'));
       bindExternalLink($('stPluginNameLink'));
+      bindExternalLink($('stMarketName'));
 
       $('stStartBtn').addEventListener('click', async () => {
         if (upgrading) return;
@@ -1018,9 +1199,24 @@ function STATUS_BRIDGE_JS_FN(width) {
           $('stMarketSwitch').click();
         }
       });
-      div.querySelector('.dshbox-st-close').addEventListener('click', () => {
-        toggle();
-      });
+
+      // 通知开关(横幅 / 声音):乐观翻转 → 主进程持久化 + 回显(含权限提示)
+      const bindNotifySwitch = (el, key) => {
+        const patchFor = (next) => (key === 'banner' ? { banner: next } : { sound: next });
+        el.addEventListener('click', async () => {
+          const on = key === 'banner' ? notifyBannerOn : notifySoundOn;
+          renderNotify({ banner: key === 'banner' ? !on : notifyBannerOn, sound: key === 'sound' ? !on : notifySoundOn });
+          await setNotify(patchFor(!on));
+        });
+        el.addEventListener('keydown', (event) => {
+          if (event.key === ' ' || event.key === 'Enter') {
+            event.preventDefault();
+            el.click();
+          }
+        });
+      };
+      bindNotifySwitch($('stNotifyBanner'), 'banner');
+      bindNotifySwitch($('stNotifySound'), 'sound');
 
       // 拖拽调宽(左缘,240~640 钳制;结束持久化;拖拽中内容区挤压跟手)
       const resizer = div.querySelector('.dshbox-st-resizer');
@@ -1060,6 +1256,7 @@ function STATUS_BRIDGE_JS_FN(width) {
       loadVersions();
       loadPluginInfo();
       loadMarketInfo();
+      loadNotifySettings();
     };
 
     // ---------- 展开 / 收起(带滑入/滑出动画,防重入) ----------

@@ -375,6 +375,63 @@ body {
   outline-offset: 2px;
 }
 
+/* ---------- 骨架屏(加载中灰色占位 + 扫光动画) ----------
+ * 各动态板块(服务状态 / DSH / 通知 / 插件市场 / 侧边栏)独立骨架,
+ * 数据到达(渲染函数被调)即隐藏骨架显示真实数据;查询失败同样隐藏。
+ * 配色用面板自身的 surface-2(浅色浅灰 / 深色深灰),扫光分亮暗两档。 */
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sk-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 18px;
+}
+
+.sk {
+  position: relative;
+  overflow: hidden;
+  display: inline-block;
+  flex: none;
+  height: 14px;
+  border-radius: 4px;
+  background: var(--surface-2);
+}
+
+.sk::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    100deg,
+    transparent 20%,
+    light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.14)) 50%,
+    transparent 80%
+  );
+  animation: sk-sweep 1.3s ease-in-out infinite;
+}
+
+@keyframes sk-sweep {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* 骨架块尺寸变体(模拟真实内容形态:文本条、徽标、按钮、开关) */
+.sk-w-sm { width: 52px; }
+.sk-w-md { width: 96px; }
+.sk-w-lg { width: 150px; }
+.sk-w-xl { width: 210px; }
+.sk-w-full { width: 100%; }
+.sk-h-pill { height: 22px; border-radius: 5px; }
+.sk-h-btn { height: 28px; border-radius: 100px; }
+.sk-h-switch { height: 18px; border-radius: 10px; }
+
 /* ---------- 查询失败 / 缓存回退 ---------- */
 .version-error {
   display: flex;
@@ -397,21 +454,39 @@ body {
   text-align: center;
 }
 
-/* ---------- 滚动条(dsh 全局规格:8px / thumb 4px) ---------- */
+/* ---------- 滚动条(dsh 会话区同款规格,默认隐藏 + 面板内任意位置 hover 显示) ----------
+ * 规格实测 @deepseek-ai/dsh-client-ui-theme scrollbar.css:8px 宽高 / track 与
+ * corner 透明 / thumb 4px 圆角;色值 = dsh-scrollbar 主题 token 的具体中性色
+ * (--dsw-static-neutral-200/300 亮、700/600 暗)。
+ * Chromium 的 scrollbar 伪元素只匹配全局无前缀选择器,祖先限定(含 :hover / 类)
+ * 一律失效 → 显示/隐藏走「变量 rebind」:body(面板)默认把 thumb 变量置透明;
+ * body:hover(鼠标位于页面区域内任意位置,不必滑到滚动条上)时置 dsh 色;
+ * 离开页面区域 :hover 解除 → 立刻回透明隐藏。全局伪元素规则读变量。 */
+body {
+  --st-sb-thumb: transparent;
+  --st-sb-thumb-hover: transparent;
+}
+
+body:hover {
+  --st-sb-thumb: light-dark(rgb(229, 229, 229), rgb(60, 60, 61));
+  --st-sb-thumb-hover: light-dark(rgb(212, 212, 212), rgb(84, 85, 87));
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
-::-webkit-scrollbar-track {
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
   background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
   border-radius: 4px;
-  background: var(--border);
+  background: var(--st-sb-thumb);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
+  background: var(--st-sb-thumb-hover);
 }

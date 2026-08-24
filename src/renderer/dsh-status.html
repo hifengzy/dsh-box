@@ -12,7 +12,8 @@
   <body>
     <!--
       服务状态面板(右侧内置,开关由顶栏状态按钮/菜单控制,自身无关闭按钮)。
-      布局参考设计稿 demo/0.2.0(未安装 / 已装-有更新 / 已装-无更新 三态):
+      布局参考设计稿 demo/0.2.0(未安装 / 已装-有更新 / 已装-无更新 三态),
+      板块顺序:服务状态 → DSH → 通知 → 插件市场 → 侧边栏:
         [服务状态]
           DSH 0.1.0-rc.6...        [● 运行中] (+启动服务, 停止时)
           端口 3260 · PID 33990
@@ -20,6 +21,16 @@
         [DSH]
           0.1.0-rc.8 [最新]              [更新 / 当前]
           2026-08-19
+        ──────────────
+        [通知]
+          允许 DSH 在任务完成、失败和等待审批时向你推送消息提醒…
+          [横幅]                    (开关)
+          [声音]                    (开关)
+        ──────────────
+        [插件市场]
+          dsh-market [1.18.1]            [安装 / 更新 / 已安装]
+          浏览、搜索、安装、更新、卸载社区插件。
+          [在 DSH 侧边栏显示插件市场入口]
         ──────────────
         [侧边栏]
           dsh-better-sidebar [0.15.2]    [安装 / 更新 / 已安装]
@@ -29,7 +40,12 @@
       <!-- ---------- 服务状态 ---------- -->
       <section class="section" id="serviceSection">
         <h1 class="section-title">服务状态</h1>
-        <div class="status-info">
+        <!-- 骨架屏:getInfo 进行中占位,数据到达即被 status-info 替换 -->
+        <div class="skeleton" id="skService">
+          <div class="sk-row"><span class="sk sk-w-xl"></span><span class="sk sk-h-pill sk-w-sm"></span></div>
+          <div class="sk-row"><span class="sk sk-w-md"></span></div>
+        </div>
+        <div class="status-info" id="statusInfo" hidden>
           <div class="status-text">
             <div class="version-line" id="versionLine" title="">DSH 1.0.0</div>
             <div class="meta-line" id="metaLine">端口 - · PID -</div>
@@ -48,6 +64,12 @@
       <!-- ---------- DSH(最新一条版本) ---------- -->
       <section class="section" id="dshSection">
         <h1 class="section-title">DSH</h1>
+
+        <!-- 骨架屏:checkUpdates 进行中占位 -->
+        <div class="skeleton" id="skDsh">
+          <div class="sk-row"><span class="sk sk-w-md"></span><span class="sk sk-h-pill sk-w-sm"></span><span class="sk sk-h-btn sk-w-sm"></span></div>
+          <div class="sk-row"><span class="sk sk-w-sm"></span></div>
+        </div>
 
         <!-- 正常运行:版本链接 + 最新徽标 + 更新按钮/当前文案 -->
         <div class="row-line" id="dshRow" hidden>
@@ -77,9 +99,86 @@
         <div class="hint-line" id="upgradeHint" hidden></div>
       </section>
 
+      <!-- ---------- 通知(横幅 / 声音)---------- -->
+      <section class="section" id="notifySection">
+        <h1 class="section-title">通知</h1>
+        <p class="plugin-desc">允许 DSH 在任务完成、失败和等待审批时向你推送消息提醒。请在 Mac 系统设置 &gt; 通知中开启</p>
+        <!-- 骨架屏:getNotificationSettings 进行中占位,到达后开关行替换 -->
+        <div class="skeleton" id="skNotify">
+          <div class="sk-row"><span class="sk sk-w-sm"></span><span class="sk sk-h-switch"></span></div>
+          <div class="sk-row"><span class="sk sk-w-sm"></span><span class="sk sk-h-switch"></span></div>
+        </div>
+        <label class="switch-row" hidden>
+          <span class="switch-label">横幅</span>
+          <span class="switch" id="notifyBanner" role="switch" aria-checked="false" tabindex="0">
+            <span class="switch-knob"></span>
+          </span>
+        </label>
+        <label class="switch-row" hidden>
+          <span class="switch-label">声音</span>
+          <span class="switch" id="notifySound" role="switch" aria-checked="false" tabindex="0">
+            <span class="switch-knob"></span>
+          </span>
+        </label>
+        <div class="hint-line" id="notifyHint" hidden></div>
+      </section>
+
+      <!-- ---------- 插件市场(dsh-market) ---------- -->
+      <section class="section" id="marketSection">
+        <h1 class="section-title">插件市场</h1>
+
+        <!-- 骨架屏:getMarketInfo 进行中占位 -->
+        <div class="skeleton" id="skMarket">
+          <div class="sk-row"><span class="sk sk-w-md"></span><span class="sk sk-h-pill sk-w-sm"></span><span class="sk sk-h-btn sk-w-sm"></span></div>
+          <div class="sk-row"><span class="sk sk-w-full"></span></div>
+        </div>
+
+        <!-- 正常:名称(链接)+ 版本徽标 + 安装/更新按钮或已安装文案 -->
+        <div class="row-line" id="marketRow" hidden>
+          <a
+            class="row-link"
+            id="marketName"
+            href="https://github.com/dsh-market/dsh-market"
+            target="_blank"
+            rel="noreferrer"
+            title="dsh-market"
+          >dsh-market</a>
+          <span class="v-badge" id="marketVersionBadge">0.15.2</span>
+          <button class="btn btn-primary plugin-action" id="marketActionBtn" type="button" hidden>安装</button>
+          <span class="state-current" id="marketInstalledLabel" hidden>已安装</span>
+        </div>
+
+        <!-- 说明文案:未安装时显示 -->
+        <p class="plugin-desc" id="marketDesc" hidden>
+          浏览、搜索、安装、更新、卸载社区插件。
+        </p>
+
+        <!-- 开关行:已安装后显示,控制侧边栏「插件」入口 -->
+        <label class="switch-row" id="marketSwitchRow" hidden>
+          <span class="switch-label">在 DSH 侧边栏显示插件市场入口</span>
+          <span class="switch" id="marketSwitch" role="switch" aria-checked="false" tabindex="0">
+            <span class="switch-knob"></span>
+          </span>
+        </label>
+
+        <!-- 查询失败:错误文案 + 重试 -->
+        <div class="version-error" id="marketError" hidden>
+          <p class="error-text">网络服务异常</p>
+          <button class="btn btn-outline" id="marketRetryBtn" type="button">重试</button>
+        </div>
+
+        <div class="hint-line" id="marketHint" hidden></div>
+      </section>
+
       <!-- ---------- 侧边栏(dsh-better-sidebar) ---------- -->
       <section class="section" id="pluginSection">
         <h1 class="section-title">侧边栏</h1>
+
+        <!-- 骨架屏:getPluginInfo 进行中占位 -->
+        <div class="skeleton" id="skPlugin">
+          <div class="sk-row"><span class="sk sk-w-md"></span><span class="sk sk-h-pill sk-w-sm"></span><span class="sk sk-h-btn sk-w-sm"></span></div>
+          <div class="sk-row"><span class="sk sk-w-full"></span></div>
+        </div>
 
         <!-- 正常:名称链接 + 版本徽标 + 安装/更新按钮或已安装文案 -->
         <div class="row-line" id="pluginRow" hidden>
@@ -106,39 +205,6 @@
         </div>
 
         <div class="hint-line" id="pluginHint" hidden></div>
-      </section>
-    <!-- ---------- 插件市场(dsh-market) ---------- -->
-      <section class="section" id="marketSection">
-        <h1 class="section-title">插件市场</h1>
-
-        <!-- 正常:名称 + 版本徽标 + 安装/更新按钮或已安装文案 -->
-        <div class="row-line" id="marketRow" hidden>
-          <span class="row-name" id="marketName">dsh-market</span>
-          <span class="v-badge" id="marketVersionBadge">0.15.2</span>
-          <button class="btn btn-primary plugin-action" id="marketActionBtn" type="button" hidden>安装</button>
-          <span class="state-current" id="marketInstalledLabel" hidden>已安装</span>
-        </div>
-
-        <!-- 说明文案:未安装时显示 -->
-        <p class="plugin-desc" id="marketDesc" hidden>
-          浏览、搜索、安装、更新、卸载社区插件。
-        </p>
-
-        <!-- 开关行:已安装后显示,控制侧边栏「插件」入口 -->
-        <label class="switch-row" id="marketSwitchRow" hidden>
-          <span class="switch-label">在 DSH 侧边栏显示插件市场入口</span>
-          <span class="switch" id="marketSwitch" role="switch" aria-checked="false" tabindex="0">
-            <span class="switch-knob"></span>
-          </span>
-        </label>
-
-        <!-- 查询失败:错误文案 + 重试 -->
-        <div class="version-error" id="marketError" hidden>
-          <p class="error-text">网络服务异常</p>
-          <button class="btn btn-outline" id="marketRetryBtn" type="button">重试</button>
-        </div>
-
-        <div class="hint-line" id="marketHint" hidden></div>
       </section>
     </main>
 

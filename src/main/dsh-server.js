@@ -234,8 +234,11 @@ class DshServer extends EventEmitter {
     //   binary → 直接运行
     // 注:dsh 的 HMR 插件需要 --expose-internals(Node < 25 默认不给),
     // 所以跑 script 时显式带上;对较新的 Node 也是无害的。
+    // 注:dsh web 启动成功后默认会用「系统默认浏览器打开页面」;DSH Box 本身
+    // 就是浏览器/客户端(内容视图加载 dsh UI),必须 --no-open 禁用,否则每次
+    // 服务启动/升级重启都会弹系统浏览器(实测跳出 Chrome)。
     let command;
-    const args = ["web", "--port", String(this.port)];
+    const args = ["web", "--port", String(this.port), "--no-open"];
     if (dshType === "script") {
       command = process.execPath;
       args.unshift("--expose-internals", this.dshBin);

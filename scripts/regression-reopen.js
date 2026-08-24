@@ -4,7 +4,7 @@
 /**
  * regression-reopen.js — ISSUE-001 回归测试(真实 main.js 驱动):
  * 关窗后 activate(点 Dock)重开的窗口必须直接加载 WebUI,
- * 且注入(custom.css / pointer 防抖 / 主题同步)随窗口生效。
+ * 且注入(custom.css / pointer 防抖 / 插件·服务状态桥)随窗口生效。
  *
  * 用法: electron scripts/regression-reopen.js --no-sandbox
  */
@@ -67,11 +67,12 @@ app.whenReady().then(async () => {
     }
     if (!cv2) throw new Error("重开窗口未加载 WebUI(仍卡加载页?)");
     const guard = await cv2.executeJavaScript("!!window.__dshDesktopPointerGuard", true);
-    const theme = await cv2.executeJavaScript("!!window.__dshDesktopThemeWatcher", true);
+    const pluginBridge = await cv2.executeJavaScript("!!window.__dshBoxPluginBridge", true);
+    const statusBridge = await cv2.executeJavaScript("!!window.__dshBoxStatusBridge", true);
     const url = cv2.getURL();
-    console.log(`[4] 重开窗口 url=${url} pointerGuard=${guard} themeWatcher=${theme}`);
+    console.log(`[4] 重开窗口 url=${url} pointerGuard=${guard} pluginBridge=${pluginBridge} statusBridge=${statusBridge}`);
     if (!/^http:\/\/127\.0\.0\.1:3301/.test(url)) throw new Error("重开窗口没有加载 WebUI");
-    if (!guard || !theme) throw new Error("重开窗口缺少注入(pointerGuard/themeWatcher)");
+    if (!guard || !pluginBridge || !statusBridge) throw new Error("重开窗口缺少注入(pointerGuard/插件桥/状态桥)");
     console.log("\nPASS ✓ ISSUE-001 回归:关窗重开加载 WebUI,注入生效");
     app.quit();
   } catch (err) {

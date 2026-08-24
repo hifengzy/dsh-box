@@ -23,6 +23,7 @@
 
 const { app, BrowserWindow, ipcMain, nativeTheme } = require("electron");
 const path = require("node:path");
+const fs = require("node:fs");
 
 app.setPath("userData", path.resolve(__dirname, "..", ".runtime", "regression", "status-user"));
 
@@ -76,6 +77,11 @@ let marketInstalled = null; // null = 未安装
 let marketLatest = "1.18.1";
 let marketError = null;
 let marketSwitchOn = false;
+// 通知夹具(模拟主进程 dsh:notify-settings)
+let notifyBanner = false;
+let notifySound = false;
+let notifyPermission = "unknown";
+let notifySets = []; // 记录 set 调用
 // 失败注入:非 null 时对应 action 返回失败(mock 真实主进程异常/失败)
 let pluginInstallFail = null;
 let marketInstallFail = null;
@@ -85,6 +91,11 @@ let retryFail = false;
 let pluginInstalled = null; // null = 未安装
 let pluginLatest = "0.15.2";
 let pluginError = null;
+// 骨架屏测试:各查询方延迟(ms,0=立即)模拟不同数据源速度
+let queryDelays = { info: 0, versions: 0, plugin: 0, market: 0, notify: 0 };
+const sleepQ = async (key) => {
+  if (queryDelays[key]) await new Promise((r) => setTimeout(r, queryDelays[key]));
+};
 
 /** 版本号大小比较(简单实现,夹具只用于 0.15.x) */
 function verLt(a, b) {
@@ -99,8 +110,14 @@ function verLt(a, b) {
 }
 
 // 模拟主进程处理器(不真正启动/下载/打开)
-ipcMain.handle("dsh:get-info", () => ({ ...FIXTURE_INFO, state }));
-ipcMain.handle("dsh:check-updates", () => FIXTURE_VERSIONS);
+ipcMain.handle("dsh:get-info", async () => {
+  await sleepQ("info");
+  return { ...FIXTURE_INFO, state };
+});
+ipcMain.handle("dsh:check-updates", async () => {
+  await sleepQ("versions");
+  return FIXTURE_VERSIONS;
+});
 ipcMain.handle("dsh:upgrade", (_e, v) => {
   upgradedVersion = v;
   if (upgradeFail) return { ok: false, error: upgradeFail };
@@ -123,13 +140,16 @@ ipcMain.handle("dsh:toggle-sidebar", () => {
   return { open: true, canOpen: true };
 });
 // 侧边栏插件:查询(可变夹具)/安装(记录并更新已装版本)/顶栏面板切换
-ipcMain.handle("dsh:plugin-info", () => ({
-  name: "dsh-better-sidebar",
-  installed: pluginInstalled,
-  latest: pluginLatest,
-  hasUpdate: pluginInstalled !== null && pluginLatest !== null && verLt(pluginInstalled, pluginLatest),
-  error: pluginError,
-}));
+ipcMain.handle("dsh:plugin-info", async () => {
+  await sleepQ("plugin");
+  return {
+    name: "dsh-better-sidebar",
+    installed: pluginInstalled,
+    latest: pluginLatest,
+    hasUpdate: pluginInstalled !== null && pluginLatest !== null && verLt(pluginInstalled, pluginLatest),
+    error: pluginError,
+  };
+});
 ipcMain.handle("dsh:plugin-install", async (_e, v) => {
   if (pluginInstallFail) return { ok: false, error: pluginInstallFail };
   pluginInstalled = v ?? pluginLatest;
@@ -140,13 +160,16 @@ ipcMain.handle("dsh:toggle-plugin-panel", (_e, which) => {
   return { ok: true };
 });
 // 插件市场:查询(可变夹具)/安装/侧边栏入口开关
-ipcMain.handle("dsh:market-info", () => ({
-  name: "dshmarket",
-  installed: marketInstalled,
-  latest: marketLatest,
-  hasUpdate: marketInstalled !== null && marketLatest !== null && verLt(marketInstalled, marketLatest),
-  error: marketError,
-}));
+ipcMain.handle("dsh:market-info", async () => {
+  await sleepQ("market");
+  return {
+    name: "dshmarket",
+    installed: marketInstalled,
+    latest: marketLatest,
+    hasUpdate: marketInstalled !== null && marketLatest !== null && verLt(marketInstalled, marketLatest),
+    error: marketError,
+  };
+});
 ipcMain.handle("dsh:market-install", async (_e, v) => {
   if (marketInstallFail) return { ok: false, error: marketInstallFail };
   marketInstalled = v ?? marketLatest;
@@ -156,6 +179,22 @@ ipcMain.handle("dsh:market-switch", (_e, next) => {
   if (next === undefined) return { ok: true, enabled: marketSwitchOn };
   marketSwitchOn = !!next;
   return { ok: true, enabled: marketSwitchOn };
+});
+// 通知:读/写开关 + 权限(模拟主进程;首次开启横幅无系统弹窗副作用)
+ipcMain.handle("dsh:notify-settings", async (_e, next) => {
+  if (next === undefined || next === null) {
+    await sleepQ("notify");
+    return { banner: notifyBanner, sound: notifySound, permission: notifyPermission };
+  }
+  if (typeof next.banner === "boolean") {
+    notifyBanner = next.banner;
+    notifySets.push({ banner: next.banner });
+  }
+  if (typeof next.sound === "boolean") {
+    notifySound = next.sound;
+    notifySets.push({ sound: next.sound });
+  }
+  return { banner: notifyBanner, sound: notifySound, permission: notifyPermission };
 });
 // 链接 → 系统浏览器(记录 URL 供断言)
 ipcMain.handle("shell:open-external", (_e, url) => {
@@ -396,7 +435,12 @@ app.whenReady().then(async () => {
     if (!tbp2.sideActive) throw new Error("侧栏展开时侧栏按钮应高亮");
     if (tbp2.bottomActive) throw new Error("底栏折叠时底栏按钮不应高亮");
     if (tbp2.sidePressed !== "true") throw new Error("aria-pressed 应同步为 true");
-    if (tbp2.sideTitle !== "折叠侧边栏") throw new Error(`侧栏展开时标题应为「折叠侧边栏」,实际 ${tbp2.sideTitle}`);
+    // tooltip 固定(需求:github/管理/底部面板/侧边栏,不随开合状态变化)
+    if (tbp2.sideTitle !== "侧边栏") throw new Error(`侧栏按钮 tooltip 应为「侧边栏」,实际 ${tbp2.sideTitle}`);
+    const bottomTitle = await win.webContents.executeJavaScript(
+      `document.getElementById("pluginBottomBtn").title`
+    );
+    if (bottomTitle !== "底部面板") throw new Error(`底栏按钮 tooltip 应为「底部面板」,实际 ${bottomTitle}`);
     await win.webContents.executeJavaScript(`document.getElementById("pluginSideBtn").click(); undefined;`);
     await wait(100);
     if (toggledPluginPanel !== "side") throw new Error("点侧栏按钮应触发 toggle-plugin-panel('side')");
@@ -619,6 +663,14 @@ app.whenReady().then(async () => {
     })()`);
     if (mk1.rowHidden) throw new Error("插件市场行应显示");
     if (mk1.name !== "dsh-market") throw new Error(`名称应为 dsh-market,实际 ${mk1.name}`);
+    // 市场名链接 → 系统浏览器(openExternal),页面不导航
+    await win.webContents.executeJavaScript(`document.getElementById("marketName").click(); undefined;`);
+    await wait(100);
+    if (openedExternal !== "https://github.com/dsh-market/dsh-market")
+      throw new Error(`市场名链接应走 openExternal,实际 ${openedExternal}`);
+    const urlAfterMarketClick = win.webContents.getURL();
+    if (!urlAfterMarketClick.startsWith("file:"))
+      throw new Error("点击市场链接不应在 Electron 内导航(应保持 file:// 面板)");
     if (mk1.badge !== "1.18.1" || mk1.badgeHidden)
       throw new Error(`版本徽标应显示最新 1.18.1,实际 ${mk1.badge}`);
     if (mk1.actionHidden || mk1.actionText !== "安装")
@@ -826,6 +878,158 @@ app.whenReady().then(async () => {
       throw new Error(`应展示「服务启动失败」原因,实际 ${f4.hint}`);
     retryFail = false;
     console.log("[13d] 服务启动失败:按钮重置「启动服务」+「服务启动失败:原因」 ✓");
+
+    // ========== 14. 通知板块:横幅/声音开关 + 权限提示 ==========
+    await win.loadFile(path.join(__dirname, "..", "src", "renderer", "dsh-status.html"));
+    await wait(300);
+    const n14a = await win.webContents.executeJavaScript(`(() => ({
+      titles: [...document.querySelectorAll(".section-title")].map((h) => h.textContent),
+      desc: document.getElementById("notifySection").querySelector(".plugin-desc").textContent,
+      bannerAria: document.getElementById("notifyBanner").getAttribute("aria-checked"),
+      soundAria: document.getElementById("notifySound").getAttribute("aria-checked"),
+      hintHidden: document.getElementById("notifyHint").hidden,
+    }))()`);
+    if (n14a.titles.join(",") !== "服务状态,DSH,通知,插件市场,侧边栏")
+      throw new Error(`板块顺序应为 服务状态,DSH,通知,插件市场,侧边栏,实际 ${n14a.titles}`);
+    if (!n14a.desc.includes("允许 DSH 在任务完成")) throw new Error("通知板块应有说明文案");
+    if (n14a.bannerAria !== "false" || n14a.soundAria !== "false")
+      throw new Error("两个开关默认应为关");
+    if (!n14a.hintHidden) throw new Error("权限未拒时不应显示提示");
+    console.log("[14a] 通知板块:顺序 + 说明文案 + 双开关默认关 ✓");
+
+    await win.webContents.executeJavaScript(`document.getElementById("notifyBanner").click(); undefined;`);
+    await wait(200);
+    const n14b = await win.webContents.executeJavaScript(`(() => ({
+      bannerAria: document.getElementById("notifyBanner").getAttribute("aria-checked"),
+      bannerOn: document.getElementById("notifyBanner").classList.contains("switch-on"),
+    }))()`);
+    if (n14b.bannerAria !== "true" || !n14b.bannerOn)
+      throw new Error(`开启横幅后开关应翻转(乐观 + 回显),实际 ${JSON.stringify(n14b)}`);
+    if (notifyBanner !== true || !notifySets.some((s) => s.banner === true))
+      throw new Error("横幅开启应经 IPC 持久化");
+    await win.webContents.executeJavaScript(`document.getElementById("notifySound").click(); undefined;`);
+    await wait(200);
+    if (notifySound !== true || !notifySets.some((s) => s.sound === true))
+      throw new Error("声音开启应经 IPC 持久化");
+    console.log("[14b] 通知开关:横幅/声音切换 → 乐观翻转 + IPC 持久化 ✓");
+
+    // 权限被拒(系统设置里关了)→ 重载后面板给出引导提示
+    notifyPermission = "denied";
+    await win.loadFile(path.join(__dirname, "..", "src", "renderer", "dsh-status.html"));
+    await wait(300);
+    const n14c = await win.webContents.executeJavaScript(`(() => ({
+      hintHidden: document.getElementById("notifyHint").hidden,
+      hint: document.getElementById("notifyHint").textContent,
+    }))()`);
+    if (n14c.hintHidden || !n14c.hint.includes("系统设置"))
+      throw new Error(`横幅开 + 权限被拒应显示引导提示,实际 ${JSON.stringify(n14c)}`);
+    console.log("[14c] 权限引导:横幅开 + 通知权限被拒 → 提示去系统设置开启 ✓");
+
+    // ========== 15. 骨架屏:加载中灰色占位 → 数据替换(各板块独立) ==========
+    // (5 个动态板块各自展示骨架,数据到达先到先换,互不影响;无「正在检查…」文字)
+    // 15a. 全部查询慢 → 五板块全部骨架,数据区隐藏
+    queryDelays = { info: 250, versions: 250, plugin: 250, market: 250, notify: 250 };
+    await win.loadFile(path.join(__dirname, "..", "src", "renderer", "dsh-status.html"));
+    await wait(70);
+    const sk15a = await win.webContents.executeJavaScript(`(() => ({
+      service: !document.getElementById("skService").hidden,
+      dsh: !document.getElementById("skDsh").hidden,
+      notify: !document.getElementById("skNotify").hidden,
+      market: !document.getElementById("skMarket").hidden,
+      plugin: !document.getElementById("skPlugin").hidden,
+      statusInfoHidden: document.getElementById("statusInfo").hidden,
+      dshRowHidden: document.getElementById("dshRow").hidden,
+      pluginRowHidden: document.getElementById("pluginRow").hidden,
+      marketRowHidden: document.getElementById("marketRow").hidden,
+      notifySwHidden: document.getElementById("notifyBanner").closest("label").hidden,
+      animName: getComputedStyle(document.querySelector(".sk"), "::after").animationName,
+      animDur: getComputedStyle(document.querySelector(".sk"), "::after").animationDuration,
+      skColor: getComputedStyle(document.querySelector(".sk")).backgroundColor,
+    }))()`);
+    if (!sk15a.service || !sk15a.dsh || !sk15a.notify || !sk15a.market || !sk15a.plugin)
+      throw new Error(`慢查询时五个板块骨架都应可见,实际 ${JSON.stringify(sk15a)}`);
+    if (!sk15a.statusInfoHidden || !sk15a.dshRowHidden || !sk15a.pluginRowHidden || !sk15a.marketRowHidden || !sk15a.notifySwHidden)
+      throw new Error("骨架期间数据区应隐藏(骨架替代加载中)");
+    if (sk15a.animName !== "sk-sweep" || sk15a.animDur === "0s")
+      throw new Error(`骨架块应有扫光动画,实际 ${sk15a.animName} ${sk15a.animDur}`);
+    if (!sk15a.skColor || sk15a.skColor === "rgba(0, 0, 0, 0)")
+      throw new Error(`骨架块应有灰色底,实际 ${sk15a.skColor}`);
+    await wait(450);
+    const sk15b = await win.webContents.executeJavaScript(`(() => ({
+      dshSk: document.getElementById("skDsh").hidden,
+      pluginSk: document.getElementById("skPlugin").hidden,
+      notifySk: document.getElementById("skNotify").hidden,
+      dshRowHidden: document.getElementById("dshRow").hidden,
+      pluginRowHidden: document.getElementById("pluginRow").hidden,
+      notifySwHidden: document.getElementById("notifyBanner").closest("label").hidden,
+      statusInfoHidden: document.getElementById("statusInfo").hidden,
+    }))()`);
+    if (!sk15b.dshSk || !sk15b.pluginSk || !sk15b.notifySk)
+      throw new Error("数据到达后骨架应全部隐藏");
+    if (sk15b.dshRowHidden || sk15b.pluginRowHidden || sk15b.notifySwHidden || sk15b.statusInfoHidden)
+      throw new Error("数据到达后真实数据应显示(含服务状态/通知开关行)");
+    console.log("[15a] 骨架屏:五板块加载中占位 + 扫光动画 + 数据到达整体替换 ✓");
+
+    // 15b. 仅 DSH 慢 → 只有 DSH 骨架,其它板块已显示数据(互补影响)
+    queryDelays = { info: 0, versions: 300, plugin: 0, market: 0, notify: 0 };
+    await win.loadFile(path.join(__dirname, "..", "src", "renderer", "dsh-status.html"));
+    await wait(70);
+    const sk15c = await win.webContents.executeJavaScript(`(() => ({
+      dsh: !document.getElementById("skDsh").hidden,
+      plugin: !document.getElementById("skPlugin").hidden,
+      market: !document.getElementById("skMarket").hidden,
+      service: !document.getElementById("skService").hidden,
+      dshRowHidden: document.getElementById("dshRow").hidden,
+      pluginRowHidden: document.getElementById("pluginRow").hidden,
+      marketRowHidden: document.getElementById("marketRow").hidden,
+      statusInfoHidden: document.getElementById("statusInfo").hidden,
+    }))()`);
+    if (!sk15c.dsh || sk15c.plugin || sk15c.market || sk15c.service)
+      throw new Error(`仅 DSH 慢时只有 DSH 骨架(独立替换),实际 ${JSON.stringify(sk15c)}`);
+    if (!sk15c.dshRowHidden || sk15c.pluginRowHidden || sk15c.marketRowHidden || sk15c.statusInfoHidden)
+      throw new Error("DSH 数据未到(骨架)、其它板块数据已到(真实内容)——各板块互补影响");
+    await wait(450);
+    const sk15d = await win.webContents.executeJavaScript(`(() => ({
+      dshSk: document.getElementById("skDsh").hidden,
+      dshRowHidden: document.getElementById("dshRow").hidden,
+    }))()`);
+    if (!sk15d.dshSk || sk15d.dshRowHidden)
+      throw new Error("DSH 查询完成后骨架应替换为真实数据");
+    queryDelays = { info: 0, versions: 0, plugin: 0, market: 0, notify: 0 };
+    console.log("[15b] 骨架屏:仅 DSH 慢 → 只有 DSH 骨架,其它板块已显示(独立替换) ✓");
+
+    // ========== 16. 滚动条:dsh 会话区同款规格 + 默认隐藏 + 面板内任意位置 hover 显示 ==========
+    // 规格来自 @deepseek-ai/dsh-client-ui-theme scrollbar.css(8px/透明 track/4px 圆角
+    // thumb/thumb 色 = 主题中性色)。Chromium scrollbar 伪元素不认祖先限定选择器
+    // (含 :hover/类,实测),故显示/隐藏走「变量 rebind」:body(面板)默认把
+    // --st-sb-thumb 置透明(隐藏),body:hover(鼠标位于页面区域内任意位置,不必滑到
+    // 滚动条上)时置 dsh 中性色;离开立刻回透明。全局伪元素规则读变量。
+    const statusCss = fs.readFileSync(path.join(__dirname, "..", "src", "renderer", "dsh-status.css"), "utf8");
+    if (!statusCss.includes("width: 8px") || !statusCss.includes("height: 8px"))
+      throw new Error("滚动条应为 dsh 规格 8px 宽高");
+    if (!statusCss.includes("::-webkit-scrollbar-track,") || !statusCss.includes("::-webkit-scrollbar-corner"))
+      throw new Error("track/corner 应透明(dsh 规格)");
+    if (!/::-webkit-scrollbar-thumb \{\n[^}]*border-radius: 4px;[^}]*background: var\(--st-sb-thumb\);/.test(statusCss))
+      throw new Error("thumb 应 4px 圆角且读变量(--st-sb-thumb)");
+    if (!statusCss.includes("--st-sb-thumb: transparent;"))
+      throw new Error("默认应把 thumb 变量置透明(隐藏,哪怕内容超出)");
+    if (!statusCss.includes("body:hover {\n  --st-sb-thumb: light-dark(rgb(229, 229, 229), rgb(60, 60, 61));"))
+      throw new Error("面板任意位置 hover 应显示 thumb(dsh neutral 亮/暗)");
+    if (!statusCss.includes("--st-sb-thumb-hover: light-dark(rgb(212, 212, 212), rgb(84, 85, 87));"))
+      throw new Error("thumb 悬停应加深(dsh neutral-300/600)");
+    // 运行态:thumb 默认透明(即使滚动条存在也不可见)
+    await win.loadFile(path.join(__dirname, "..", "src", "renderer", "dsh-status.html"));
+    await wait(200);
+    const sb16 = await win.webContents.executeJavaScript(
+      `(() => {
+        const cs = getComputedStyle(document.body, "::-webkit-scrollbar-thumb");
+        return { bg: cs.backgroundColor, w: getComputedStyle(document.body, "::-webkit-scrollbar").width };
+      })()`
+    );
+    if (!(sb16.bg === "rgba(0, 0, 0, 0)" || sb16.bg === "transparent"))
+      throw new Error(`运行态 thumb 默认应透明,实际 ${sb16.bg}`);
+    if (sb16.w !== "8px") throw new Error(`滚动条宽度应为 8px,实际 ${sb16.w}`);
+    console.log("[16] 滚动条:dsh 规格 8px/透明 track + 变量方案默认隐藏、面板内任意位置 hover 显示 ✓");
 
     console.log("\nPASS ✓ 服务状态与版本面板回归通过");
     win.destroy();

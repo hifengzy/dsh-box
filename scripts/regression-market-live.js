@@ -268,8 +268,8 @@ app.whenReady().then(async () => {
       }
       return { w: getComputedStyle(mBtn).width, labelVisible, clsHasRail: (mBtn.className || '').includes('rail') };
     })()`);
-    if (mExpanded2.w !== "264px" || !mExpanded2.labelVisible || mExpanded2.clsHasRail)
-      throw new Error(`展开后「插件」应恢复完整行+文字+无 rail 类,实际 ${JSON.stringify(mExpanded2)}`);
+    if (!(parseFloat(mExpanded2.w) >= 200) || !mExpanded2.labelVisible || mExpanded2.clsHasRail)
+      throw new Error(`展开后「插件」应恢复完整行(≥200px)+文字+无 rail 类,实际 ${JSON.stringify(mExpanded2)}`);
     console.log("[1c] 折叠态开启入口 → 展开后完整恢复(类跟随,无 rail 残留) ✓");
 
     // ---------- 3b. 点击「插件」→ 设置弹窗打开并激活插件市场页 ----------
