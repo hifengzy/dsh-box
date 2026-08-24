@@ -55,6 +55,7 @@ const {
 const { runMutualOpen } = require("./status-panel-router");
 const { readThemePreference, applyThemePreference, watchThemePreference } = require("./theme-sync");
 const { createNotifyWatcher } = require("./notify-watch");
+const { createAppUpdater } = require("./app-updater");
 
 const APP_NAME = "DSH Box";
 const isMac = process.platform === "darwin";
@@ -173,6 +174,8 @@ function main() {
   let notifyReady = false;
   /** dsh 事件流 watcher(createNotifyWatcher 实例);null = 未运行 */
   let notifyWatcher = null;
+  /** 应用自更新状态机(createAppUpdater);null = 未初始化 */
+  let appUpdater = null;
   /** 提示音文件(随 App 打包的 assets/message.m4a,dev 与打包同相对路径) */
   const NOTIFY_SOUND_PATH = path.join(__dirname, "..", "..", "assets", "message.m4a");
 
@@ -1128,6 +1131,34 @@ function main() {
     }
   }
 
+  // ---------- 应用自更新(DSH Box 自身,与 dsh npm 包升级完全独立) ----------
+  // 打包环境:启动后静默查一次 GitHub Releases,有新版本 → 顶栏「新版本」按钮;
+  // dev 模式(app.isPackaged=false)由状态机置 disabled,不参与。状态机把
+  // electron-updater 事件汇流为稳定状态并经 onChange 广播到顶栏按钮。
+  // 环境变量(测试/镜像用):DSH_APP_UPDATE_FEED=自定义 feed URL(provider generic),
+  // DSH_APP_UPDATE_DISABLED=1 关闭启动自动检查。
+  function initAppUpdateCheck() {
+    if (appUpdater) return;
+    try {
+      const { autoUpdater } = require("electron-updater");
+      const feed = process.env.DSH_APP_UPDATE_FEED;
+      if (feed) autoUpdater.setFeedURL({ provider: "generic", url: feed });
+      appUpdater = createAppUpdater({
+        autoUpdater,
+        isPackaged: app.isPackaged,
+        onChange: (state) => {
+          if (topBarView && !topBarView.webContents.isDestroyed()) {
+            topBarView.webContents.send("dsh:app-update", state);
+          }
+        },
+        log: console,
+      });
+      appUpdater.init({ checkOnStart: process.env.DSH_APP_UPDATE_DISABLED !== "1" }).catch(() => {});
+    } catch (error) {
+      console.warn("[app] 应用自更新初始化失败:", error.message);
+    }
+  }
+
   // ---------- IPC(preload 桥) ----------
   ipcMain.handle("dsh:get-info", () => getServerInfo());
   ipcMain.handle("dsh:retry", async () => {
@@ -1344,6 +1375,23 @@ function main() {
     return { banner: notifyBanner, sound: notifySound, permission: notificationPermission() };
   });
 
+  // ---------- 应用自更新(顶栏「新版本」按钮 / 菜单「检查更新…」) ----------
+  ipcMain.handle("dsh:app-update-state", () =>
+    appUpdater ? appUpdater.getState() : { state: "disabled", percent: 0, version: null, error: null }
+  );
+  ipcMain.handle("dsh:app-update-check", () => {
+    if (appUpdater) appUpdater.checkForUpdates().catch(() => {});
+    return true;
+  });
+  ipcMain.handle("dsh:app-update-download", () => {
+    if (appUpdater) appUpdater.startDownload().catch(() => {});
+    return true;
+  });
+  ipcMain.handle("dsh:app-update-install", () => {
+    if (appUpdater) appUpdater.installUpdate();
+    return true;
+  });
+
   // (外观主题同步已上移到 initThemeSync:偏好 → nativeTheme.themeSource,
   //  由 fs.watchFile 监听 settings.yaml 实时生效;不再镜像解析后的浅/深,
   //  避免锁死 prefers-color-scheme 导致「跟随系统」失效,见 theme-sync.js)
@@ -1381,6 +1429,9 @@ function main() {
     appMenu = createAppMenu({
       onAbout: () => showAboutWindow({ parent: mainWindow }),
       onOpenStatus: () => toggleStatusSidebar(),
+      onCheckUpdate: () => {
+        if (appUpdater) appUpdater.checkForUpdates().catch(() => {});
+      },
     });
     Menu.setApplicationMenu(appMenu);
   }
@@ -1402,6 +1453,8 @@ function main() {
     installPermissionHandlers();
     // npm 版本缓存目录(userData/cache);启动时静默查一次,有新版 → 顶栏红点
     npmCheck.init(path.join(app.getPath("userData"), "cache"));
+    // 应用自更新:打包环境启动后静默查一次 GitHub Releases(dev 模式自动禁用)
+    initAppUpdateCheck();
     createWindow();
     // ---------- macOS 菜单栏(Tray)----------
     // 单击图标聚焦窗口;右键弹出「打开 DSH Box / 退出」。仅 macOS。

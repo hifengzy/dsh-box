@@ -24,6 +24,8 @@ const GITHUB_URL = "https://github.com/hifengzy/dsh-box";
 let openedUrl = null;
 let toggled = 0;
 let sidebarOpenFlag = false; // 与推送事件保持同步,点击 toggle 时翻转
+let appUpdateDownloads = 0; // 应用更新:下载/安装 IPC 调用计数
+let appUpdateInstalls = 0;
 
 // 模拟主进程:外链 / 更新标志 / 面板方向
 ipcMain.handle("shell:open-external", (_event, url) => {
@@ -36,6 +38,15 @@ ipcMain.handle("dsh:toggle-sidebar", () => {
   toggled += 1;
   sidebarOpenFlag = !sidebarOpenFlag;
   return { open: sidebarOpenFlag, canOpen: true };
+});
+ipcMain.handle("dsh:app-update-state", () => ({ state: "disabled", percent: 0, version: null, error: null }));
+ipcMain.handle("dsh:app-update-download", () => {
+  appUpdateDownloads += 1;
+  return true;
+});
+ipcMain.handle("dsh:app-update-install", () => {
+  appUpdateInstalls += 1;
+  return true;
 });
 
 app.whenReady().then(async () => {
@@ -233,6 +244,75 @@ app.whenReady().then(async () => {
     if (dot.pos.top !== "1.5px" || dot.pos.right !== "1.5px")
       throw new Error(`红点贴角位置应等比缩为 1.5px,实际 ${JSON.stringify(dot.pos)}`);
     console.log("[6] 更新红点:直径 4.5px(= 原 9px 一半)+ 正圆 + 贴角 1.5px ✓");
+
+    // ========== 7. 应用自更新「新版本」按钮(github 左侧,≥30 间距 + 涂色进度) ==========
+    const updRead = () => win.webContents.executeJavaScript(`(() => {
+      const btn = document.getElementById("appUpdateBtn");
+      const fill = document.getElementById("appUpdateFill");
+      const github = document.getElementById("githubBtn");
+      if (btn.hidden) return { hidden: true };
+      const btnR = btn.getBoundingClientRect();
+      const gR = github.getBoundingClientRect();
+      const fR = fill.getBoundingClientRect();
+      return {
+        hidden: btn.hidden,
+        state: btn.dataset.state || "",
+        label: document.getElementById("appUpdateLabel").textContent,
+        title: btn.title,
+        gap: Math.round((gR.left - btnR.right) * 10) / 10,
+        fillPct: Math.round((fR.width / btnR.width) * 1000) / 10,
+        disabled: btn.disabled,
+      };
+    })()`);
+    // 初始(disabled):按钮隐藏,不留空位
+    const upd0 = await updRead();
+    if (!upd0.hidden) throw new Error(`初始(disabled)按钮应隐藏,实际 ${JSON.stringify(upd0)}`);
+    // available → 显示「新版本」,与 github 间距 ≥30
+    win.webContents.send("dsh:app-update", { state: "available", percent: 0, version: "0.2.0", error: null });
+    await new Promise((r) => setTimeout(r, 100));
+    const upd1 = await updRead();
+    if (upd1.hidden || upd1.state !== "available" || upd1.label !== "新版本")
+      throw new Error(`available 态应显示「新版本」,实际 ${JSON.stringify(upd1)}`);
+    if (upd1.gap < 30) throw new Error(`「新版本」按钮与 github 间距应 ≥30px,实际 ${upd1.gap}px`);
+    // available → 点击开始下载
+    await win.webContents.executeJavaScript(`document.getElementById("appUpdateBtn").click()`);
+    await new Promise((r) => setTimeout(r, 100));
+    if (appUpdateDownloads !== 1) throw new Error("点「新版本」应触发下载 IPC");
+    // downloading 47% → 文案「下载中 47%」+ 涂色 ≈47%
+    win.webContents.send("dsh:app-update", { state: "downloading", percent: 47, version: "0.2.0", error: null });
+    await new Promise((r) => setTimeout(r, 250)); // > 涂色 transition 0.12s
+    const upd2 = await updRead();
+    if (upd2.label !== "下载中 47%") throw new Error(`下载中应显示「下载中 47%」,实际 ${upd2.label}`);
+    if (Math.abs(upd2.fillPct - 47) > 2) throw new Error(`涂色宽度应 ≈47%,实际 ${upd2.fillPct}%`);
+    // 下载完成 → 「安装」+ 涂满 100%
+    win.webContents.send("dsh:app-update", { state: "downloaded", percent: 100, version: "0.2.0", error: null });
+    await new Promise((r) => setTimeout(r, 250)); // 从 47% 平滑涂满
+    const upd3 = await updRead();
+    if (upd3.label !== "安装") throw new Error(`下载完成应显示「安装」,实际 ${upd3.label}`);
+    if (Math.abs(upd3.fillPct - 100) > 2) throw new Error(`下载完成涂色应涂满 100%,实际 ${upd3.fillPct}%`);
+    // 安装 → 点击触发 install IPC
+    await win.webContents.executeJavaScript(`document.getElementById("appUpdateBtn").click()`);
+    await new Promise((r) => setTimeout(r, 100));
+    if (appUpdateInstalls !== 1) throw new Error("点「安装」应触发 install IPC");
+    // installing → 禁用
+    win.webContents.send("dsh:app-update", { state: "installing", percent: 100, version: "0.2.0", error: null });
+    await new Promise((r) => setTimeout(r, 100));
+    const upd4 = await updRead();
+    if (upd4.label !== "安装中…" || !upd4.disabled) throw new Error(`安装中应禁用「安装中…」,实际 ${JSON.stringify(upd4)}`);
+    // error → 「重试」+ 点击重新下载
+    win.webContents.send("dsh:app-update", { state: "error", percent: 0, version: "0.2.0", error: "网络超时" });
+    await new Promise((r) => setTimeout(r, 100));
+    const upd5 = await updRead();
+    if (upd5.label !== "重试") throw new Error(`错误应显示「重试」,实际 ${upd5.label}`);
+    await win.webContents.executeJavaScript(`document.getElementById("appUpdateBtn").click()`);
+    await new Promise((r) => setTimeout(r, 100));
+    if (appUpdateDownloads !== 2) throw new Error("点「重试」应重新下载");
+    // up-to-date / disabled → 隐藏(不留空位)
+    win.webContents.send("dsh:app-update", { state: "up-to-date", percent: 0, version: null, error: null });
+    await new Promise((r) => setTimeout(r, 100));
+    const upd6 = await updRead();
+    if (!upd6.hidden) throw new Error("已是最新后按钮应隐藏");
+    console.log("[7] 应用更新按钮:available/下载中 47%+涂色/安装+涂满/安装中/重试/隐藏 + github 间距 ≥30 ✓");
 
     console.log("\nPASS ✓ 顶栏回归通过");
     win.destroy();

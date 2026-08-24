@@ -110,3 +110,63 @@ function whichOf(btn) {
 // 插件面板状态完全由桥实时上报(内容页加载 → 注入桥 → 上报);
 // 页面重载(Spa 导航/服务重启)后桥会重新上报,无需主动轮询。
 window.dsh.onPluginPanels(renderPluginPanels);
+
+// ---------- 应用自更新「新版本」按钮 ----------
+// 状态机(主进程 app-updater.js):idle/disabled → available → downloading(percent)
+// → downloaded → installing;error 可重试。按钮在 github 左侧,仅状态为
+// available/downloading/downloaded/installing/error 时可见(hidden 不留空位)。
+const appUpdateBtn = document.getElementById("appUpdateBtn");
+const appUpdateLabel = document.getElementById("appUpdateLabel");
+
+const APP_UPDATE_LABELS = {
+  available: "新版本",
+  downloading: (n) => `下载中 ${Math.round(n)}%`,
+  downloaded: "安装",
+  installing: "安装中…",
+  error: "重试",
+};
+
+const APP_UPDATE_TITLES = {
+  available: "发现新版本,点击下载",
+  downloading: (n) => `正在下载新版本 ${Math.round(n)}%`,
+  downloaded: "下载完成,点击安装",
+  installing: "正在安装…",
+  error: "下载失败,点击重试",
+};
+
+function renderAppUpdate(state) {
+  const st = state || {};
+  const s = st.state;
+  const show = s === "available" || s === "downloading" || s === "downloaded" || s === "installing" || s === "error";
+  appUpdateBtn.hidden = !show;
+  if (!show) return;
+  appUpdateBtn.dataset.state = s;
+  appUpdateBtn.disabled = s === "installing";
+  // 进度涂色:下载中填充宽度 = 进度%(available 时 0,download 后 100)
+  const pct = s === "downloading" ? (Number(st.percent) || 0) : s === "downloaded" ? 100 : 0;
+  document.documentElement.style.setProperty("--app-update-progress", String(Math.max(0, Math.min(100, pct))));
+  const label = typeof APP_UPDATE_LABELS[s] === "function" ? APP_UPDATE_LABELS[s](st.percent ?? 0) : APP_UPDATE_LABELS[s];
+  appUpdateLabel.textContent = label;
+  const title = typeof APP_UPDATE_TITLES[s] === "function" ? APP_UPDATE_TITLES[s](st.percent ?? 0) : APP_UPDATE_TITLES[s];
+  appUpdateBtn.title = title;
+}
+
+appUpdateBtn.addEventListener("click", () => {
+  const s = appUpdateBtn.dataset.state;
+  // available → 开始下载;downloaded → 安装;error → 重试(重新下载)
+  if (s === "available" || s === "error") {
+    window.dsh.downloadAppUpdate().catch(() => {});
+  } else if (s === "downloaded") {
+    window.dsh.installAppUpdate().catch(() => {});
+  }
+});
+appUpdateBtn.addEventListener("dblclick", (event) => {
+  event.stopPropagation(); // 不触发顶栏双击最大化
+});
+
+// 启动时拉一次当前状态(dev 模式 = disabled 保持隐藏),之后订阅实时变化
+window.dsh
+  .getAppUpdateState()
+  .then(renderAppUpdate)
+  .catch(() => {});
+window.dsh.onAppUpdate(renderAppUpdate);
