@@ -17,6 +17,7 @@
     "smoke:e2e": "DSH_SMOKE=1 DSH_USER_DATA=.runtime/smoke/user-data DSH_HOME=.runtime/smoke/dsh-home DSH_APP_PORT=3278 DSH_LOCK_PATH=.runtime/smoke/lock electron . --no-sandbox",
     "test:theme": "electron scripts/theme-logo-test.js --no-sandbox",
     "test:narrow": "electron scripts/check-dsh-narrow.js --no-sandbox",
+    "test:app-update-live": "electron scripts/regression-app-update-live.js --no-sandbox",
     "test:regression": "node scripts/check-main-integrity.js && node scripts/regression-theme-sync.js && node scripts/regression-notify-watch.js && node scripts/regression-app-updater.js && node scripts/regression-restart.js && node scripts/regression-sidebar-layout.js && node scripts/regression-url-guard.js && node scripts/regression-crash-reason.js && electron scripts/regression-loading-visibility.js --no-sandbox && electron scripts/regression-reopen.js --no-sandbox && electron scripts/regression-port-conflict.js --no-sandbox && electron scripts/regression-crash-feedback.js --no-sandbox && electron scripts/regression-tray.js --no-sandbox && electron scripts/regression-menu.js --no-sandbox && electron scripts/regression-topbar.js --no-sandbox && electron scripts/regression-status.js --no-sandbox && electron scripts/regression-status-inline.js --no-sandbox && electron scripts/regression-upgrade.js --no-sandbox && electron scripts/regression-plugin-live.js --no-sandbox && electron scripts/regression-market-live.js --no-sandbox",
     "make-icon": "node scripts/make-app-icon.mjs",
     "make-tray-icon": "node scripts/make-tray-icon.mjs",
