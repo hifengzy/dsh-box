@@ -36,3 +36,8 @@ CLAUDE.local.md
 .claude/settings.local.json
 .claude/skills-personal/
 .omc/
+
+# 内置 Node 运行时(scripts/fetch-bundled-runtime.mjs 生成,体积大不入库;
+# 保留 .gitkeep 使 assets/runtime 目录存在,electron-builder extraResources 不致 ENOENT)
+assets/runtime/*
+!assets/runtime/.gitkeep

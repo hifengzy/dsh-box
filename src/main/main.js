@@ -957,6 +957,7 @@ function main() {
     const result = await upgradeDsh(version, {
       cacheDir: path.join(app.getPath("userData"), "cache"),
       log: console,
+      bundledDir: defaultBundledRuntimeDir(),
     });
     if (!result.ok) {
       if (wasReady) await startServer();
@@ -1047,7 +1048,9 @@ function main() {
     });
     if (server) await server.stop();
     serviceState = "stopped";
-    const result = await pluginManager.installPlugin(dshHome, "dsh-better-sidebar", version);
+    const result = await pluginManager.installPlugin(dshHome, "dsh-better-sidebar", version, {
+      bundledDir: defaultBundledRuntimeDir(),
+    });
     if (!result.ok) {
       if (wasReady) await startServer();
       return { ...result, previouslyInstalled: installedBefore };
@@ -1096,7 +1099,9 @@ function main() {
     });
     if (server) await server.stop();
     serviceState = "stopped";
-    const result = await pluginManager.installPlugin(dshHome, "dshmarket", version);
+    const result = await pluginManager.installPlugin(dshHome, "dshmarket", version, {
+      bundledDir: defaultBundledRuntimeDir(),
+    });
     if (!result.ok) {
       if (wasReady) await startServer();
       return { ...result, previouslyInstalled: installedBefore };
@@ -1123,6 +1128,18 @@ function main() {
   /** DSH_HOME:继承环境变量,否则 App 自己的隔离目录(与启动 dsh 一致) */
   function appDshHome() {
     return process.env.DSH_HOME || path.join(app.getPath("userData"), "dsh-home");
+  }
+
+  // ---------- 内置运行时目录(需求 3:升级/装插件的 npm/pnpm 兜底) ----------
+  // dev:仓库 assets/runtime/<平台>-<架构>/node;打包:Resources/runtime/<平台>-<架构>/node
+  // (electron-builder extraResources 拷贝)。内容由 scripts/fetch-bundled-runtime.mjs
+  // 生成,不入 git。DSH_BUNDLED_RUNTIME 可覆盖(测试/特殊环境)。
+  function defaultBundledRuntimeDir() {
+    if (process.env.DSH_BUNDLED_RUNTIME) return process.env.DSH_BUNDLED_RUNTIME;
+    const base = app.isPackaged
+      ? path.join(process.resourcesPath, "runtime")
+      : path.join(__dirname, "..", "..", "assets", "runtime");
+    return path.join(base, `${process.platform}-${process.arch}`, "node");
   }
 
   // ---------- 消息通知(横幅 / 声音)----------

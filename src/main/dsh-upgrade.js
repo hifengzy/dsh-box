@@ -36,6 +36,7 @@ const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
 const { getRuntimeDshInfo } = require("./dsh-version");
 const npmCheck = require("./npm-check");
+const { resolveNpm } = require("./toolchain");
 
 const DOWNLOAD_TIMEOUT_MS = 60_000;
 /** npm 依赖调和超时(全树重算,大仓库/慢网络可达 7 分钟以上,留足余量) */
@@ -87,18 +88,25 @@ function pruneBackups(parentDir) {
  * reify 中途会临时移除/重排线上包(实测把升级卡死并留下缺包现场)。前缀安装
  * 只装 dsh 的闭包,App 其余树零改动。
  *
- * 可用 DSH_NPM_CMD 覆盖 npm 可执行文件路径(测试/特殊环境)。打包版若机器没有
- * npm,此处返回失败 → 升级中止并提示(原版本保持可用)。
+ * 可用 DSH_NPM_CMD 覆盖 npm 可执行文件路径(测试/特殊环境)。npm 的选用遵循
+ * 需求 3 方案 B(见 toolchain.js):优先用户本地 npm(node ≥ 20),没有则回退
+ * 内置运行时(bundledDir,dev=assets/runtime、打包=Resources/runtime),再没有
+ * → 明确报错,升级中止并提示(原版本保持可用)。
  * @returns {Promise<{ok: boolean, error?: string, output?: string}>}
  */
-async function defaultRunReconcile(version, { packageDir, log } = {}) {
+async function defaultRunReconcile(version, { packageDir, log, bundledDir = null } = {}) {
   const bin = path.join(packageDir, "lib", "bin.js");
   if (!fs.existsSync(bin)) return { ok: false, error: `缺少 ${bin}(依赖闭包安装前提)` };
-  const npmCmd = process.env.DSH_NPM_CMD || "npm";
-  log?.log?.(`[upgrade] 依赖闭包安装: ${npmCmd} install --prefix ${packageDir}(仅 dsh 自身依赖)`);
+  const toolchain = resolveNpm({ env: process.env, bundledDir, log });
+  if (!toolchain.ok) return { ok: false, error: toolchain.error };
+  const { cmd, argsPrefix, envPath } = toolchain;
+  const env = { ...process.env, PATH: envPath };
+  log?.log?.(
+    `[upgrade] 依赖闭包安装: ${cmd} install --prefix ${packageDir}(仅 dsh 自身依赖;npm 来源=${toolchain.source})`
+  );
   const result = await spawnCapture(
-    npmCmd,
-    [
+    cmd,
+    [...argsPrefix,
       "install",
       "--prefix", packageDir,
       "--no-save",
@@ -108,7 +116,7 @@ async function defaultRunReconcile(version, { packageDir, log } = {}) {
       "--prefer-offline",
       "--loglevel=error",
     ],
-    { cwd: packageDir, timeoutMs: RECONCILE_TIMEOUT_MS }
+    { cwd: packageDir, env, timeoutMs: RECONCILE_TIMEOUT_MS }
   );
   if (!result.ok) {
     log?.warn?.(`[upgrade] 依赖闭包安装失败: ${result.error}\n${result.output}`);
@@ -240,7 +248,9 @@ function restoreDshBackup(pkgDir, backupDir) {
  * @param {string} [options.cacheDir] 下载/解压缓存目录;默认 userData/cache
  * @param {object} [options.registryData] 已获取的 registry 数据(避免重复拉取);缺省自动拉
  * @param {object} [options.log] 日志对象(默认 console)
- * @param {(version: string, ctx: {pkgDir: string, log: object}) => Promise<{ok: boolean, error?: string}>} [options.runReconcile]
+ * @param {string} [options.bundledDir] 内置 node 运行时目录(dev=assets/runtime、打包=Resources/runtime);
+ *   传给默认依赖闭包实现做 npm 兜底;null = 不探测内置
+ * @param {(version: string, ctx: {pkgDir: string, log: object, bundledDir: string|null}) => Promise<{ok: boolean, error?: string}>} [options.runReconcile]
  *   依赖闭包安装实现(默认:npm install --prefix 到 dsh 包目录;回归注入 fake)
  * @param {(ctx: {pkgDir: string, dshHome: string, log: object}) => Promise<{ok: boolean, error?: string}>} [options.verifyBoot]
  *   安装后自检实现(默认:Electron 内置 Node 跑 dsh --version;回归注入 fake)
@@ -253,6 +263,7 @@ async function upgradeDsh(
     cacheDir = null,
     registryData = null,
     log = console,
+    bundledDir = null,
     runReconcile = null,
     verifyBoot = null,
   } = {}
@@ -328,7 +339,7 @@ async function upgradeDsh(
   //    此时线上 pkgDir 仍是旧版本 —— 任何中断都不会留下「换上新版但闭包缺失」的坏态。
   const reconcileImpl = runReconcile || defaultRunReconcile;
   log.log(`[upgrade] 步骤 5:依赖闭包安装(@deepseek-ai/dsh@${version} → staging)`);
-  const reconcile = await reconcileImpl(version, { packageDir: extractedPkg, log });
+  const reconcile = await reconcileImpl(version, { packageDir: extractedPkg, log, bundledDir });
   if (!reconcile.ok) {
     fs.rmSync(staging, { recursive: true, force: true });
     return { ok: false, error: `依赖闭包安装失败: ${reconcile.error}(目标目录未改动,原版本保持可用)` };

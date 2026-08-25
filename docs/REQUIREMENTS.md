@@ -28,9 +28,21 @@
   的 node/npm 就用他的(兼容镜像/代理/缓存);没有或不满足则回退内置 Node 二进制(+ 自带
   npm / corepack pnpm)。内置 Node 只服务「升级/装插件」,dsh 服务运行时仍用 Electron Node,
   不重复内置两份。
-- **待办**:`resolveToolchain()` 解析函数 + 内置物打入 Resources(build.files 扩展,
-  mac arm64 / win x64 二进制)+ `dsh-upgrade.js` / `plugin-manager.js` 改造接入 +
-  干净机器回退路径回归。
+- **已实现(PR-B,解析逻辑 + 内置物管线;真实二进制由脚本按需拉取,不入 git)**:
+  - `src/main/toolchain.js`(纯 Node):npm 选用 = DSH_NPM_CMD(env 覆盖)→ 用户本地
+    (node ≥ 20 + npm 可用,基于 shellPath 探测:进程 PATH → macOS `launchctl getenv PATH`
+    → /usr/bin:/bin 兜底,应对 GUI 不继承终端 PATH)→ 内置运行时 → 明确报错引导;
+    pnpm 只注入 PATH(dsh CLI 内部 spawnSync("pnpm") 纯 PATH 解析):用户 pnpm 命中则原样,
+    缺失则内置 bin 前置;
+  - `dsh-upgrade.js` 依赖闭包安装、`plugin-manager.js` 插件安装均接入(main.js 按打包态
+    计算内置目录:dev=assets/runtime/<平台>-<架构>/node,打包=Resources/runtime,
+    可 DSH_BUNDLED_RUNTIME 覆盖);
+  - `scripts/fetch-bundled-runtime.mjs`:拉取官方 Node 发行(自带 npm)+ pnpm 到
+    assets/runtime(不入库 .gitignore;打包时 `extraResources` 拷进 Resources/runtime);
+  - 回归 `scripts/regression-toolchain.js`:优先级/版本门槛(node<20 拒绝)/内置完整性/
+    pnpm PATH 注入全覆盖。
+  - **已知边界**:GUI 应用探测用户 PATH 是尽力而为(launchctl getenv PATH),Homebrew 等
+    自定义 PATH 用户若未注入登录会话,会回退内置运行时 —— 符合「内置兜底」设计。
 
 ## 需求 4 — 首次打开自动展开「服务状态」侧边栏
 
@@ -79,6 +91,6 @@
 
 | 批次 | 内容 | 关联需求 | 状态 |
 |---|---|---|---|
-| PR-A | 端口冲突并存(预检 + 自动换端口 + 孤儿签名收紧)+ 首启自动展开侧边栏 + 打开状态页三处刷新回归 | 4/5/7 | ✅ 已实现(本批次) |
-| PR-B | 工具链解析(优先用户 npm/pnpm ≥20、内置兜底)+ 内置 Node 打包接入 | 3 | 打包物引入,可拆两步:先解析逻辑,后内置物 |
+| PR-A | 端口冲突并存(预检 + 自动换端口 + 孤儿签名收紧)+ 首启自动展开侧边栏 + 打开状态页三处刷新回归 | 4/5/7 | ✅ 已实现(PR#6 已合) |
+| PR-B | 工具链解析(优先用户 npm/pnpm ≥20、内置兜底)+ 内置 Node 打包接入 | 3 | ✅ 已实现(解析逻辑 + 内置物管线;真实二进制脚本按需拉取) |
 | PR-C | Developer ID 签名 + 公证 + `--publish always` + 正式 Release 验收 + Windows(win/nsis)打包 | 1/6 | Apple Developer 账号;可边做边等证书 |
