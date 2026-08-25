@@ -189,8 +189,11 @@ class DshServer extends EventEmitter {
    * @emits error   启动失败,payload 为 Error
    * @emits exited  子进程意外退出,payload 为 { code, signal }
    */
-  async start({ dshBin, dshHome, logDir } = {}) {
+  async start({ port = this.port, dshBin, dshHome, logDir } = {}) {
     if (this.child) throw new Error("dsh server 已在运行,请先 stop()");
+    // 端口可在启动时覆盖(端口被占用时主进程逐候选重试:3260 → 3261 → …),
+    // 迁移后 url / info 全部以新端口为准,UI 如实展示。
+    this.port = port;
 
     const resolved = resolveDsh();
     this.dshBin = dshBin ?? (resolved ? resolved.path : null);
@@ -214,7 +217,7 @@ class DshServer extends EventEmitter {
     // 占用端口导致本次 spawn 的 dsh 绑定失败(EADDRINUSE),却因健康检查
     // 命中残留服务而误报"服务启动失败"。只清理"父进程已死(PPID=1)"且
     // 命令行匹配本 App dsh 子进程签名的进程,不影响其它进程。
-    await this._reapStaleServers(this.port);
+    await this.reapStaleServers(this.port);
 
     const logDirResolved = logDir ?? path.join(os.tmpdir(), "dsh-box");
     fs.mkdirSync(logDirResolved, { recursive: true });
@@ -391,16 +394,18 @@ class DshServer extends EventEmitter {
    *
    * 安全性:只清理"父进程已死(PPID=1)"的孤儿进程 —— 父进程存活的
    * 是本 App 正在运行的另一个实例的活服务,绝不误杀。若系统没有 ps
-   * (拿不到 PPID),保守起见不清理。匹配仍按"本 App dsh 入口 + 端口"
-   * 签名,不匹配的进程不动。
+   * (拿不到 PPID),保守起见不清理。匹配仍按"本 App dsh 入口 + 端口"签名,
+   * 不匹配的进程不动。签名带 --no-open(DSH Box 启动 dsh 必带):把用户自己
+   * 以 `dsh web --port N` 起的独立 dsh 排除在外,绝不误杀用户的服务
+   * (它默认不带 --no-open)。
    *
    * @param {number} port 监听端口
    * @returns {Promise<number>} 清理数量
    */
-  async _reapStaleServers(port) {
+  async reapStaleServers(port) {
     let reaped = 0;
     try {
-      const probe = spawnSync("pgrep", ["-f", `dsh/lib/bin.js web --port ${port}`], {
+      const probe = spawnSync("pgrep", ["-f", `dsh/lib/bin.js web --port ${port} --no-open`], {
         encoding: "utf8",
       });
       const pids = (probe.stdout || "").trim().split("\n").filter((p) => /^\d+$/.test(p));
@@ -432,6 +437,28 @@ class DshServer extends EventEmitter {
     }
     console.log(`[dsh] 端口 ${port} 在清理后仍被占用`);
     return reaped;
+  }
+
+  /**
+   * 探测端口是否已被其它服务占用(任何 HTTP 响应即视为占用)。
+   *
+   * 用途:端口冲突并存 —— 启动前预检,被占直接换下一候选端口,不 spawn、
+   * 不误报。判定规则:
+   *   - 有 HTTP 响应 → 占用(无论 2xx/4xx/5xx);
+   *   - 连接被拒(ECONNREFUSED)/无此地址(ENOTFOUND)→ 空闲;
+   *   - 其它(超时 / 非 HTTP 协议)→ 保守视为占用(跳过该端口无害)。
+   *
+   * @param {number} port 监听端口
+   * @returns {Promise<boolean>} true = 端口被占用
+   */
+  async probePort(port) {
+    try {
+      await fetch(`http://127.0.0.1:${port}`, { signal: AbortSignal.timeout(800) });
+      return true;
+    } catch (error) {
+      const code = error?.cause?.code ?? error?.code ?? "";
+      return !(code === "ECONNREFUSED" || code === "ENOTFOUND");
+    }
   }
 }
 

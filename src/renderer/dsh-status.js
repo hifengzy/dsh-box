@@ -85,6 +85,8 @@ const els = {
 };
 
 let currentInfo = null;
+/** 是否展示过「端口迁移」提示(端口被占用 → 自动改用下一端口),用于正常态复原 */
+let portMovedShown = false;
 let upgrading = false;
 let pluginInstalling = false;
 let marketInstalling = false;
@@ -123,6 +125,20 @@ function renderStatus(info) {
   els.startBtn.hidden = running;
   els.startBtn.disabled = info.state === "starting";
   els.startBtn.textContent = info.state === "starting" ? "启动中…" : "启动服务";
+
+  // 端口迁移提示:服务端口被其它服务占用时 DSH Box 自动改用下一端口,
+  // 这里如实告知(端口本身已由 metaLine 展示当前值)
+  if (running) {
+    const moved = info.portMovedFrom;
+    els.serviceHint.hidden = !moved;
+    if (moved) {
+      els.serviceHint.textContent = `端口 ${moved} 已被其他服务占用,本次运行改用端口 ${info.port}`;
+      portMovedShown = true;
+    } else if (portMovedShown) {
+      els.serviceHint.hidden = true;
+      portMovedShown = false;
+    }
+  }
 }
 
 async function refreshInfo() {

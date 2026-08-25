@@ -69,6 +69,14 @@ const CONTENT_RADIUS = 10; // 内容区四角圆角
 // macOS 原生毛玻璃材质。可换材质: 'under-window' | 'sidebar' | 'hud' | 'header'
 const VIBRANCY_MATERIAL = "under-window";
 
+// 端口冲突并存:请求端口被其它服务占用时,自动改用 port+1、port+2 …(最多跳过
+// MAX_PORT_SKIP 个)。DSH Box 永远不接管、不共享用户已有服务与其 profile。
+const MAX_PORT_SKIP = 10;
+// 首次启动(需求 4):settings.yaml 的 dsh-box 域存 launchedBefore 标记;
+// 首启且窗口就绪后自动展开「服务状态」侧边栏(小延迟,等首屏画完)。
+const FIRST_LAUNCH_SETTING_KEY = "launchedBefore";
+const FIRST_LAUNCH_DELAY_MS = 800;
+
 // 测试钩子:重定向用户数据目录(冒烟测试/CI 用,避免写 ~/Library)
 if (process.env.DSH_USER_DATA) {
   app.setPath("userData", path.resolve(process.env.DSH_USER_DATA));
@@ -172,6 +180,8 @@ function main() {
   let notifyPrompted = false;
   /** dsh 服务是否就绪(通知事件流依赖 dsh 服务在线) */
   let notifyReady = false;
+  /** 本次运行服务端口是否发生过迁移(端口被占用 → 自动改用下一端口);null = 未迁移 */
+  let portMovedFrom = null;
   /** dsh 事件流 watcher(createNotifyWatcher 实例);null = 未运行 */
   let notifyWatcher = null;
   /** 应用自更新状态机(createAppUpdater);null = 未初始化 */
@@ -410,7 +420,9 @@ function main() {
     const runtime = getRuntimeDshInfo();
     return {
       version: runtime.version ?? null,
-      port,
+      // 端口可能因冲突迁移(端口被占 → 自动改用下一端口):始终如实上报当前端口
+      port: server?.port ?? port,
+      portMovedFrom,
       url: server ? server.url : `http://127.0.0.1:${port}`,
       pid: server?.child?.pid ?? null,
       dshBin: server?.dshBin ?? null,
@@ -515,6 +527,25 @@ function main() {
       wc.insertCSS(STATUS_PANEL_CSS).catch(() => {});
       const css = readCustomCss();
       if (css) wc.insertCSS(css).catch(() => {});
+
+      // 无缝移交:首启自动展开的「兜底 statusView」→ 注入共享面板。
+      // 场景:首次启动 800ms 时 dsh 尚未就绪 → 走 openStatusSidebar 兜底;
+      // 之后 dsh 就绪、WebUI 加载完成、注入桥可用 → 若兜底面板仍开着,
+      // 经桥打开注入面板并收起兜底,让顶栏按钮状态与面板保持一致
+      // (否则 sidebarState() 在注入模式上报 {open:false},顶栏按钮与可见面板不符)。
+      // 桥失败/缺失:保留兜底面板,绝不 markInjectBroken(启动期竞态不误伤注入模式)。
+      (async () => {
+        if (!sidebarOpen || statusPanelOpen) return;
+        try {
+          await wc.executeJavaScript(STATUS_BRIDGE_JS_FN(statusPanelWidth), true);
+          await new Promise((r) => setTimeout(r, 120)); // 等页面执行完注入脚本
+          if (!sidebarOpen || statusPanelOpen) return; // 状态已被用户/其它流程改变
+          await execStatusBridge("requestOpen()");
+          closeStatusSidebar();
+        } catch {
+          /* 保留兜底面板 */
+        }
+      })();
     });
   }
 
@@ -550,6 +581,16 @@ function main() {
     }
   }
 
+  // 端口冲突并存(需求 7):请求端口被其它服务占用时,不接管、不报死,
+  // 而是逐候选(port, port+1, …)重试,直到找到可用端口。两条防线:
+  //   1. 预检:spawn 前探活,被占直接换下一候选;
+  //   2. 竞态:spawn 后仍撞上 EADDRINUSE(或端口恰好此刻被占)→ 也换下一候选。
+  // 只有「端口上没有服务在响应」的真实启动失败才维持既有错误展示。
+  function isPortConflict(error) {
+    const msg = (error && error.message) || "";
+    return /EADDRINUSE|address already in use/i.test(msg);
+  }
+
   async function startServer() {
     if (!server) {
       server = new DshServer({ port });
@@ -558,26 +599,55 @@ function main() {
     if (server.ready || server.child) return;
     lastError = null;
     serviceState = "starting";
+    portMovedFrom = null;
     broadcastStatus({ state: "starting", message: "正在启动 dsh 服务…" });
 
     const logDir = path.join(app.getPath("userData"), "logs");
     fs.mkdirSync(logDir, { recursive: true });
+    // DSH_HOME 默认用 App 自己的目录,与浏览器 WebUI 的 ~/.dsh 隔离:
+    // 两个 dsh 服务共享同一会话会互相刷新状态,导致命令面板等
+    // 会话级弹层"打开即消失"。设 DSH_HOME 可覆盖(共享时勿双开同会话)。
+    const dshHome = process.env.DSH_HOME || path.join(app.getPath("userData"), "dsh-home");
 
-    try {
-      await server.start({
-        // dshBin 由 DshServer 内部自动解析(优先用打进 App 的副本)
-        // DSH_HOME 默认用 App 自己的目录,与浏览器 WebUI 的 ~/.dsh 隔离:
-        // 两个 dsh 服务共享同一会话会互相刷新状态,导致命令面板等
-        // 会话级弹层"打开即消失"。设 DSH_HOME 可覆盖(共享时勿双开同会话)。
-        dshHome: process.env.DSH_HOME || path.join(app.getPath("userData"), "dsh-home"),
-        logDir,
-      });
-    } catch (error) {
-      // error 事件已广播;这里吞掉,避免 unhandled rejection
-      if (error.code !== "DSH_NOT_FOUND" && error.code !== "DSH_START_TIMEOUT") {
-        console.error("[app] startServer 异常:", error);
+    for (let attempt = 0; attempt < MAX_PORT_SKIP; attempt++) {
+      const cand = port + attempt;
+      try {
+        // 先清本 App 的孤儿残留(只认 PPID=1 + 带 --no-open 的签名),再探活
+        await server.reapStaleServers(cand);
+        if (await server.probePort(cand)) {
+          console.log(`[app] 端口 ${cand} 已被其他服务占用,DSH Box 自动改用端口 ${cand + 1}`);
+          broadcastStatus({
+            state: "starting",
+            message: `端口 ${cand} 已被其他服务占用,DSH Box 将改用端口 ${cand + 1}`,
+          });
+          continue;
+        }
+        await server.start({ port: cand, dshHome, logDir }); // dshBin 由 DshServer 自动解析
+        if (attempt > 0) {
+          portMovedFrom = port; // 端口迁移过:状态页如实展示(原始端口 → 现端口)
+          console.log(`[app] dsh 服务端口已从 ${port} 迁移到 ${cand}(原端口被占用)`);
+        }
+        return;
+      } catch (error) {
+        // 竞态占用(spawn 后才发现被占):换下一候选;先探活确认,避免把
+        // 真实启动失败(EADDRINUSE 之外的原因)误判为端口冲突
+        const nowBusy = await server.probePort(cand).catch(() => false);
+        if (nowBusy || isPortConflict(error, cand)) {
+          console.log(`[app] 端口 ${cand} 启动 dsh 失败(端口被其他服务占用),自动改用端口 ${cand + 1}`);
+          continue;
+        }
+        // 真实启动失败:错误事件已由 server 广播;这里吞掉,避免 unhandled rejection
+        if (error.code !== "DSH_NOT_FOUND" && error.code !== "DSH_START_TIMEOUT") {
+          console.error("[app] startServer 异常:", error);
+        }
+        return;
       }
     }
+    // 候选全部被占:进入错误态(与既有错误展示同一路径)
+    const allBusy = `端口 ${port} ~ ${port + MAX_PORT_SKIP - 1} 均被其他服务占用,DSH Box 无法启动 dsh 服务。请先关闭占用这些端口的程序后重试。`;
+    lastError = allBusy;
+    serviceState = "error";
+    broadcastStatus({ state: "error", message: allBusy });
   }
 
   async function restartServer() {
@@ -770,6 +840,27 @@ function main() {
   function markInjectBroken() {
     statusInjectBroken = true;
     console.warn("[app] 服务状态注入桥不可用,回退独立状态面板");
+  }
+
+  // ---------- 首次启动自动展开「服务状态」侧边栏(需求 4) ----------
+  // settings.yaml 的 dsh-box.launchedBefore 标记「是否已经引导过一次」:
+  // 首启 → 写标记 + 窗口首屏画完后自动展开侧边栏,让用户第一时间看到
+  // 服务状态 / 版本 / 插件市场 / 侧边栏插件。服务未就绪也能展开(状态页
+  // 会如实显示启动中/错误),所以不等待 dsh ready。
+  // 注意:统一走 openStatusSidebar(独立面板),不走注入桥 —— dsh 若在
+  // 800ms 内就绪,注入桥可能尚未挂载完,走桥失败会 markInjectBroken 永久
+  // 降级注入模式(竞态误伤);独立面板内容与注入面板一致,后续用户点顶栏
+  // 按钮时互斥编排会自动收起它并切回注入面板。
+  function maybeAutoOpenFirstLaunch() {
+    if (process.env.DSH_SKIP_FIRST_LAUNCH === "1") return;
+    if (readSettingBool(appDshHome(), FIRST_LAUNCH_SETTING_KEY)) return;
+    setTimeout(() => {
+      if (sidebarOpen || statusPanelOpen) return; // 用户已提前打开
+      // 打开成功才写标记:首启引导失败(如窗口过窄展开被拒)下次启动再试
+      if (openStatusSidebar()) {
+        writeSettingBool(appDshHome(), FIRST_LAUNCH_SETTING_KEY, true);
+      }
+    }, FIRST_LAUNCH_DELAY_MS);
   }
 
   /** 兜底路径:独立 WebContentsView 状态面板(statusView,异常态用) */
@@ -1490,6 +1581,8 @@ function main() {
     // 应用自更新:打包环境启动后静默查一次 GitHub Releases(dev 模式自动禁用)
     initAppUpdateCheck();
     createWindow();
+    // 首次启动(需求 4):窗口建好即挂号,首屏画完后自动展开「服务状态」侧边栏
+    maybeAutoOpenFirstLaunch();
     // ---------- macOS 菜单栏(Tray)----------
     // 单击图标聚焦窗口;右键弹出「打开 DSH Box / 退出」。仅 macOS。
     if (isMac) {
