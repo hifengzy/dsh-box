@@ -1137,12 +1137,17 @@ function main() {
   // electron-updater 事件汇流为稳定状态并经 onChange 广播到顶栏按钮。
   // 环境变量(测试/镜像用):DSH_APP_UPDATE_FEED=自定义 feed URL(provider generic),
   // DSH_APP_UPDATE_DISABLED=1 关闭启动自动检查。
+  // DSH_E2E_APP_UPDATE=1 无人值守端到端:启动即查 → available 自动下载 → downloaded
+  // 自动安装(quitAndInstall)→ 重启后已是最新 → 打印 APP_UPDATE_DONE 标记退出
+  // (供 scripts/e2e-app-update.sh 断言;与 DSH_SMOKE 同级别的测试后门)。
   function initAppUpdateCheck() {
     if (appUpdater) return;
     try {
       const { autoUpdater } = require("electron-updater");
+      autoUpdater.logger = console; // 默认 logger 缺 log() 会致 AppUpdater 报 "log is not a function"
       const feed = process.env.DSH_APP_UPDATE_FEED;
       if (feed) autoUpdater.setFeedURL({ provider: "generic", url: feed });
+      const e2eAuto = process.env.DSH_E2E_APP_UPDATE === "1";
       appUpdater = createAppUpdater({
         autoUpdater,
         isPackaged: app.isPackaged,
@@ -1150,12 +1155,41 @@ function main() {
           if (topBarView && !topBarView.webContents.isDestroyed()) {
             topBarView.webContents.send("dsh:app-update", state);
           }
+          if (e2eAuto) runE2eAutoUpdate(state);
         },
         log: console,
       });
-      appUpdater.init({ checkOnStart: process.env.DSH_APP_UPDATE_DISABLED !== "1" }).catch(() => {});
+      appUpdater.init({ checkOnStart: e2eAuto || process.env.DSH_APP_UPDATE_DISABLED !== "1" }).catch(() => {});
     } catch (error) {
       console.warn("[app] 应用自更新初始化失败:", error.message);
+    }
+  }
+
+  /** e2e 无人值守序列:available→下载;downloaded→安装(退出替换重启);重启后 up-to-date→完成标记 */
+  function runE2eAutoUpdate(s) {
+    const tag = "[e2e-app-update]";
+    switch (s.state) {
+      case "available":
+        console.log(`${tag} available(${s.version}) → 自动下载`);
+        appUpdater.startDownload().catch(() => {});
+        break;
+      case "downloaded":
+        console.log(`${tag} downloaded → 自动安装(quitAndInstall)`);
+        appUpdater.installUpdate();
+        break;
+      case "up-to-date":
+        {
+          const dataOk = fs.existsSync(path.join(app.getPath("userData")));
+          console.log(`${tag} APP_UPDATE_DONE version=${app.getVersion()} userData=${dataOk ? "OK" : "MISSING"}`);
+          setTimeout(() => app.quit(), 600);
+        }
+        break;
+      case "error":
+        console.error(`${tag} APP_UPDATE_ERROR ${s.error}`);
+        app.exit(1);
+        break;
+      default:
+        break;
     }
   }
 
