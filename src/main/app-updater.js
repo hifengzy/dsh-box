@@ -43,6 +43,8 @@ const UPDATE_STATES = [
  * @returns {object} 状态机实例(init/checkForUpdates/startDownload/installUpdate/getState/resetError)
  */
 function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = console.log }) {
+  // log 入参兼容函数(默认 console.log)与对象(main.js 传 log: console)
+  const logFn = typeof log === "function" ? log : (...args) => { if (log && typeof log.log === "function") log.log(...args); };
   let state = "idle";
   let percent = 0;
   let version = null;
@@ -63,11 +65,11 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
     au.on("checking-for-update", () => setState("checking"));
     au.on("update-available", (info) => {
       setState("available", { version: info && info.version });
-      log(`[app-update] 发现新版本: ${(info && info.version) || "?"}`);
+      logFn(`[app-update] 发现新版本: ${(info && info.version) || "?"}`);
     });
     au.on("update-not-available", () => {
       setState("up-to-date");
-      log("[app-update] 已是最新");
+      logFn("[app-update] 已是最新");
     });
     au.on("download-progress", (p) => {
       // percent 可能为字符串/小数,统一为 0~100 数字;按钮涂色直接消费
@@ -76,11 +78,11 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
     });
     au.on("update-downloaded", (info) => {
       setState("downloaded", { percent: 100, version: info && info.version });
-      log("[app-update] 下载完成,等待安装");
+      logFn("[app-update] 下载完成,等待安装");
     });
     au.on("error", (err) => {
       setState("error", { error: (err && err.message) || String(err) });
-      log(`[app-update] 更新错误: ${(err && err.message) || err}`);
+      logFn(`[app-update] 更新错误: ${(err && err.message) || err}`);
     });
   };
 
@@ -93,14 +95,14 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
     initialized = true;
     if (!isPackaged) {
       setState("disabled", { version: null });
-      log("[app-update] dev 模式:自更新禁用");
+      logFn("[app-update] dev 模式:自更新禁用");
       return;
     }
     try {
       wire();
     } catch (err) {
       setState("disabled", { error: String(err && err.message || err) });
-      log("[app-update] autoUpdater 不可用:", err);
+      logFn("[app-update] autoUpdater 不可用:", err);
       return;
     }
     if (checkOnStart) {
@@ -134,7 +136,7 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
   const installUpdate = () => {
     if (!initialized || !isPackaged) return;
     if (state !== "downloaded") {
-      log("[app-update] 未下载完成,忽略安装请求");
+      logFn("[app-update] 未下载完成,忽略安装请求");
       return;
     }
     setState("installing");

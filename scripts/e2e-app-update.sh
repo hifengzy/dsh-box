@@ -38,8 +38,9 @@ cp "$APP_PKG" /tmp/pkg-e2e.bak.json
 node -e "const p=require('./package.json');p.version='$NEW_VER';require('fs').writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
 CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac zip --publish never >/dev/null 2>&1
 cp "dist/latest-mac.yml" "$REPO_DIR/"
-cp "dist/DSH Box-$NEW_VER-arm64-mac.zip" "$REPO_DIR/"
-echo "  1. 新版本 zip 就绪: $(du -h "dist/DSH Box-$NEW_VER-arm64-mac.zip" | cut -f1); yml: $(grep '^version:' dist/latest-mac.yml)"
+# electron-builder 生成的 yml url 产品名空格转 '-' (DSH-Box-...);repo 文件名必须与 url 一致
+cp "dist/DSH Box-$NEW_VER-arm64-mac.zip" "$REPO_DIR/DSH-Box-$NEW_VER-arm64-mac.zip"
+echo "  1. 新版本 zip 就绪: $(du -h "$REPO_DIR/DSH-Box-$NEW_VER-arm64-mac.zip" | cut -f1); yml: $(grep '^version:' dist/latest-mac.yml)"
 
 # 2) 还原旧版本并构建旧版 app(dir)
 cp /tmp/pkg-e2e.bak.json "$APP_PKG" && rm -f /tmp/pkg-e2e.bak.json
