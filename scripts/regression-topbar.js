@@ -259,6 +259,8 @@ app.whenReady().then(async () => {
         state: btn.dataset.state || "",
         label: document.getElementById("appUpdateLabel").textContent,
         title: btn.title,
+        height: btnR.height,
+        fontSize: getComputedStyle(document.getElementById("appUpdateLabel")).fontSize,
         gap: Math.round((gR.left - btnR.right) * 10) / 10,
         fillPct: Math.round((fR.width / btnR.width) * 1000) / 10,
         disabled: btn.disabled,
@@ -274,6 +276,11 @@ app.whenReady().then(async () => {
     if (upd1.hidden || upd1.state !== "available" || upd1.label !== "新版本")
       throw new Error(`available 态应显示「新版本」,实际 ${JSON.stringify(upd1)}`);
     if (upd1.gap < 30) throw new Error(`「新版本」按钮与 github 间距应 ≥30px,实际 ${upd1.gap}px`);
+    // 高度 18px + 字号适配(10px)
+    if (Math.round(upd1.height) !== 18)
+      throw new Error(`「新版本」按钮高度应为 18px,实际 ${upd1.height}px`);
+    if (upd1.fontSize !== "10px")
+      throw new Error(`「新版本」按钮字号应适配 10px,实际 ${upd1.fontSize}`);
     // available → 点击开始下载
     await win.webContents.executeJavaScript(`document.getElementById("appUpdateBtn").click()`);
     await new Promise((r) => setTimeout(r, 100));
