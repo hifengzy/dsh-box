@@ -21,6 +21,7 @@ const { spawn } = require("node:child_process");
 const semver = require("semver");
 const { resolveDsh } = require("./dsh-server");
 const npmCheck = require("./npm-check");
+const { resolvePnpmPath } = require("./toolchain");
 
 const PROFILE = "web";
 
@@ -94,19 +95,28 @@ async function checkPlugin(dshHome, name) {
 /**
  * 在指定 DSH_HOME 下执行 dsh CLI 子命令(与 DshServer 相同的解析/运行方式,
  * script 类型用内置 Node 跑,binary 类型直接执行)。
+ *
+ * dsh CLI 的 plugin 子命令内部 spawnSync("pnpm")(纯 PATH 解析),所以这里按
+ * 需求 3 方案 B(见 toolchain.js)注入 PATH:优先让用户本地 pnpm 命中,缺失时
+ * 把内置运行时的 bin 目录前置(bundledDir,dev=assets/runtime、打包=Resources/runtime)。
  * @param {string} dshHome
  * @param {string[]} args dsh CLI 参数(如 ["plugin","--profile","web","add",...])
+ * @param {object} [options]
+ * @param {string|null} [options.bundledDir] 内置 node 运行时目录;null = 不探测内置
  * @returns {Promise<{ok: boolean, error?: string, output?: string, code?: number}>}
  */
-function runDshCli(dshHome, args) {
+function runDshCli(dshHome, args, { bundledDir = null } = {}) {
   return new Promise((resolve) => {
     const resolved = resolveDsh();
     if (!resolved) {
       resolve({ ok: false, error: "找不到 dsh,无法执行插件管理" });
       return;
     }
+    // pnpm 查找 PATH(用户优先、内置兜底;结果只在 PATH 注入,不直接 spawn pnpm)
+    const pnpmPath = resolvePnpmPath({ env: process.env, bundledDir });
     const env = {
       ...process.env,
+      PATH: pnpmPath.path,
       DSH_HOME: dshHome,
       DSH_TELEMETRY_DISABLED: "1",
     };
@@ -165,11 +175,13 @@ function runDshCli(dshHome, args) {
  * @param {string} dshHome
  * @param {string} name 包名(如 dsh-better-sidebar / dshmarket)
  * @param {string} [version] 目标版本;缺省装 latest
+ * @param {object} [options]
+ * @param {string|null} [options.bundledDir] 内置 node 运行时目录;null = 不探测内置
  */
-async function installPlugin(dshHome, name, version = null) {
+async function installPlugin(dshHome, name, version = null, { bundledDir = null } = {}) {
   if (!isManaged(name)) return { ok: false, error: `未托管的插件包: ${name}` };
   const spec = version ? `${name}@${version}` : name;
-  return runDshCli(dshHome, ["plugin", "--profile", PROFILE, "add", spec]);
+  return runDshCli(dshHome, ["plugin", "--profile", PROFILE, "add", spec], { bundledDir });
 }
 
 /**
