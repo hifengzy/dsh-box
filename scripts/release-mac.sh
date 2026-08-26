@@ -74,6 +74,22 @@ CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dir --arm64 \
   -c.publish.token="$GH_TOKEN" 2>&1 | grep -Ev "^\s*$" | tail -8
 [ -d "$APP" ] || { echo "打包失败:未生成 $APP"; exit 1; }
 
+# ---------- 1.5. 手动写入 app-update.yml(签名前!) ----------
+# electron-builder 仅在 isPublish 生效(--publish always/tag 触发/CI)时才生成
+# app-update.yml;裸 --mac dir 不生成(0.1.3 事故根因:产物缺此文件 →
+# electron-updater 无私有 token → feed 404 → 启动检查 error「重试」)。
+# 手动写必须发生在签名之前,否则 Resources 内容变更会破坏 codesign seal。
+# 内容与 0.1.2 一致(owner/repo/provider/token/updaterCacheDirName)。
+log "写入 app-update.yml(签名前,含 feed 认证 token)"
+cat > "$APP/Contents/Resources/app-update.yml" <<EOF
+owner: hifengzy
+repo: dsh-box
+provider: github
+token: $GH_TOKEN
+updaterCacheDirName: dsh-box-updater
+EOF
+ls -la "$APP/Contents/Resources/app-update.yml"
+
 # ---------- 2. 全目录签名(自底向上) ----------
 log "扫描 Mach-O 逐个签名(hardened runtime + entitlements + timestamp)"
 find "$APP/Contents" -type f -print0 | while IFS= read -r -d '' f; do
