@@ -94,6 +94,50 @@ function check(cond, msg) {
       `[2d] 下载进度事件 → 点击即 0 + 事件 0/48/100(${downloadingStates.join(",")})`);
   }
 
+  // ========== 2.5. 手动检查 notify:已是最新→回调;失败→回调 error;有新版不回调 ==========
+  {
+    const au = makeFakeUpdater();
+    const upd = createAppUpdater({ autoUpdater: au, isPackaged: true });
+    await upd.init({ checkOnStart: false });
+    let notified = null;
+    const p = upd.checkForUpdates({ notify: (o) => { notified = o; } }); // 手动检查(菜单)
+    au.emit("update-not-available");
+    await p;
+    check(notified === "up-to-date",
+      `[2e1] 手动检查已是最新 → notify("up-to-date")(实际 ${JSON.stringify(notified)})`);
+    check(upd.getState().state === "up-to-date", "[2e2] 手动检查已是最新 → 状态 up-to-date");
+  }
+  {
+    const au = makeFakeUpdater();
+    const upd = createAppUpdater({ autoUpdater: au, isPackaged: true });
+    await upd.init({ checkOnStart: false });
+    let notified = null;
+    const p = upd.checkForUpdates({ notify: (o) => { notified = o; } });
+    au.emit("error", new Error("feed 404"));
+    await p;
+    check(notified && notified.error === "feed 404",
+      `[2e3] 手动检查失败 → notify({error})(实际 ${JSON.stringify(notified)})`);
+  }
+  {
+    const au = makeFakeUpdater();
+    const upd = createAppUpdater({ autoUpdater: au, isPackaged: true });
+    await upd.init({ checkOnStart: false });
+    let notified = false;
+    const p = upd.checkForUpdates({ notify: () => { notified = true; } });
+    au.emit("update-available", { version: "0.2.0" }); // 有新版:顶栏按钮即反馈,不弹窗
+    await p;
+    check(!notified, `[2e4] 手动检查发现新版本 → 不回调 notify(实际 ${notified})`);
+  }
+  {
+    const au = makeFakeUpdater();
+    const upd = createAppUpdater({ autoUpdater: au, isPackaged: true });
+    await upd.init({ checkOnStart: false });
+    let notified = false;
+    const p = upd.checkForUpdates({ notify: () => { notified = true; } });
+    await p; // fake checkForUpdates 同步 resolve、不发任何终态事件
+    check(!notified, `[2e5] 无终态事件 → 暂不回调(等待真实结果,防误弹窗)`);
+  }
+
   // ========== 3. error + restartDownload ==========
   {
     const au = makeFakeUpdater();

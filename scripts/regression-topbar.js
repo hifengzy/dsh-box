@@ -111,15 +111,15 @@ app.whenReady().then(async () => {
     const expectOrder = ["githubBtn", "statusBtn", "pluginBottomBtn", "pluginSideBtn"];
     if (JSON.stringify(order.seq) !== JSON.stringify(expectOrder))
       throw new Error(`按钮顺序应为 ${expectOrder},实际 ${order.seq}`);
-    const expectTitles = ["github", "管理", "底部面板", "侧边栏"];
+    const expectTitles = ["点个Star 🤩", "服务管理", "面板", "侧栏"];
     if (JSON.stringify(order.titles) !== JSON.stringify(expectTitles))
-      throw new Error(`tooltips 应为 ${expectTitles},实际 ${order.titles}`);
+      throw new Error(`tooltips 应为 ${JSON.stringify(expectTitles)},实际 ${JSON.stringify(order.titles)}`);
     // 间距定义:按钮背景 28×28,相邻间隙 4 → A 最左侧到 B 最右侧 = 60
     if (order.gaps.some((g) => g !== 4))
       throw new Error(`相邻按钮间距应为 4px,实际 ${JSON.stringify(order.gaps)}`);
     if (order.spans.some((s) => s !== 60))
       throw new Error(`相邻按钮跨度(A.left→B.right)应为 60(28+4+28),实际 ${JSON.stringify(order.spans)}`);
-    console.log("[1b] 按钮顺序 github→管理→底部面板→侧边栏 + tooltips + 间距 4(A→B 跨度 60) ✓");
+    console.log("[1b] 按钮顺序 github→服务管理→面板→侧栏 + tooltips(点个Star 🤩/服务管理/面板/侧栏) + 间距 4(A→B 跨度 60) ✓");
     if (!dom.hasBtn || !dom.hasIcon) throw new Error("GitHub 按钮或图标缺失");
     if (dom.btnW !== "28px" || dom.btnH !== "28px")
       throw new Error(`按钮应为 28×28,实际 ${dom.btnW}×${dom.btnH}`);

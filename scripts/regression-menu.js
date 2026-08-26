@@ -26,11 +26,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 app.whenReady().then(async () => {
   try {
     let aboutCalled = 0;
-    let statusCalled = 0;
     let updateCalled = 0;
     const menu = createAppMenu({
       onAbout: () => { aboutCalled += 1; },
-      onOpenStatus: () => { statusCalled += 1; },
       onCheckUpdate: () => { updateCalled += 1; },
     });
     const functional = (submenu) => submenu.items.filter((i) => i.type !== "separator");
@@ -42,12 +40,11 @@ app.whenReady().then(async () => {
       throw new Error(`首菜单应为「${MENU_LABELS.appName}」,实际「${appMenu.label}」`);
     }
 
-    // 2. 应用菜单功能项与需求一致
+    // 2. 应用菜单功能项与需求一致(「服务状态」入口已移到菜单栏 Tray,不在应用菜单)
     const labels = functional(appMenu.submenu).map((i) => i.label);
     console.log(`[2] 应用菜单: ${JSON.stringify(labels)}`);
     const expect = [
       "关于 DSH Box",
-      MENU_LABELS.dshStatus,
       MENU_LABELS.checkUpdates,
       "服务",
       "隐藏 DSH Box",
@@ -68,19 +65,12 @@ app.whenReady().then(async () => {
     if (quitItem.role !== "quit") throw new Error("「退出 DSH Box」应为 role=quit");
     console.log("[3] 「关于 DSH Box」→ onAbout ✓,「退出 DSH Box」role=quit ✓");
 
-    // 3.5 「dsh 服务与版本…」触发 onOpenStatus(打开服务状态窗口)
-    const statusItem = appMenu.submenu.items.find((i) => i.label === MENU_LABELS.dshStatus);
-    if (!statusItem) throw new Error(`缺少「${MENU_LABELS.dshStatus}」`);
-    statusItem.click();
-    if (statusCalled !== 1) throw new Error("「dsh 服务与版本…」未触发 onOpenStatus");
-    console.log(`[3.5] 「${MENU_LABELS.dshStatus}」→ onOpenStatus ✓`);
-
-    // 3.6 「检查更新…」触发 onCheckUpdate(应用自更新检查)
+    // 3.5 「检查更新…」触发 onCheckUpdate(应用自更新检查)
     const updateItem = appMenu.submenu.items.find((i) => i.label === MENU_LABELS.checkUpdates);
     if (!updateItem) throw new Error(`缺少「${MENU_LABELS.checkUpdates}」`);
     updateItem.click();
     if (updateCalled !== 1) throw new Error("「检查更新…」未触发 onCheckUpdate");
-    console.log(`[3.6] 「${MENU_LABELS.checkUpdates}」→ onCheckUpdate ✓`);
+    console.log(`[3.5] 「${MENU_LABELS.checkUpdates}」→ onCheckUpdate ✓`);
 
     // 4. 编辑 / 窗口菜单齐全
     const editLabels = functional(menu.items.find((i) => i.label === "编辑").submenu).map((i) => i.label);

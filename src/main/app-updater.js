@@ -20,6 +20,9 @@
   *     → 下载,点「安装」→ 安装);electron-updater 默认 autoDownload=true
   *     (发现新版本即自动下载),必须在 init 时显式关闭;
  *   - 网络错误进入 error 态,「重试」= 重新下载(回到 downloading)。
+ *   - 手动检查(菜单「检查更新…」)带 notify 回调:检查结束把结果告诉调用方
+ *     ——「已是最新」或「检查失败」需要弹窗告知用户;启动静默检查不传,
+ *     保持静默。发现新版本不回调(顶栏「新版本」按钮即为反馈)。
  */
 
 /** 更新状态机可能状态 */
@@ -52,6 +55,14 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
   let version = null;
   let error = null;
   let initialized = false;
+  /** 手动检查的结束回调(仅一次;取走即清空,自动检查/发现新版本时无值) */
+  let pendingNotify = null;
+
+  const takeNotify = () => {
+    const n = pendingNotify;
+    pendingNotify = null;
+    return n;
+  };
 
   const setState = (next, extra = {}) => {
     state = next;
@@ -66,12 +77,15 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
     const au = autoUpdater;
     au.on("checking-for-update", () => setState("checking"));
     au.on("update-available", (info) => {
+      takeNotify(); // 有新版:顶栏按钮即反馈,无弹窗
       setState("available", { version: info && info.version });
       logFn(`[app-update] 发现新版本: ${(info && info.version) || "?"}`);
     });
     au.on("update-not-available", () => {
       setState("up-to-date");
       logFn("[app-update] 已是最新");
+      const n = takeNotify();
+      if (n) n("up-to-date"); // 手动检查 → 「当前没有可用的更新」弹窗
     });
     au.on("download-progress", (p) => {
       // percent 可能为字符串/小数,统一为 0~100 数字;按钮涂色直接消费
@@ -83,8 +97,11 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
       logFn("[app-update] 下载完成,等待安装");
     });
     au.on("error", (err) => {
-      setState("error", { error: (err && err.message) || String(err) });
-      logFn(`[app-update] 更新错误: ${(err && err.message) || err}`);
+      const message = (err && err.message) || String(err);
+      setState("error", { error: message });
+      logFn(`[app-update] 更新错误: ${message}`);
+      const n = takeNotify();
+      if (n) n({ error: message }); // 手动检查失败 → 错误弹窗
     });
   };
 
@@ -117,15 +134,25 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
     }
   };
 
-  /** 手动检查更新(菜单「检查更新…」) */
-  const checkForUpdates = async () => {
+  /** 手动检查更新(菜单「检查更新…」)
+   * @param {object} [opts] { notify?: (outcome) => void }
+   *   notify: 检查结束回调,outcome = "up-to-date"(已是最新,弹窗)
+   *   或 { error: string }(检查失败,弹窗)。发现新版本不回调(顶栏按钮即反馈);
+   *   启动静默检查不传 → 保持静默。
+   */
+  const checkForUpdates = async ({ notify = null } = {}) => {
     if (!initialized || !isPackaged) return;
+    if (notify) pendingNotify = notify;
     setState("checking");
     try {
       await autoUpdater.checkForUpdates();
     } catch (err) {
-      // electron-updater 多数错误经 error 事件到达;同步抛错兜底
-      setState("error", { error: (err && err.message) || String(err) });
+      // electron-updater 多数错误经 error 事件到达;同步抛错兜底(事件路径
+      // 已 takeNotify 则这里不再重复回调)
+      const n = takeNotify();
+      const message = (err && err.message) || String(err);
+      setState("error", { error: message });
+      if (n) n({ error: message });
     }
   };
 
