@@ -15,21 +15,29 @@
 #   - `codesign --deep` 不可靠(漏签 node_modules 原生二进制),须全目录
 #     Mach-O 扫描逐个签名 + 各 .framework/.app 整签 + 主 app 最后密封;
 #   - 私有仓库 feed 认证:构建时用 -c.publish.token=<GH_TOKEN> 把 token 烤进
-#     app-update.yml(electron-builder 不会自动注入;仓库转公开后需去掉重建);
+#     app-update.yml(electron-builder 不会自动注入);**公开仓库绝不写 token**:
+#     无 token 时 electron-updater 走匿名 GitHubProvider(github.com 的 atom feed
+#     + releases/download),公开仓库无需认证。若公开仓库的包里仍内嵌 PAT,
+#     任何下载 release 资产的人都能拿到 → 转公开前必须发布无 token 版本并轮换旧 PAT;
 #   - 磁盘产物名带空格("DSH Box-...")而 latest-mac.yml 引用连字符名,
 #     上传前必须把 zip 复制成连字符名。
 #
 # 用法: scripts/release-mac.sh [版本号]   # 省略版本号则取 package.json
-# 前置: gh 已登录(取 token 烤进 app-update.yml);
+# 前置: gh 已登录(私有仓库取 token 烤进 app-update.yml;公开仓库匿名 feed);
 #       签名资产目录 /tmp/dshbox-dev-id/(verify.keychain/entitlements.plist/AuthKey_*.p8);
 #       需 danger-full-access(codesign/notarytool/stapler/hdiutil/security)。
+#
+# 转公开仓库前自查(详见 docs/REQUIREMENTS.md「需求 8.5」):
+#   1. 发布一版不带 token 的新包(本脚本按仓库可见性自动切换,无需手动);
+#   2. 吊销 0.1.4~0.1.6 旧包内嵌的 PAT(它们随旧 release 资产公开);
+#   3. 本机签名/公证资产(id/ 下的 .p8、密码文件)确认被 .gitignore 覆盖。
 
 set -euo pipefail
 
 # ---------- 配置 ----------
 ASSETS=/tmp/dshbox-dev-id
-KEYCHAIN="$ASSETS/verify.keychain"          # 密码 verify(含 identity + DeveloperIDG2CA.cer)
-KEYCHAIN_PW=verify
+KEYCHAIN="$ASSETS/verify.keychain"          # 含 identity + DeveloperIDG2CA.cer
+KEYCHAIN_PW="${DSH_KEYCHAIN_PW:-verify}"    # 解锁密码:env 覆盖,默认 verify(本地资产,勿提交)
 IDENTITY="Developer ID Application: zhuoyu feng (36AK6V339P)"
 ENTITLEMENTS="$ASSETS/entitlements.plist"
 NOTARY_KEY="$ASSETS/AuthKey_4PT6QW63W7.p8"
@@ -55,7 +63,21 @@ log() { echo "==> $*"; }
 [ -f "$ENTITLEMENTS" ] || { echo "缺少 entitlements: $ENTITLEMENTS"; exit 1; }
 [ -f "$NOTARY_KEY" ] || { echo "缺少 notary key: $NOTARY_KEY"; exit 1; }
 command -v gh >/dev/null || { echo "缺少 gh CLI"; exit 1; }
-GH_TOKEN="$(gh auth token)"
+
+# ---------- 仓库可见性(决定 feed 是否带 token)----------
+# private:electron-updater 需要 token(PrivateGitHubProvider → api.github.com);
+# public:匿名 GitHubProvider(github.com atom feed + releases/download),**绝不写 token**
+# —— 包里一旦内嵌 PAT,仓库公开后任何下载 release 资产的人都能拿到。
+# DSH_REPO_VISIBILITY 可覆盖(测试用),默认真实查询。
+REPO_VISIBILITY="${DSH_REPO_VISIBILITY:-$(gh repo view --json visibility -q .visibility 2>/dev/null || echo private)}"
+FEED_AUTH=""
+if [ "$REPO_VISIBILITY" = "public" ]; then
+  log "仓库可见性: public(公开) → feed 匿名访问,不写 token"
+else
+  FEED_AUTH="$(gh auth token)"
+  log "仓库可见性: private(私有) → feed 带 token 认证"
+  log "⚠ 包内将内嵌 GitHub PAT —— 仓库转公开前必须先发布无 token 版本并轮换旧 PAT!"
+fi
 
 log "发布版本: v$VER"
 log "签名身份: $IDENTITY"
@@ -70,8 +92,10 @@ security find-identity -v -p codesigning "$KEYCHAIN" | grep -q "$IDENTITY" \
 # ---------- 1. 清旧产物 + 打包(不签名,dir) ----------
 rm -rf "$APP_DIR" "$ZIP_DISK" "$ZIP_UPLOAD" "$DMG" "$YML"
 log "electron-builder --mac dir(不签名,CSC_IDENTITY_AUTO_DISCOVERY=false)"
-CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dir --arm64 \
-  -c.publish.token="$GH_TOKEN" 2>&1 | grep -Ev "^\s*$" | tail -8
+PUBLISH_ARGS=()
+[ -n "$FEED_AUTH" ] && PUBLISH_ARGS=(-c.publish.token="$FEED_AUTH")
+CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dir --arm64 "${PUBLISH_ARGS[@]}" \
+  2>&1 | grep -Ev "^\s*$" | tail -8
 [ -d "$APP" ] || { echo "打包失败:未生成 $APP"; exit 1; }
 
 # ---------- 1.5. 手动写入 app-update.yml(签名前!) ----------
@@ -79,15 +103,25 @@ CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dir --arm64 \
 # app-update.yml;裸 --mac dir 不生成(0.1.3 事故根因:产物缺此文件 →
 # electron-updater 无私有 token → feed 404 → 启动检查 error「重试」)。
 # 手动写必须发生在签名之前,否则 Resources 内容变更会破坏 codesign seal。
-# 内容与 0.1.2 一致(owner/repo/provider/token/updaterCacheDirName)。
-log "写入 app-update.yml(签名前,含 feed 认证 token)"
-cat > "$APP/Contents/Resources/app-update.yml" <<EOF
+# 内容与 0.1.2 一致(owner/repo/provider[/token]/updaterCacheDirName);
+# public 仓库省略 token 行 → electron-updater 匿名 GitHubProvider。
+log "写入 app-update.yml(签名前,${REPO_VISIBILITY} 模式)"
+if [ -n "$FEED_AUTH" ]; then
+  cat > "$APP/Contents/Resources/app-update.yml" <<EOF
 owner: hifengzy
 repo: dsh-box
 provider: github
-token: $GH_TOKEN
+token: $FEED_AUTH
 updaterCacheDirName: dsh-box-updater
 EOF
+else
+  cat > "$APP/Contents/Resources/app-update.yml" <<EOF
+owner: hifengzy
+repo: dsh-box
+provider: github
+updaterCacheDirName: dsh-box-updater
+EOF
+fi
 ls -la "$APP/Contents/Resources/app-update.yml"
 
 # ---------- 2. 全目录签名(自底向上) ----------
