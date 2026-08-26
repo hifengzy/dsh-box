@@ -1,6 +1,6 @@
 {
   "name": "dsh-box",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "description": "DSH Box — DeepSeek Harness 的 macOS 原生桌面 App。基于 Electron,让 dsh 以原生 App 的权限运行在本机文件系统上",
   "main": "src/main/main.js",
