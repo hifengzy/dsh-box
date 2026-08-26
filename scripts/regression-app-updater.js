@@ -82,11 +82,16 @@ function check(cond, msg) {
     check(upd.getState().state === "available" && upd.getState().version === "0.2.0",
       `[2b] update-available → available + version(实际 ${JSON.stringify(upd.getState())})`);
     await upd.startDownload();
+    // 点击即反馈:startDownload 必须先广播「下载中 0%」(不等 electron-updater
+    // 首个 progress 事件),顶栏才不会有「点了没反应」的空窗
+    const firstDownloading = states.find((s) => s.state === "downloading");
+    check(firstDownloading && firstDownloading.percent === 0,
+      `[2c0] startDownload 立即广播 downloading 0%(点击即反馈,实际 ${JSON.stringify(firstDownloading)})`);
     check(upd.getState().state === "downloaded", "[2c] 下载完成 → downloaded");
     check(upd.getState().percent === 100, `[2c2] percent 收敛 100(实际 ${upd.getState().percent})`);
     const downloadingStates = states.filter((s) => s.state === "downloading").map((s) => s.percent);
-    check(downloadingStates.join(",") === "0,48,100",
-      `[2d] 下载进度事件 → downloading + 四舍五入 percent(${downloadingStates.join(",")})`);
+    check(downloadingStates.join(",") === "0,0,48,100",
+      `[2d] 下载进度事件 → 点击即 0 + 事件 0/48/100(${downloadingStates.join(",")})`);
   }
 
   // ========== 3. error + restartDownload ==========

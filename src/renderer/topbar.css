@@ -217,6 +217,25 @@ body {
   pointer-events: none;
 }
 
+/* 点击「新版本」后、首个真实进度事件到达前(downloading 且 0%)的扫光 loading:
+ * fill 铺满 + 往返扫动;进度事件到达后脚本移除
+ * .app-update-indeterminate,由确定性宽度(--app-update-progress)接管。 */
+.app-update-btn.app-update-indeterminate .app-update-fill {
+  width: 100%;
+  opacity: 0.45;
+  animation: app-update-sweep 1.3s ease-in-out infinite;
+}
+
+@keyframes app-update-sweep {
+  0%,
+  100% {
+    transform: scaleX(0.06);
+  }
+  50% {
+    transform: scaleX(1);
+  }
+}
+
 /* 下载完成(「安装」):fill 100% 涂满 + 反白主按钮 */
 .app-update-btn[data-state="downloaded"] .app-update-fill {
   background: var(--bar-text);

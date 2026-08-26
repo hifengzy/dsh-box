@@ -145,6 +145,9 @@ function renderAppUpdate(state) {
   // 进度涂色:下载中填充宽度 = 进度%(available 时 0,download 后 100)
   const pct = s === "downloading" ? (Number(st.percent) || 0) : s === "downloaded" ? 100 : 0;
   document.documentElement.style.setProperty("--app-update-progress", String(Math.max(0, Math.min(100, pct))));
+  // 下载中且尚未收到真实进度(0%)→ fill 扫光 loading 动画(点击「新版本」的
+  // 即时反馈);首个真实进度到达后取消,由确定性宽度接管。
+  appUpdateBtn.classList.toggle("app-update-indeterminate", s === "downloading" && pct <= 0);
   const label = typeof APP_UPDATE_LABELS[s] === "function" ? APP_UPDATE_LABELS[s](st.percent ?? 0) : APP_UPDATE_LABELS[s];
   appUpdateLabel.textContent = label;
   const title = typeof APP_UPDATE_TITLES[s] === "function" ? APP_UPDATE_TITLES[s](st.percent ?? 0) : APP_UPDATE_TITLES[s];

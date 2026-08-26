@@ -132,6 +132,10 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
   /** 开始下载(顶栏「新版本」→ 下载中,后台进行) */
   const startDownload = async () => {
     if (!initialized || !isPackaged) return;
+    // 点击即反馈:不等 electron-updater 首个 download-progress 事件(可能延迟
+    // 数秒,尤其私有仓库 token 重定向链),先置「下载中 0%」,顶栏立即响应;
+    // 0% 静默期间 fill 扫光 loading 动画,首个真实进度到达后接管(见 topbar.css)。
+    setState("downloading", { percent: 0 });
     try {
       await autoUpdater.downloadUpdate();
     } catch (err) {

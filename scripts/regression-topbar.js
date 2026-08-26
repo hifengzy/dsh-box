@@ -272,6 +272,7 @@ app.whenReady().then(async () => {
         gap: Math.round((gR.left - btnR.right) * 10) / 10,
         fillPct: Math.round((fR.width / btnR.width) * 1000) / 10,
         disabled: btn.disabled,
+        indeterminate: btn.classList.contains("app-update-indeterminate"),
       };
     })()`);
     // 初始(disabled):按钮隐藏,不留空位;计算样式必须为 display:none(防幽灵按钮)
@@ -295,12 +296,20 @@ app.whenReady().then(async () => {
     await win.webContents.executeJavaScript(`document.getElementById("appUpdateBtn").click()`);
     await new Promise((r) => setTimeout(r, 100));
     if (appUpdateDownloads !== 1) throw new Error("点「新版本」应触发下载 IPC");
-    // downloading 47% → 文案「下载中 47%」+ 涂色 ≈47%
+    // downloading 0%(点击后首个 progress 事件到达前)→「下载中 0%」+ 扫光 loading 态
+    win.webContents.send("dsh:app-update", { state: "downloading", percent: 0, version: "0.2.0", error: null });
+    await new Promise((r) => setTimeout(r, 100));
+    const upd1b = await updRead();
+    if (upd1b.label !== "下载中 0%") throw new Error(`点击后应即时显示「下载中 0%」,实际 ${upd1b.label}`);
+    if (!upd1b.indeterminate)
+      throw new Error(`0% 静默期应处于扫光 loading 态(indeterminate),实际 ${JSON.stringify(upd1b)}`);
+    // downloading 47% → 文案「下载中 47%」+ 涂色 ≈47% + 扫光态被真实进度接管
     win.webContents.send("dsh:app-update", { state: "downloading", percent: 47, version: "0.2.0", error: null });
     await new Promise((r) => setTimeout(r, 250)); // > 涂色 transition 0.12s
     const upd2 = await updRead();
     if (upd2.label !== "下载中 47%") throw new Error(`下载中应显示「下载中 47%」,实际 ${upd2.label}`);
     if (Math.abs(upd2.fillPct - 47) > 2) throw new Error(`涂色宽度应 ≈47%,实际 ${upd2.fillPct}%`);
+    if (upd2.indeterminate) throw new Error("首个真实进度到达后应取消扫光 loading 态");
     // 下载完成 → 「安装」+ 涂满 100%
     win.webContents.send("dsh:app-update", { state: "downloaded", percent: 100, version: "0.2.0", error: null });
     await new Promise((r) => setTimeout(r, 250)); // 从 47% 平滑涂满
