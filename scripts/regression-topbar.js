@@ -24,8 +24,9 @@ const GITHUB_URL = "https://github.com/hifengzy/dsh-box";
 let openedUrl = null;
 let toggled = 0;
 let sidebarOpenFlag = false; // 与推送事件保持同步,点击 toggle 时翻转
-let appUpdateDownloads = 0; // 应用更新:下载/安装 IPC 调用计数
+let appUpdateDownloads = 0; // 应用更新:下载/安装/重试 IPC 调用计数
 let appUpdateInstalls = 0;
+let appUpdateRetries = 0;
 
 // 模拟主进程:外链 / 更新标志 / 面板方向
 ipcMain.handle("shell:open-external", (_event, url) => {
@@ -46,6 +47,10 @@ ipcMain.handle("dsh:app-update-download", () => {
 });
 ipcMain.handle("dsh:app-update-install", () => {
   appUpdateInstalls += 1;
+  return true;
+});
+ipcMain.handle("dsh:app-update-retry", () => {
+  appUpdateRetries += 1;
   return true;
 });
 
@@ -250,12 +255,15 @@ app.whenReady().then(async () => {
       const btn = document.getElementById("appUpdateBtn");
       const fill = document.getElementById("appUpdateFill");
       const github = document.getElementById("githubBtn");
-      if (btn.hidden) return { hidden: true };
+      // hidden 属性 + 计算样式双读:hidden 属性可能被作者 CSS display 规则覆盖
+      // (幽灵按钮回归 —— JS 设 hidden 但浏览器仍渲染),必须断言 computed display。
+      const base = { hidden: btn.hidden, display: getComputedStyle(btn).display };
+      if (btn.hidden) return base;
       const btnR = btn.getBoundingClientRect();
       const gR = github.getBoundingClientRect();
       const fR = fill.getBoundingClientRect();
       return {
-        hidden: btn.hidden,
+        ...base,
         state: btn.dataset.state || "",
         label: document.getElementById("appUpdateLabel").textContent,
         title: btn.title,
@@ -266,9 +274,11 @@ app.whenReady().then(async () => {
         disabled: btn.disabled,
       };
     })()`);
-    // 初始(disabled):按钮隐藏,不留空位
+    // 初始(disabled):按钮隐藏,不留空位;计算样式必须为 display:none(防幽灵按钮)
     const upd0 = await updRead();
     if (!upd0.hidden) throw new Error(`初始(disabled)按钮应隐藏,实际 ${JSON.stringify(upd0)}`);
+    if (upd0.display !== "none")
+      throw new Error(`初始(disabled)按钮计算样式应为 display:none,实际 ${upd0.display}(幽灵按钮回归)`);
     // available → 显示「新版本」,与 github 间距 ≥30
     win.webContents.send("dsh:app-update", { state: "available", percent: 0, version: "0.2.0", error: null });
     await new Promise((r) => setTimeout(r, 100));
@@ -306,19 +316,21 @@ app.whenReady().then(async () => {
     await new Promise((r) => setTimeout(r, 100));
     const upd4 = await updRead();
     if (upd4.label !== "安装中…" || !upd4.disabled) throw new Error(`安装中应禁用「安装中…」,实际 ${JSON.stringify(upd4)}`);
-    // error → 「重试」+ 点击重新下载
+    // error → 「重试」+ 点击触发 retry IPC(检查失败重查/下载失败重下,状态机分流)
     win.webContents.send("dsh:app-update", { state: "error", percent: 0, version: "0.2.0", error: "网络超时" });
     await new Promise((r) => setTimeout(r, 100));
     const upd5 = await updRead();
     if (upd5.label !== "重试") throw new Error(`错误应显示「重试」,实际 ${upd5.label}`);
     await win.webContents.executeJavaScript(`document.getElementById("appUpdateBtn").click()`);
     await new Promise((r) => setTimeout(r, 100));
-    if (appUpdateDownloads !== 2) throw new Error("点「重试」应重新下载");
-    // up-to-date / disabled → 隐藏(不留空位)
+    if (appUpdateRetries !== 1) throw new Error("点「重试」应触发 retry IPC");
+    // up-to-date / disabled → 隐藏(不留空位)+ 计算样式 display:none(防幽灵按钮)
     win.webContents.send("dsh:app-update", { state: "up-to-date", percent: 0, version: null, error: null });
     await new Promise((r) => setTimeout(r, 100));
     const upd6 = await updRead();
     if (!upd6.hidden) throw new Error("已是最新后按钮应隐藏");
+    if (upd6.display !== "none")
+      throw new Error(`已是最新后按钮计算样式应为 display:none,实际 ${upd6.display}(幽灵按钮回归)`);
     console.log("[7] 应用更新按钮:available/下载中 47%+涂色/安装+涂满/安装中/重试/隐藏 + github 间距 ≥30 ✓");
 
     console.log("\nPASS ✓ 顶栏回归通过");

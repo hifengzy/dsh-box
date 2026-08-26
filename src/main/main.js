@@ -1537,6 +1537,11 @@ function main() {
     if (appUpdater) appUpdater.installUpdate();
     return true;
   });
+  ipcMain.handle("dsh:app-update-retry", () => {
+    // 错误态重试:检查失败(无版本)→ 重新检查;下载失败(有版本)→ 重新下载
+    if (appUpdater) appUpdater.retry();
+    return true;
+  });
 
   // (外观主题同步已上移到 initThemeSync:偏好 → nativeTheme.themeSource,
   //  由 fs.watchFile 监听 settings.yaml 实时生效;不再镜像解析后的浅/深,

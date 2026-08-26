@@ -14,6 +14,13 @@
   box-sizing: border-box;
 }
 
+/* hidden 属性必须生效:作者样式(如 .app-update-btn 的 display:inline-flex)会覆盖
+ * UA 对 [hidden] 的 display:none,导致「查询不到新版本」时「新版本」按钮幽灵显示。
+ * 与 style.css / dsh-status.css 的全局防线保持一致,防同类控件复发。 */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   height: 100%;
@@ -156,7 +163,7 @@ body {
  *   downloading「下载中 n%」      背景从左到右涂色(fill 宽度 = 进度%)
  *   downloaded 「安装」          反白主按钮(fill 100% 恰好涂满)
  *   installing 「安装中…」       禁用
- *   error      「重试」          红色描边(点击 → 重新下载)
+ *   error      「重试」          红色描边(点击 → 检查失败重查/下载失败重下)
  * 与 github 按钮间距 ≥30px = actions gap 4 + 本按钮右侧 margin 26;
  * hidden 时 display:none,不留空位(其他按钮间距不受影响)。 */
 .app-update-btn {
