@@ -171,6 +171,29 @@ function runDshCli(dshHome, args, { bundledDir = null } = {}) {
 }
 
 /**
+ * 把 dsh CLI 执行失败详情落盘(诊断用):<DSH_HOME>/logs/plugin-cli.log。
+ * 面板里的失败文案常被「服务重启→页面刷新」吞掉,落盘是可靠的远程诊断通道。
+ * @param {string} dshHome
+ * @param {string[]} args
+ * @param {{code: number|null, error: string, output: string, stderr: string}} result
+ */
+function logCliFailure(dshHome, args, result) {
+  try {
+    const dir = path.join(dshHome, "logs");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(
+      path.join(dir, "plugin-cli.log"),
+      `\n[${new Date().toISOString()}] dsh ${args.join(" ")}\n` +
+        `  exit=${result.code} error=${result.error}\n` +
+        `  stderr: ${String(result.stderr || "").trim() || "(空)"}\n` +
+        `  stdout: ${String(result.output || "").trim() || "(空)"}\n`
+    );
+  } catch {
+    /* 写日志失败不影响主流程 */
+  }
+}
+
+/**
  * 安装或更新插件到指定版本。
  * @param {string} dshHome
  * @param {string} name 包名(如 dsh-better-sidebar / dshmarket)
@@ -181,7 +204,9 @@ function runDshCli(dshHome, args, { bundledDir = null } = {}) {
 async function installPlugin(dshHome, name, version = null, { bundledDir = null } = {}) {
   if (!isManaged(name)) return { ok: false, error: `未托管的插件包: ${name}` };
   const spec = version ? `${name}@${version}` : name;
-  return runDshCli(dshHome, ["plugin", "--profile", PROFILE, "add", spec], { bundledDir });
+  const result = await runDshCli(dshHome, ["plugin", "--profile", PROFILE, "add", spec], { bundledDir });
+  if (!result.ok) logCliFailure(dshHome, ["plugin", "--profile", PROFILE, "add", spec], result);
+  return result;
 }
 
 /**
