@@ -1055,9 +1055,15 @@ function STATUS_BRIDGE_JS_FN(width) {
       $("stNotifySound").closest("label").hidden = false;
       if (typeof settings.permission === "string") notifyPermission = settings.permission;
       const hint = $("stNotifyHint");
-      if (notifyBannerOn && notifyPermission === "denied") {
+      // 横幅已开但权限「未确认/被拒」→ 引导去系统设置。Electron 已移除权限
+      // 探测 API,主进程恒报 unknown(未确认);首次开启时系统会弹授权询问,
+      // 未签名/预览版可能被静默拦 —— 提示常驻,直到用户确认收到横幅。
+      if (notifyBannerOn && notifyPermission !== "granted") {
         hint.hidden = false;
-        hint.textContent = "系统通知权限未开启,请在 Mac 系统设置 > 通知 中允许「DSH Box」";
+        hint.textContent =
+          notifyPermission === "denied"
+            ? "系统通知权限被关闭,请在 Mac 系统设置 > 通知 中允许「DSH Box」"
+            : "横幅已开启;如未看到系统横幅,请在 Mac 系统设置 > 通知 中允许「DSH Box」通知";
       } else {
         hint.hidden = true;
       }

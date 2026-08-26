@@ -23,7 +23,7 @@
  *   并且顶栏里将来可以随意加搜索框等功能入口(纯 HTML)。
  */
 
-const { app, BrowserWindow, Menu, session, shell, ipcMain, WebContentsView, nativeTheme, Notification, systemPreferences } = require("electron");
+const { app, BrowserWindow, Menu, session, shell, ipcMain, WebContentsView, nativeTheme, Notification } = require("electron");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -1144,31 +1144,32 @@ function main() {
 
   // ---------- 消息通知(横幅 / 声音)----------
   /**
-   * macOS 通知权限状态(macOS 10.14+ 由系统授权,Electron 无显式申请 API:
-   * 首次 show 通知时系统自动弹授权窗;这里只负责「探测 + 引导」)。
+   * macOS 通知权限状态探测。
+   * Electron 已移除 systemPreferences.getNotificationSettings(早期 API,实测
+   * Electron 43 不存在),macOS 也没有可编程读取 TCC 通知权限的同步接口 →
+   * 恒返回 "unknown"(未确认)。权限只能由系统在「首条通知」时询问(见
+   * showBanner / dsh:notify-settings 的首次开启测试通知)。返回类型保留,
+   * 渲染层按「granted / denied / unknown」适配文案。
    * @returns {"granted"|"denied"|"unknown"|"unsupported"}
    */
   function notificationPermission() {
     if (!isMac) return "unsupported";
-    try {
-      const s = systemPreferences.getNotificationSettings();
-      if (!s || typeof s !== "object") return "unknown";
-      if (s.canDisplayAlerts === true) return "granted";
-      if (s.hasSetting) return "denied"; // 用户已做选择但通知被关
-      return "unknown"; // 尚未选择(首次开启横幅时由系统弹窗询问)
-    } catch {
-      return "unknown";
-    }
+    return "unknown";
   }
 
-  /** 发一条系统横幅(app 名即系统通知里的标题,正文自定);失败静默 */
+  /** 发一条系统横幅(app 名即系统通知里的标题,正文自定);失败静默但落日志便于诊断 */
   function showBanner(body) {
     try {
-      if (!Notification.isSupported()) return false;
+      if (!Notification.isSupported()) {
+        console.warn("[app] 横幅通知: Notification 不受支持,已跳过");
+        return false;
+      }
       const n = new Notification({ title: APP_NAME, body, silent: true });
       n.show();
+      console.log(`[app] 横幅通知已发送: ${body.slice(0, 60)}(权限=${notificationPermission()})`);
       return true;
-    } catch {
+    } catch (error) {
+      console.warn("[app] 横幅通知发送失败:", error && error.message);
       return false;
     }
   }
@@ -1211,7 +1212,10 @@ function main() {
         return;
     }
     body = trunc(body, 180);
-    if (notifyBanner) showBanner(body);
+    if (notifyBanner) {
+      const shown = showBanner(body);
+      if (!shown) console.warn(`[app] 事件横幅未显示(kind=${ev.kind}, session=${ev.sessionId ?? "-"})`);
+    }
     if (notifySound) playNotifySound();
   }
 

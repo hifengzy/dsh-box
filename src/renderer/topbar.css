@@ -161,7 +161,7 @@ body {
  * hidden 时 display:none,不留空位(其他按钮间距不受影响)。 */
 .app-update-btn {
   position: relative;
-  height: 28px;
+  height: 18px; /* 改动:28 → 18,更细的胶囊;垂直居中对齐由 flex 保证 */
   padding: 0; /* 内边距移到 label 层:fill 的 width:100% 才能涂满含 padding 的整宽 */
   display: inline-flex;
   align-items: center;
@@ -173,8 +173,8 @@ body {
   border-radius: 100px;
   background: transparent;
   color: var(--bar-text);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 10px; /* 适配 18px 高度:原 12px/28px ≈ 0.43 → 18px×0.55 ≈ 10px */
+  line-height: 1; /* 单行文案垂直自然居中 */
   white-space: nowrap;
   cursor: pointer;
   overflow: hidden;
@@ -229,7 +229,7 @@ body {
 .app-update-label {
   position: relative;
   z-index: 1;
-  padding: 0 12px;
+  padding: 0 8px; /* 与小高度(18px)配套,水平留白收窄 */
   pointer-events: none;
 }
 
