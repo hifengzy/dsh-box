@@ -73,6 +73,9 @@ function check(cond, msg) {
     const states = [];
     const upd = createAppUpdater({ autoUpdater: au, isPackaged: true, onChange: (s) => states.push(s) });
     await upd.init({ checkOnStart: false });
+    // electron-updater 默认 autoDownload=true(发现新版本即自动下载);必须被关闭,
+    // 否则「没等点『新版本』就自动下载」(用户实报 bug)
+    check(au.autoDownload === false, "[2a1] init 后 autoDownload 已被关闭(=false)");
     await upd.checkForUpdates(); // fake: only emits checking-for-update
     check(upd.getState().state === "checking", "[2a] checkForUpdates → checking");
     au.emit("update-available", { version: "0.2.0" });

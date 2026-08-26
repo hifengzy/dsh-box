@@ -16,7 +16,9 @@
  *     / downloadUpdate / quitAndInstall);
  *   - dev 守卫:app.isPackaged === false(dev-launch 克隆 Electron.app 跑仓库)
  *     时自动置 disabled,所有动作为 no-op —— 自更新只对打包产物生效;
- *   - 不做「忽略此版本」(用户拍板砍掉);安装为手动触发(点「安装」);
+ *   - 不做「忽略此版本」(用户拍板砍掉);下载与安装均为手动触发(点「新版本」
+  *     → 下载,点「安装」→ 安装);electron-updater 默认 autoDownload=true
+  *     (发现新版本即自动下载),必须在 init 时显式关闭;
  *   - 网络错误进入 error 态,「重试」= 重新下载(回到 downloading)。
  */
 
@@ -99,6 +101,11 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
       return;
     }
     try {
+      // electron-updater 默认 autoDownload=true(发现新版本即自动下载);
+      // 本产品拍板「手动下载」—— 必须显式关闭,否则顶栏「新版本」出现前
+      // 下载就已开始(用户看到的「没点就下载」bug)。fake 无此属性也无妨
+      // (普通赋值)。
+      autoUpdater.autoDownload = false;
       wire();
     } catch (err) {
       setState("disabled", { error: String(err && err.message || err) });
