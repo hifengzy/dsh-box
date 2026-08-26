@@ -186,6 +186,8 @@ function main() {
   let notifyWatcher = null;
   /** 应用自更新状态机(createAppUpdater);null = 未初始化 */
   let appUpdater = null;
+  /** 插件/插件市场安装互斥锁:一次只允许一个 pnpm 安装(并发会 store 锁冲突) */
+  let pluginOpPending = false;
   /** 提示音文件(随 App 打包的 assets/message.m4a,dev 与打包同相对路径) */
   const NOTIFY_SOUND_PATH = path.join(__dirname, "..", "..", "assets", "message.m4a");
 
@@ -1034,95 +1036,113 @@ function main() {
 
   /**
    * 安装(version=null)或更新(version=最新版)侧边栏插件。
-   * 服务运行中则先停后启,让新 bundle 在启动时加载;服务未运行时不动它。
+   *
+   * 编排(0.1.5 修复「点更新→服务停→页面刷新→结果被吞」):
+   *   - 服务全程保持在线:pnpm 安装(可能 30s~数分钟)期间 webui 不刷新,
+   *     面板 hint 与失败文案可直接展示(旧版先停服,webui 断 40s,面板销毁,
+   *     结果被刷掉 — 用户实报 bug);
+   *   - 安装成功后一次重启(stop→start)让新 bundle 生效(对齐本体升级
+   *     staging「先装后重启」思路;运行中实例不会重读 node_modules);
+   *   - 安装失败:服务从未停止,无需任何恢复动作,直接返回错误给面板;
+   *   - 并发锁:两次更新不得同时跑 pnpm(store 锁冲突,双双失败)。
    * 安装成功后写入 openByDefault 偏好(与浏览器 WebUI 对齐)。
    */
   async function performPluginInstall(version = null) {
-    const dshHome = appDshHome();
-    const wasReady = server?.ready ?? false;
-    const installedBefore = pluginManager.getInstalledVersion(dshHome, "dsh-better-sidebar");
-    const label = installedBefore ? "更新" : "安装";
-    broadcastStatus({
-      state: "starting",
-      message: `正在${label}侧边栏插件${version ? ` ${version}` : ""}…`,
-    });
-    if (server) await server.stop();
-    serviceState = "stopped";
-    const result = await pluginManager.installPlugin(dshHome, "dsh-better-sidebar", version, {
-      bundledDir: defaultBundledRuntimeDir(),
-    });
-    if (!result.ok) {
-      if (wasReady) await startServer();
-      return { ...result, previouslyInstalled: installedBefore };
+    if (pluginOpPending) {
+      return {
+        ok: false,
+        error: "已有插件安装/更新进行中,请完成后再试",
+        previouslyInstalled: pluginManager.getInstalledVersion(appDshHome(), "dsh-better-sidebar"),
+      };
     }
-    const installed = pluginManager.getInstalledVersion(dshHome, "dsh-better-sidebar") || version || "unknown";
-    // 装包成功后的任何异常(如写入偏好抛错)都不得让服务停着不恢复:
-    // wasReady 时无论成败都尝试拉回服务;写偏好失败只记录 warning,不判安装失败。
-    let warning = null;
+    pluginOpPending = true;
     try {
-      pluginManager.ensureOpenByDefault(dshHome);
-    } catch (error) {
-      warning = `写入开屏偏好失败: ${error.message || error}`;
-      console.error("[app] 侧边栏插件写入开屏偏好失败:", error);
-    }
-    if (wasReady) {
-      try {
-        await startServer();
-      } catch (error) {
-        console.error("[app] 侧边栏插件安装后重启服务失败:", error);
-        return {
-          ok: false,
-          error: `插件已装,但重启服务失败: ${error.message || error}`,
-          installed,
-          previouslyInstalled: installedBefore,
-          restarted: false,
-        };
+      const dshHome = appDshHome();
+      const wasReady = server?.ready ?? false;
+      const installedBefore = pluginManager.getInstalledVersion(dshHome, "dsh-better-sidebar");
+      const label = installedBefore ? "更新" : "安装";
+      const result = await pluginManager.installPlugin(dshHome, "dsh-better-sidebar", version, {
+        bundledDir: defaultBundledRuntimeDir(),
+      });
+      if (!result.ok) {
+        return { ...result, previouslyInstalled: installedBefore };
       }
+      const installed = pluginManager.getInstalledVersion(dshHome, "dsh-better-sidebar") || version || "unknown";
+      // 装包成功后的任何异常(如写入偏好抛错)都不得让服务停着不恢复:
+      // wasReady 时无论成败都尝试拉回服务;写偏好失败只记录 warning,不判安装失败。
+      let warning = null;
+      try {
+        pluginManager.ensureOpenByDefault(dshHome);
+      } catch (error) {
+        warning = `写入开屏偏好失败: ${error.message || error}`;
+        console.error("[app] 侧边栏插件写入开屏偏好失败:", error);
+      }
+      if (wasReady) {
+        try {
+          await restartServer();
+        } catch (error) {
+          console.error("[app] 侧边栏插件安装后重启服务失败:", error);
+          return {
+            ok: false,
+            error: `插件已装,但重启服务失败: ${error.message || error}`,
+            installed,
+            previouslyInstalled: installedBefore,
+            restarted: false,
+          };
+        }
+      }
+      await refreshPluginCheck();
+      return { ok: true, installed, previouslyInstalled: installedBefore, restarted: wasReady, warning };
+    } finally {
+      pluginOpPending = false;
     }
-    await refreshPluginCheck();
-    return { ok: true, installed, previouslyInstalled: installedBefore, restarted: wasReady, warning };
   }
 
   /**
    * 安装(version=null)或更新(version=最新版)插件市场。
-   * 服务运行中则先停后启,让新 bundle 在启动时加载;服务未运行时不动它。
-   * 插件市场无「开屏偏好」配置,不写 openByDefault。
+   * 编排与 performPluginInstall 一致:服务全程在线,装完一次重启,
+   * 失败不动服务(见该函数注释)。插件市场无「开屏偏好」配置,不写 openByDefault。
    */
   async function performMarketInstall(version = null) {
-    const dshHome = appDshHome();
-    const wasReady = server?.ready ?? false;
-    const installedBefore = pluginManager.getInstalledVersion(dshHome, "dshmarket");
-    const label = installedBefore ? "更新" : "安装";
-    broadcastStatus({
-      state: "starting",
-      message: `正在${label}插件市场${version ? ` ${version}` : ""}…`,
-    });
-    if (server) await server.stop();
-    serviceState = "stopped";
-    const result = await pluginManager.installPlugin(dshHome, "dshmarket", version, {
-      bundledDir: defaultBundledRuntimeDir(),
-    });
-    if (!result.ok) {
-      if (wasReady) await startServer();
-      return { ...result, previouslyInstalled: installedBefore };
+    if (pluginOpPending) {
+      return {
+        ok: false,
+        error: "已有插件安装/更新进行中,请完成后再试",
+        previouslyInstalled: pluginManager.getInstalledVersion(appDshHome(), "dshmarket"),
+      };
     }
-    const installed = pluginManager.getInstalledVersion(dshHome, "dshmarket") || version || "unknown";
-    if (wasReady) {
-      try {
-        await startServer();
-      } catch (error) {
-        console.error("[app] 插件市场安装后重启服务失败:", error);
-        return {
-          ok: false,
-          error: `插件市场已装,但重启服务失败: ${error.message || error}`,
-          installed,
-          previouslyInstalled: installedBefore,
-          restarted: false,
-        };
+    pluginOpPending = true;
+    try {
+      const dshHome = appDshHome();
+      const wasReady = server?.ready ?? false;
+      const installedBefore = pluginManager.getInstalledVersion(dshHome, "dshmarket");
+      const label = installedBefore ? "更新" : "安装";
+      const result = await pluginManager.installPlugin(dshHome, "dshmarket", version, {
+        bundledDir: defaultBundledRuntimeDir(),
+      });
+      if (!result.ok) {
+        return { ...result, previouslyInstalled: installedBefore };
       }
+      const installed = pluginManager.getInstalledVersion(dshHome, "dshmarket") || version || "unknown";
+      if (wasReady) {
+        try {
+          await restartServer();
+        } catch (error) {
+          console.error("[app] 插件市场安装后重启服务失败:", error);
+          return {
+            ok: false,
+            error: `插件市场已装,但重启服务失败: ${error.message || error}`,
+            installed,
+            previouslyInstalled: installedBefore,
+            restarted: false,
+          };
+        }
+      }
+      await refreshMarketCheck();
+      return { ok: true, installed, previouslyInstalled: installedBefore, restarted: wasReady };
+    } finally {
+      pluginOpPending = false;
     }
-    await refreshMarketCheck();
-    return { ok: true, installed, previouslyInstalled: installedBefore, restarted: wasReady };
   }
 
   /** DSH_HOME:继承环境变量,否则 App 自己的隔离目录(与启动 dsh 一致) */
