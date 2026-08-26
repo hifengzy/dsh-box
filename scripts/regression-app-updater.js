@@ -102,6 +102,23 @@ function check(cond, msg) {
     check(upd.getState().state === "downloaded", "[3c] 重试成功 → downloaded");
   }
 
+  // ========== 3.5. retry 分流:检查失败(无版本)→ 重新检查;下载失败(有版本)→ 重新下载 ==========
+  {
+    const au = makeFakeUpdater();
+    const upd = createAppUpdater({ autoUpdater: au, isPackaged: true });
+    await upd.init({ checkOnStart: false });
+    au.emit("error", new Error("feed 404")); // 检查阶段失败,version 仍为 null
+    check(upd.getState().state === "error" && upd.getState().version === null,
+      `[3d] 检查失败 → error 且无版本(实际 ${JSON.stringify(upd.getState())})`);
+    upd.retry();
+    check(au.checks === 1, `[3e] 检查失败重试 → 重新检查(checkForUpdates,实际 ${au.checks} 次)`);
+    // 下载失败场景:先 available(有版本)再 error → retry 应重新下载
+    au.emit("update-available", { version: "0.2.0" });
+    au.emit("error", new Error("网络超时"));
+    upd.retry();
+    check(au.downloads === 1, `[3f] 下载失败重试 → 重新下载(downloadUpdate,实际 ${au.downloads} 次)`);
+  }
+
   // ========== 4. installUpdate 守卫 ==========
   {
     const au = makeFakeUpdater();

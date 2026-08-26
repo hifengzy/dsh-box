@@ -153,9 +153,11 @@ function renderAppUpdate(state) {
 
 appUpdateBtn.addEventListener("click", () => {
   const s = appUpdateBtn.dataset.state;
-  // available → 开始下载;downloaded → 安装;error → 重试(重新下载)
-  if (s === "available" || s === "error") {
+  // available → 开始下载;downloaded → 安装;error → 重试(检查失败重查/下载失败重下)
+  if (s === "available") {
     window.dsh.downloadAppUpdate().catch(() => {});
+  } else if (s === "error") {
+    window.dsh.retryAppUpdate().catch(() => {});
   } else if (s === "downloaded") {
     window.dsh.installAppUpdate().catch(() => {});
   }

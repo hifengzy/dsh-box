@@ -69,6 +69,9 @@ contextBridge.exposeInMainWorld("dsh", {
   /** 安装已下载的应用新版本(顶栏「安装」→ Squirrel 退出+替换+重启) */
   installAppUpdate: () => ipcRenderer.invoke("dsh:app-update-install"),
 
+  /** 错误态重试(顶栏「重试」):检查失败→重新检查;下载失败→重新下载 */
+  retryAppUpdate: () => ipcRenderer.invoke("dsh:app-update-retry"),
+
   /** 停止 dsh 服务(状态页「停止」按钮) */
   stopServer: () => ipcRenderer.invoke("dsh:stop"),
 

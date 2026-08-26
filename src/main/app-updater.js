@@ -161,6 +161,19 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
     startDownload().catch(() => {});
   };
 
+  /**
+   * 错误态「重试」分流(顶栏「重试」按钮):
+   *   - 下载失败(version 有值)→ 重新下载;
+   *   - 检查失败(version 为 null,如 feed 404/网络不可达)→ 重新检查 ——
+   *     不能走 startDownload(无 updateInfo 会立即再次失败,重试死循环)。
+   */
+  const retry = () => {
+    if (!initialized || !isPackaged) return;
+    if (state !== "error") return;
+    if (version) restartDownload();
+    else checkForUpdates().catch(() => {});
+  };
+
   const resetError = () => {
     if (state !== "error") return;
     if (version) setState("available", { version, error: null });
@@ -173,6 +186,7 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
     startDownload,
     installUpdate,
     restartDownload,
+    retry,
     resetError,
     getState: () => ({ state, percent, version, error }),
   };
