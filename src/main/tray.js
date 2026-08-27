@@ -6,7 +6,8 @@
  * 交互约定(需求):
  *   1. 菜单栏常驻小图标(模板图,深浅色菜单栏自适应);
  *   2. 单击图标 → 聚焦/打开应用主窗口;
- *   3. 右键图标 → 弹出菜单:「打开 DSH Box」「退出」。
+ *   3. 右键图标 → 弹出菜单:「打开 DSH Box」「服务管理」「退出」——
+ *      「服务管理」点击后聚焦应用并展开「服务状态」面板。
  *
  * 为什么不用 tray.setContextMenu():
  *   在 macOS 上,一旦设置了 context menu,单击(左键)也会弹出该菜单,
@@ -25,13 +26,14 @@ const TOOLTIP = "DSH Box";
 
 /**
  * 创建菜单栏 Tray。
- * @param {{ onActivate: () => void, onQuit: () => void }} handlers
- *   onActivate: 单击图标或点「打开 DSH Box」→ 聚焦/重建主窗口
- *   onQuit:     点「退出」→ 退出应用
+ * @param {{ onActivate: () => void, onOpenStatus: () => void, onQuit: () => void }} handlers
+ *   onActivate:    单击图标或点「打开 DSH Box」→ 聚焦/重建主窗口
+ *   onOpenStatus:  点「服务管理」→ 聚焦应用并展开「服务状态」面板
+ *   onQuit:        点「退出」→ 退出应用
  * @returns {{ tray: Tray, menu: Menu }}
  * @throws 图标缺失时抛出(由调用方捕获,避免拖垮 App 启动)
  */
-function createTray({ onActivate, onQuit }) {
+function createTray({ onActivate, onOpenStatus, onQuit }) {
   const image = nativeImage.createFromPath(TRAY_ICON);
   if (image.isEmpty()) {
     throw new Error(`菜单栏图标不存在: ${TRAY_ICON} (先运行 npm run make-tray-icon)`);
@@ -43,6 +45,7 @@ function createTray({ onActivate, onQuit }) {
 
   const menu = Menu.buildFromTemplate([
     { label: "打开 DSH Box", click: () => onActivate() },
+    { label: "服务管理", click: () => onOpenStatus() },
     { type: "separator" },
     { label: "退出", click: () => onQuit() },
   ]);

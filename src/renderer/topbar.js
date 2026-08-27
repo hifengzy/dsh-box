@@ -44,7 +44,7 @@ function syncSidebar(state) {
   statusBtn.setAttribute("aria-pressed", String(open));
   // 展开时始终可点(用于关闭);闭合时才按 canOpen 决定是否禁用(窗口太窄)
   statusBtn.disabled = !open && !canOpen;
-  // tooltip 固定为「管理」(需求指定);禁用/激活态仍由视觉与 aria 表达
+  // tooltip 固定为「服务管理」(需求指定);禁用/激活态仍由视觉与 aria 表达
 }
 
 statusBtn.addEventListener("click", async () => {
@@ -91,7 +91,7 @@ bindPanelBtn(pluginSideBtn, "side");
 bindPanelBtn(pluginBottomBtn, "bottom");
 
 /** 桥上报状态:installed/active=false → 禁用;否则按开合渲染激活态。
-    tooltip 固定为「侧边栏 / 底部面板」(需求指定,不随状态变化)。 */
+    tooltip 固定为「侧栏 / 面板」(需求指定,不随状态变化)。 */
 function renderPluginPanels(state) {
   const s = state || {};
   const enabled = s.installed !== false && s.active !== false;

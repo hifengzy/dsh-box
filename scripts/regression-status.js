@@ -435,12 +435,12 @@ app.whenReady().then(async () => {
     if (!tbp2.sideActive) throw new Error("侧栏展开时侧栏按钮应高亮");
     if (tbp2.bottomActive) throw new Error("底栏折叠时底栏按钮不应高亮");
     if (tbp2.sidePressed !== "true") throw new Error("aria-pressed 应同步为 true");
-    // tooltip 固定(需求:github/管理/底部面板/侧边栏,不随开合状态变化)
-    if (tbp2.sideTitle !== "侧边栏") throw new Error(`侧栏按钮 tooltip 应为「侧边栏」,实际 ${tbp2.sideTitle}`);
+    // tooltip 固定(需求:点个Star 🤩/服务管理/面板/侧栏,不随开合状态变化)
+    if (tbp2.sideTitle !== "侧栏") throw new Error(`侧栏按钮 tooltip 应为「侧栏」,实际 ${tbp2.sideTitle}`);
     const bottomTitle = await win.webContents.executeJavaScript(
       `document.getElementById("pluginBottomBtn").title`
     );
-    if (bottomTitle !== "底部面板") throw new Error(`底栏按钮 tooltip 应为「底部面板」,实际 ${bottomTitle}`);
+    if (bottomTitle !== "面板") throw new Error(`底栏按钮 tooltip 应为「面板」,实际 ${bottomTitle}`);
     await win.webContents.executeJavaScript(`document.getElementById("pluginSideBtn").click(); undefined;`);
     await wait(100);
     if (toggledPluginPanel !== "side") throw new Error("点侧栏按钮应触发 toggle-plugin-panel('side')");

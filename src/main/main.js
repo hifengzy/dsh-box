@@ -23,7 +23,7 @@
  *   并且顶栏里将来可以随意加搜索框等功能入口(纯 HTML)。
  */
 
-const { app, BrowserWindow, Menu, session, shell, ipcMain, WebContentsView, nativeTheme, Notification } = require("electron");
+const { app, BrowserWindow, Menu, session, shell, dialog, ipcMain, WebContentsView, nativeTheme, Notification } = require("electron");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -1596,12 +1596,30 @@ function main() {
   // 菜单栏左上角的应用名由进程/包名决定,不由这里控制:
   // dev 模式见 scripts/dev-launch.mjs(品牌化 Electron 副本),打包版由
   // electron-builder 的 productName 生成。
+  // 「服务状态」面板入口已不在应用菜单(需求:顶栏按钮 + 菜单栏 Tray「服务管理」)。
   function buildMenu() {
     appMenu = createAppMenu({
       onAbout: () => showAboutWindow({ parent: mainWindow }),
-      onOpenStatus: () => toggleStatusSidebar(),
       onCheckUpdate: () => {
-        if (appUpdater) appUpdater.checkForUpdates().catch(() => {});
+        if (!appUpdater) return;
+        // 手动检查:结果弹窗告知 —— 无新版本 → 「当前没有可用的更新」;
+        // 检查失败 → 错误弹窗(自动检查保持静默,不传 notify)。
+        const notifyResult = (outcome) => {
+          if (outcome === "up-to-date") {
+            dialog.showMessageBox(mainWindow, {
+              type: "info",
+              message: "当前没有可用的更新",
+              detail: "DSH Box 已是最新版本。",
+            });
+          } else if (outcome && outcome.error) {
+            dialog.showMessageBox(mainWindow, {
+              type: "error",
+              message: "检查更新失败",
+              detail: String(outcome.error),
+            });
+          }
+        };
+        appUpdater.checkForUpdates({ notify: notifyResult }).catch(() => {});
       },
     });
     Menu.setApplicationMenu(appMenu);
@@ -1630,11 +1648,17 @@ function main() {
     // 首次启动(需求 4):窗口建好即挂号,首屏画完后自动展开「服务状态」侧边栏
     maybeAutoOpenFirstLaunch();
     // ---------- macOS 菜单栏(Tray)----------
-    // 单击图标聚焦窗口;右键弹出「打开 DSH Box / 退出」。仅 macOS。
+    // 单击图标聚焦窗口;右键弹出「打开 DSH Box / 服务管理 / 退出」。
+    // 「服务管理」= 聚焦应用 + 展开「服务状态」面板(顶栏按钮同款行为)。仅 macOS。
     if (isMac) {
       try {
         tray = createTray({
           onActivate: focusOrCreateWindow,
+          onOpenStatus: () => {
+            focusOrCreateWindow();
+            // 面板未展开才展开(已展开则只聚焦;toggle 会让已展开的面板收起)
+            if (!sidebarState().open) toggleStatusSidebar();
+          },
           onQuit: () => app.quit(),
         });
         console.log("[app] 菜单栏图标已创建");

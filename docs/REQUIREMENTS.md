@@ -94,3 +94,53 @@
 | PR-A | 端口冲突并存(预检 + 自动换端口 + 孤儿签名收紧)+ 首启自动展开侧边栏 + 打开状态页三处刷新回归 | 4/5/7 | ✅ 已实现(PR#6 已合) |
 | PR-B | 工具链解析(优先用户 npm/pnpm ≥20、内置兜底)+ 内置 Node 打包接入 | 3 | ✅ 已实现(解析逻辑 + 内置物管线;真实二进制脚本按需拉取) |
 | PR-C | Developer ID 签名 + 公证 + `--publish always` + 正式 Release 验收 + Windows(win/nsis)打包 | 1/6 | Apple Developer 账号;可边做边等证书 |
+
+---
+
+## 需求 8 — 0.1.7 交互细节批(工具提示 / Tray 服务管理 / 检查更新弹窗 / DMG 引导)
+
+> 2026 年新增需求(一次一批,单 PR 收口)。
+
+### 8.1 顶栏功能入口 tooltips
+
+- **要求**:标题栏 4 个功能入口悬停气泡提示,文案固定:
+  GitHub = 「点个Star 🤩」;服务状态 = 「服务管理」;底部面板 = 「面板」;侧边栏 = 「侧栏」。
+- **实现**:原生 `title` 气泡(顶栏视图固定 40px 高,`overflow:hidden`,自定义 CSS 气泡会被
+  裁剪;原生气泡由系统绘制不受视图边界限制)。文案见 topbar.html 四个按钮的 `title` 属性。
+- **覆盖回归**:scripts/regression-topbar.js `[1b]` 断言四个 `title` 精确文案 + 按钮顺序。
+
+### 8.2 菜单栏(Tray)右键「服务管理」+ 应用菜单去重
+
+- **要求**:
+  1. 菜单栏 icon 右键菜单在「打开 DSH Box」下面新增「服务管理」——点击后聚焦应用并展开
+     「服务状态」面板;
+  2. 去掉应用菜单「关于 DSH Box」下面的「dsh 服务与版本…」选项(入口去重)。
+- **实现**:tray.js 菜单插「服务管理」(onOpenStatus 回调);main.js 回调 =
+   `focusOrCreateWindow()` + 面板未展开时 `toggleStatusSidebar()`(自动走注入桥,异常期
+   回退独立面板);menu.js 移除 dshStatus 项与 onOpenStatus 参数。
+- **覆盖回归**:regression-tray.js `[2][4b]`(三项 + 位置 + 回调)、regression-menu.js `[2]`
+  (应用菜单不再含「dsh 服务与版本…」)。
+
+### 8.3 手动「检查更新…」无新版弹窗
+
+- **要求**:菜单手动点「检查更新…」,若无新版本弹出提示「当前没有可用的更新」。
+- **实现**:app-updater.js `checkForUpdates({ notify })` —— 手动检查带回调,检查终态
+  (update-not-available → `notify("up-to-date")`、error → `notify({error})`)时通知调用方;
+  发现新版本不回调(顶栏「新版本」按钮即反馈);启动静默检查不传 notify 保持静默。
+  main.js `buildMenu.onCheckUpdate` 弹 `dialog.showMessageBox`(类型 info/error)。
+- **覆盖回归**:regression-app-updater.js `[2e1]`~`[2e5]`(已是最新 / 失败 / 有新版不回调 /
+  无终态不悬空)。
+
+### 8.4 DMG 引导(Applications 快捷方式 + 指向箭头)
+
+- **要求**:打开 dmg 在窗口内展示 Applications 文件夹快捷方式,方便直接拖入;并在
+  DSH Box.app 图标与 Applications 之间放一个指向箭头。
+- **实现**:
+  - `build.dmg.contents` 显式两块:DSH Box.app(默认第一项)+ `/Applications` link
+    (electron-builder 本就默认创建 Applications 快照,现显式声明 + 槽位对齐);
+  - 背景图 `assets/dmg-background.png`(540×380,深色渐变 + 品牌蓝柔光 + 顶部标题 +
+    图标间虚线引导箭头 + 底部「拖入 Applications 完成安装」文案);
+  - 生成器 `scripts/make-dmg-background.swift`(AppKit 渲染,已提交;重跑可再生成,
+    槽位参数与 iconSize 80 对齐)。
+- **验收**:本地 `CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg` 构建后
+  挂载 dmg,窗口尺寸 = 背景图 540×380,两个图标 + 箭头可见。

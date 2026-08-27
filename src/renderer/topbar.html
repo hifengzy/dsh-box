@@ -16,7 +16,8 @@
       应用更新「新版本」/ 服务状态入口 / 底部面板 / 侧边栏 两个面板开关),
       已加 no-drag,保证可点击。
       按钮从左至右:应用更新(仅出现时)、github、管理(服务状态)、底部面板、侧边栏;
-      悬停 tooltips 依次为:github / 管理 / 底部面板 / 侧边栏(更新按钮文案即状态)。
+      悬停 tooltips 依次为:点个Star 🤩 / 服务管理 / 面板 / 侧栏(更新按钮文案即状态)。
+      注:tooltip 用原生 title 气泡(顶栏视图固定 40px 高,自定义气泡会被裁剪)。
       「新版本」按钮在 github 左侧,与其保持 ≥30px 间距(仅下载/安装流程中显示,
       隐藏时不留空位)。
       应用名不在顶栏展示(红绿灯右侧留白)。
@@ -40,7 +41,7 @@
           id="githubBtn"
           type="button"
           aria-label="GitHub 仓库"
-          title="github"
+          title="点个Star 🤩"
         >
           <span class="github-icon" aria-hidden="true"></span>
         </button>
@@ -50,7 +51,7 @@
           id="statusBtn"
           type="button"
           aria-label="dsh 服务与版本"
-          title="管理"
+          title="服务管理"
         >
           <span class="status-icon" aria-hidden="true"></span>
           <span class="status-dot" id="updateDot" hidden aria-hidden="true"></span>
@@ -62,7 +63,7 @@
           id="pluginBottomBtn"
           type="button"
           aria-label="展开/折叠底部面板"
-          title="底部面板"
+          title="面板"
           disabled
         >
           <span class="panel-icon panel-icon-bottom" aria-hidden="true"></span>
@@ -72,7 +73,7 @@
           id="pluginSideBtn"
           type="button"
           aria-label="展开/折叠侧边栏"
-          title="侧边栏"
+          title="侧栏"
           disabled
         >
           <span class="panel-icon panel-icon-side" aria-hidden="true"></span>
