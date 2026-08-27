@@ -29,6 +29,11 @@ function makeFakeUpdater() {
   };
   au.downloadUpdate = async () => {
     au.downloads += 1;
+    // 失败开关:模拟下载阶段失败(网络/撤版)
+    if (au.failDownloads) {
+      au.emit("error", new Error(au.failMessage || "网络超时"));
+      return;
+    }
     // 模拟下载过程:三帧进度 → 完成
     au.emit("download-progress", { percent: 0, transferred: 0, total: 100 });
     au.emit("download-progress", { percent: 47.6, transferred: 76, total: 160 });
@@ -136,6 +141,54 @@ function check(cond, msg) {
     const p = upd.checkForUpdates({ notify: () => { notified = true; } });
     await p; // fake checkForUpdates 同步 resolve、不发任何终态事件
     check(!notified, `[2e5] 无终态事件 → 暂不回调(等待真实结果,防误弹窗)`);
+  }
+
+  // ========== 2.6. 幽灵版本防线(P2-C2):撤版后重试不再死磕下载 ==========
+  {
+    const au = makeFakeUpdater();
+    const upd = createAppUpdater({ autoUpdater: au, isPackaged: true });
+    await upd.init({ checkOnStart: false });
+    au.emit("update-available", { version: "0.2.0" });
+    await upd.startDownload();
+    check(upd.getState().state === "downloaded", "[2f0] 正常下载完成 → downloaded");
+    au.emit("update-not-available");
+    check(
+      upd.getState().state === "up-to-date" && upd.getState().version === null,
+      `[2f1] 已是最新 → version 被清空(实际 ${JSON.stringify(upd.getState())})`
+    );
+  }
+  {
+    // 下载失败 1 次 → retry 仍重下;连续 2 次失败 → 降级为重新检查
+    const au = makeFakeUpdater();
+    au.failDownloads = true;
+    const upd = createAppUpdater({ autoUpdater: au, isPackaged: true });
+    await upd.init({ checkOnStart: false });
+    au.emit("update-available", { version: "0.2.0" });
+    await upd.startDownload(); // 失败#1(error, version 保留 0.2.0)
+    check(upd.getState().state === "error" && upd.getState().version === "0.2.0", "[2f2] 下载失败#1 → error 且保留 version");
+    upd.retry(); // restartDownload → 失败#2
+    await new Promise((r) => setTimeout(r, 10));
+    check(au.downloads === 2, `[2f3] 第 1 次重试仍走重下(downloads=2,实际 ${au.downloads})`);
+    check(upd.getState().state === "error", "[2f4] 下载失败#2 → error");
+    upd.retry(); // 连续失败 ≥2 → 降级 checkForUpdates
+    await new Promise((r) => setTimeout(r, 10));
+    check(au.checks === 1, `[2f5] 连续 2 次下载失败 → 重试降级为重新检查(checks=1,实际 ${au.checks})`);
+    check(au.downloads === 2, `[2f6] 降级后不再重下(downloads 保持 2,实际 ${au.downloads})`);
+  }
+  {
+    // 404(版本被撤回/资产消失)→ 主动清 version → 重试直接重新检查
+    const au = makeFakeUpdater();
+    au.failDownloads = true;
+    au.failMessage = "404 Not Found: No latest release";
+    const upd = createAppUpdater({ autoUpdater: au, isPackaged: true });
+    await upd.init({ checkOnStart: false });
+    au.emit("update-available", { version: "0.2.0" });
+    await upd.startDownload();
+    check(upd.getState().state === "error" && upd.getState().version === null,
+      `[2f7] 404 类下载错误 → version 主动清空(实际 ${JSON.stringify(upd.getState())})`);
+    upd.retry();
+    await new Promise((r) => setTimeout(r, 10));
+    check(au.checks === 1 && au.downloads === 1, `[2f8] 404 后重试走重新检查(checks=1 downloads=1,实际 ${au.checks}/${au.downloads})`);
   }
 
   // ========== 3. error + restartDownload ==========

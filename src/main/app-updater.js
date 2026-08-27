@@ -57,6 +57,9 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
   let initialized = false;
   /** 手动检查的结束回调(仅一次;取走即清空,自动检查/发现新版本时无值) */
   let pendingNotify = null;
+  /** 下载连续失败次数:≥ DOWNLOAD_FAIL_LIMIT 后「重试」降级为重新检查,
+   *  防止 feed 版本被撤回后 forever 撞 404(对抗审查 P2-C2) */
+  let downloadFailures = 0;
 
   const takeNotify = () => {
     const n = pendingNotify;
@@ -78,11 +81,15 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
     au.on("checking-for-update", () => setState("checking"));
     au.on("update-available", (info) => {
       takeNotify(); // 有新版:顶栏按钮即反馈,无弹窗
+      downloadFailures = 0; // 新一轮检查重新开始计数
       setState("available", { version: info && info.version });
       logFn(`[app-update] 发现新版本: ${(info && info.version) || "?"}`);
     });
     au.on("update-not-available", () => {
-      setState("up-to-date");
+      // 已是最新:清掉可能残留的 version —— 否则 feed 撤版后旧 version 会
+      // 让 retry 永远走「重新下载」撞 404(P2-C2 幽灵可用版本路径)
+      setState("up-to-date", { version: null, error: null });
+      downloadFailures = 0;
       logFn("[app-update] 已是最新");
       const n = takeNotify();
       if (n) n("up-to-date"); // 手动检查 → 「当前没有可用的更新」弹窗
@@ -93,12 +100,22 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
       setState("downloading", { percent: pct });
     });
     au.on("update-downloaded", (info) => {
+      downloadFailures = 0;
       setState("downloaded", { percent: 100, version: info && info.version });
       logFn("[app-update] 下载完成,等待安装");
     });
     au.on("error", (err) => {
       const message = (err && err.message) || String(err);
-      setState("error", { error: message });
+      // 下载失败计数(version 有值 = 失败发生在下载阶段);404/404 类(版本被
+      // 撤回/资产消失)主动清 version,让重试走向「重新检查」而非死磕下载
+      if (version !== null) downloadFailures += 1;
+      else downloadFailures = 0;
+      if (/404|not found/i.test(message)) {
+        downloadFailures = 0;
+        setState("error", { version: null, error: message });
+      } else {
+        setState("error", { error: message });
+      }
       logFn(`[app-update] 更新错误: ${message}`);
       const n = takeNotify();
       if (n) n({ error: message }); // 手动检查失败 → 错误弹窗
@@ -192,16 +209,18 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
     startDownload().catch(() => {});
   };
 
-  /**
-   * 错误态「重试」分流(顶栏「重试」按钮):
-   *   - 下载失败(version 有值)→ 重新下载;
+  /** 错误态「重试」分流(顶栏「重试」按钮):
+   *   - 下载失败且未超过连续失败上限(version 有值)→ 重新下载;
    *   - 检查失败(version 为 null,如 feed 404/网络不可达)→ 重新检查 ——
-   *     不能走 startDownload(无 updateInfo 会立即再次失败,重试死循环)。
+   *     不能走 startDownload(无 updateInfo 会立即再次失败,重试死循环);
+   *   - 下载连续失败 ≥ DOWNLOAD_FAIL_LIMIT(如 feed 撤版)→ 降级为重新检查,
+   *     不再死磕下载(P2-C2 幽灵可用版本唯一路径)。
    */
+  const DOWNLOAD_FAIL_LIMIT = 2;
   const retry = () => {
     if (!initialized || !isPackaged) return;
     if (state !== "error") return;
-    if (version) restartDownload();
+    if (version && downloadFailures < DOWNLOAD_FAIL_LIMIT) restartDownload();
     else checkForUpdates().catch(() => {});
   };
 
