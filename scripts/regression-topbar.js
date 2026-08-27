@@ -27,6 +27,8 @@ let sidebarOpenFlag = false; // 与推送事件保持同步,点击 toggle 时翻
 let appUpdateDownloads = 0; // 应用更新:下载/安装/重试 IPC 调用计数
 let appUpdateInstalls = 0;
 let appUpdateRetries = 0;
+let tooltipShown = null; // 顶栏 tooltip:显示载荷({text,rect})
+let tooltipHidden = 0; // 顶栏 tooltip:隐藏次数
 
 // 模拟主进程:外链 / 更新标志 / 面板方向
 ipcMain.handle("shell:open-external", (_event, url) => {
@@ -52,6 +54,13 @@ ipcMain.handle("dsh:app-update-install", () => {
 ipcMain.handle("dsh:app-update-retry", () => {
   appUpdateRetries += 1;
   return true;
+});
+// 顶栏 tooltip(气泡层):显示=记录载荷,隐藏=计数
+ipcMain.on("dsh:tooltip-show", (_event, payload) => {
+  tooltipShown = payload;
+});
+ipcMain.on("dsh:tooltip-hide", () => {
+  tooltipHidden += 1;
 });
 
 app.whenReady().then(async () => {
@@ -341,6 +350,32 @@ app.whenReady().then(async () => {
     if (upd6.display !== "none")
       throw new Error(`已是最新后按钮计算样式应为 display:none,实际 ${upd6.display}(幽灵按钮回归)`);
     console.log("[7] 应用更新按钮:available/下载中 47%+涂色/安装+涂满/安装中/重试/隐藏 + github 间距 ≥30 ✓");
+
+    // ========== 8. 入口 tooltip:悬停防抖 250ms → tooltipShow(文案+按钮坐标);移出 → hide ==========
+    const fire = (type) => win.webContents.executeJavaScript(
+      `document.getElementById("pluginSideBtn").dispatchEvent(new MouseEvent(${JSON.stringify(type)})); true`
+    );
+    tooltipShown = null;
+    tooltipHidden = 0;
+    await fire("mouseenter");
+    await new Promise((r) => setTimeout(r, 60));
+    if (tooltipShown !== null)
+      throw new Error(`防抖期内(60ms<250ms)不应 show,实际 ${JSON.stringify(tooltipShown)}`);
+    await new Promise((r) => setTimeout(r, 260));
+    if (!tooltipShown || tooltipShown.text !== "侧栏")
+      throw new Error(`悬停应 tooltipShow('侧栏'),实际 ${JSON.stringify(tooltipShown)}`);
+    if (!tooltipShown.rect || !tooltipShown.rect.left || !tooltipShown.rect.width)
+      throw new Error(`tooltipShow 应携带按钮坐标 rect,实际 ${JSON.stringify(tooltipShown)}`);
+    await fire("mouseleave");
+    await new Promise((r) => setTimeout(r, 60));
+    if (tooltipHidden !== 1) throw new Error(`移出应 tooltipHide,实际 ${tooltipHidden} 次`);
+    // 防抖:再次悬停 60ms 后立刻移出 → 不 show 也不 hide 新的
+    await fire("mouseenter");
+    await new Promise((r) => setTimeout(r, 60));
+    await fire("mouseleave");
+    await new Promise((r) => setTimeout(r, 60));
+    if (tooltipHidden !== 1) throw new Error(`防抖取消后不应再 hide,实际 ${tooltipHidden} 次`);
+    console.log("[8] 入口 tooltip:悬停防抖→tooltipShow(文案+坐标),移出→hide,防抖取消 ✓");
 
     console.log("\nPASS ✓ 顶栏回归通过");
     win.destroy();

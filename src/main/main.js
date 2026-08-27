@@ -146,6 +146,9 @@ function main() {
   let serviceState = "starting";
   /** 右侧「dsh 服务与版本」面板视图(WebContentsView);null = 未展开 */
   let statusView = null;
+  /** 顶栏 tooltip 气泡层(WebContentsView):顶栏自定义 tooltip 的宿主,
+   *  由主进程定位到按钮正下方;平时 0×0 隐藏。null = 未创建 */
+  let tooltipView = null;
   /** 面板是否展开(顶栏状态按钮的激活态来源) */
   let sidebarOpen = false;
   /** 面板展开/收起动画句柄(帧驱动 setBounds);null = 无动画进行中 */
@@ -328,6 +331,7 @@ function main() {
       topBarView = null;
       contentView = null;
       statusView = null;
+      tooltipView = null;
       sidebarOpen = false;
     });
   }
@@ -1561,6 +1565,52 @@ function main() {
     // 错误态重试:检查失败(无版本)→ 重新检查;下载失败(有版本)→ 重新下载
     if (appUpdater) appUpdater.retry();
     return true;
+  });
+
+  // ---------- 顶栏 tooltip(气泡层)----------
+  // 根因(0.1.7 实报):顶栏是独立 WebContentsView,原生 title 气泡不显示;
+  // 且视图固定 40px 高,视图内 CSS 气泡会被边界裁剪 → 用独立气泡层视图浮在
+  // 按钮正下方(平时 0×0 隐藏)。悬停防抖与触发在 topbar.js,这里只负责
+  // 创建/定位/显隐(文本注入经 executeJavaScript,懒加载就有延迟安全垫)。
+  function ensureTooltipView() {
+    if (tooltipView && !tooltipView.webContents.isDestroyed()) return true;
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    tooltipView = new WebContentsView({
+      webPreferences: { contextIsolation: true, sandbox: true },
+    });
+    tooltipView.setBackgroundColor("#00000000");
+    mainWindow.contentView.addChildView(tooltipView);
+    tooltipView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+    tooltipView.webContents.loadFile(path.join(__dirname, "..", "renderer", "tooltip.html"));
+    return true;
+  }
+
+  function runTooltipJs(js) {
+    const wc = tooltipView && tooltipView.webContents;
+    if (!wc || wc.isDestroyed()) return;
+    const exec = () => wc.executeJavaScript(js, true).catch(() => {});
+    if (wc.isLoading()) wc.once("did-finish-load", exec);
+    else exec();
+  }
+
+  /** 显示气泡:按顶栏视图内按钮中心定位(屏幕内钳制),宽度按文本长度估算 */
+  ipcMain.on("dsh:tooltip-show", (_event, payload) => {
+    if (!payload || typeof payload.text !== "string" || !payload.text) return;
+    if (!ensureTooltipView()) return;
+    const rect = payload.rect || {};
+    const centerX = Math.round((Number(rect.left) || 0) + (Number(rect.width) || 28) / 2);
+    // 中文 ≈13px/字 + 两端 padding;夹在 [40, 220]
+    const w = Math.max(40, Math.min(220, Math.round(payload.text.length * 13 + 20)));
+    const winW = mainWindow.getContentBounds().width;
+    const x = Math.max(0, Math.min(winW - w, centerX - w / 2));
+    tooltipView.setBounds({ x, y: BAR_HEIGHT + 1, width: w, height: 30 });
+    runTooltipJs(`window.showTooltip && window.showTooltip(${JSON.stringify(payload.text)})`);
+  });
+
+  ipcMain.on("dsh:tooltip-hide", () => {
+    if (tooltipView && !tooltipView.webContents.isDestroyed()) {
+      tooltipView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+    }
   });
 
   // (外观主题同步已上移到 initThemeSync:偏好 → nativeTheme.themeSource,

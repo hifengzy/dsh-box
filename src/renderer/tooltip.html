@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'self'; script-src 'self'"
+    />
+    <title>Tooltip</title>
+    <link rel="stylesheet" href="./tooltip.css" />
+  </head>
+  <body>
+    <!--
+      顶栏 tooltip 气泡层(独立 WebContentsView,由主进程定位到按钮正下方)。
+      为什么不能放在 topbar 视图内:顶栏视图固定 40px 高,气泡会超出视图
+      边界被裁剪;原生 title 气泡在 WebContentsView 顶栏上也不显示(0.1.7
+      实报)。本视图平时 0×0,悬停时显示 —— 内容区顶部短暂悬浮一个气泡。
+      文本由主进程经 executeJavaScript 调 window.showTooltip(text) 注入。
+    -->
+    <div class="tip" id="tooltipTip" role="tooltip"></div>
+    <script src="./tooltip.js"></script>
+  </body>
+</html>

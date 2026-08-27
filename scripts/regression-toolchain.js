@@ -55,6 +55,10 @@ function makeFakeBundled({ nodeMajor = 25, withPnpm = true, broken = false } = {
 }
 
 (async () => {
+  // 逻辑分支测试期间隔离本机 Homebrew(GUI 兜底注入会干扰 fake bins 的
+  // 优先级断言;GUI 兜底自身的回归放到文件末尾单独测)
+  process.env.DSH_DISABLE_HOMEBREW_PATH = "1";
+
   console.log("[1] nodeMajor 解析");
   check("v20.11.0 → 20", toolchain.nodeMajor("v20.11.0") === 20);
   check("v18 → 18", toolchain.nodeMajor("v18") === 18);
@@ -105,6 +109,29 @@ function makeFakeBundled({ nodeMajor = 25, withPnpm = true, broken = false } = {
   check("用户无 pnpm → 内置 bin 前置", bundledPnp.ok && bundledPnp.source === "bundled" && bundledPnp.path.startsWith(path.join(bundle, "bin")));
   const none = toolchain.resolvePnpmPath({ env: { PATH: noUserPnp }, bundledDir: null });
   check("都没有 → source=none、PATH 原样", none.ok && none.source === "none" && none.path === noUserPnp);
+
+  // 0.1.7 实报回归(隔离解除,真实 Homebrew 环境):GUI 进程 PATH 只有
+  // /usr/bin:/bin:...,Homebrew 前缀缺失 → dsh CLI 报「pnpm not found on
+  // PATH」。shellPath 必须把存在的 Homebrew bin 前缀前置;且本机有 Homebrew
+  // 时 resolvePnpmPath 应能命中用户 pnpm。
+  delete process.env.DSH_DISABLE_HOMEBREW_PATH;
+  if (process.platform === "darwin") {
+    const guiPath = toolchain.shellPath({ PATH: "/usr/bin:/bin:/usr/sbin:/sbin" });
+    const homebrewBins = ["/opt/homebrew/bin", "/usr/local/bin"].filter((d) => require("node:fs").existsSync(d));
+    check(
+      `GUI 兜底 PATH 前置 Homebrew bin(${homebrewBins.join(",") || "本机无 Homebrew"})`,
+      homebrewBins.length === 0 || homebrewBins.every((d) => guiPath.includes(d))
+    );
+    if (homebrewBins.length > 0) {
+      const guiPnp = toolchain.resolvePnpmPath({ env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" } });
+      check(
+        `GUI 场景 resolvePnpmPath 命中用户 pnpm(source=${guiPnp.source})`,
+        guiPnp.ok && guiPnp.source === "user" && guiPnp.pnpmVersion
+      );
+    }
+  } else {
+    check("非 mac:Homebrew 注入不生效(平台守卫)", toolchain.shellPath({ PATH: "/x" }) === "/x");
+  }
 
   console.log(`\n${failed === 0 ? "PASS" : "FAIL"} ✓ 工具链解析回归通过(${failed === 0 ? "全部" : failed + " 项失败"})`);
   process.exit(failed === 0 ? 0 : 1);

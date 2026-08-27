@@ -34,17 +34,40 @@ const NODE_MAJOR_REQ = 20;
 const PROBE_TIMEOUT_MS = 8_000;
 /** macOS GUI 会话兜底 PATH */
 const DEFAULT_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
+/** macOS Homebrew 常见 bin 前缀(Apple Silicon / Intel):GUI 进程 PATH 不含,但
+ *  用户 npm/pnpm/node 工具链大多装在这里 —— 0.1.7 实报:插件更新报
+ *  「pnpm not found on PATH」(launchctl getenv PATH 为空时 shellPath 兜底
+ *  到 /usr/bin:/bin,...,dsh CLI 找不到用户 pnpm)。探测 PATH 时前置合并。 */
+const HOMEBREW_BINS = ["/opt/homebrew/bin", "/usr/local/bin"];
+
+/**
+ * 把存在的 Homebrew bin 前缀前置进探测 PATH(GUI 启动的 Electron 进程拿不到
+ * 用户 shell 的 PATH;Homebrew 前缀是固定的,直接用文件存在性探测零副作用)。
+ * @param {string} userPath
+ * @returns {string}
+ */
+function withHomebrewBin(userPath) {
+  if (process.platform !== "darwin") return userPath;
+  // 回归测试隔离:单测构造 fake bins 验证优先级时,禁用本机 Homebrew 干扰
+  if (process.env.DSH_DISABLE_HOMEBREW_PATH === "1") return userPath;
+  const existing = String(userPath || "").split(path.delimiter).filter(Boolean);
+  const extra = HOMEBREW_BINS.filter((d) => fs.existsSync(d) && !existing.includes(d));
+  if (!extra.length) return userPath;
+  return extra.join(path.delimiter) + (existing.length ? path.delimiter + existing.join(path.delimiter) : "");
+}
 
 /**
  * 解析用于探测用户工具链的 PATH:
  *   1. 环境变量 PATH 非空 → 用之;
  *   2. macOS → `launchctl getenv PATH`(登录会话注入;失败/为空忽略);
- *   3. 兜底 DEFAULT_PATH。
+ *   3. macOS → Homebrew bin 前缀前置(Apple Silicon /opt/homebrew/bin,
+ *      Intel /usr/local/bin)——GUI 启动关键兜底,见 ↑ withHomebrewBin;
+ *   4. 兜底 DEFAULT_PATH。
  * @param {NodeJS.ProcessEnv} [env]
  * @returns {string}
  */
 function shellPath(env = process.env) {
-  if (env.PATH && env.PATH.trim()) return env.PATH;
+  if (env.PATH && env.PATH.trim()) return withHomebrewBin(env.PATH);
   if (process.platform === "darwin") {
     try {
       const r = spawnSync("launchctl", ["getenv", "PATH"], {
@@ -52,12 +75,12 @@ function shellPath(env = process.env) {
         timeout: 2_000,
       });
       const out = (r.stdout || "").trim();
-      if (out) return out;
+      if (out) return withHomebrewBin(out);
     } catch {
       /* 忽略:退回兜底 PATH */
     }
   }
-  return DEFAULT_PATH;
+  return withHomebrewBin(DEFAULT_PATH);
 }
 
 /** 运行一次命令并返回 stdout 首行(trim);失败/超时返回 null。 */

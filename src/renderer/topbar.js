@@ -175,3 +175,34 @@ window.dsh
   .then(renderAppUpdate)
   .catch(() => {});
 window.dsh.onAppUpdate(renderAppUpdate);
+
+// ---------- 入口 tooltip(气泡提示) ----------
+// 0.1.7 实报:原生 title 气泡在独立 WebContentsView 顶栏上不显示,且视图
+// 固定 40px 高(视图内 CSS 气泡会被边界裁剪)→ 走独立气泡层(主进程
+// dsh:tooltip-show/-hide 定位到按钮正下方)。悬停 250ms 防抖,移出即隐藏。
+const TOOLTIP_DELAY_MS = 250;
+
+function bindTooltip(btn, text) {
+  let timer = null;
+  let shown = false;
+  btn.addEventListener("mouseenter", () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      shown = true;
+      const r = btn.getBoundingClientRect();
+      window.dsh.tooltipShow(text, { left: r.left, width: r.width });
+    }, TOOLTIP_DELAY_MS);
+  });
+  btn.addEventListener("mouseleave", () => {
+    clearTimeout(timer);
+    if (shown) {
+      shown = false;
+      window.dsh.tooltipHide();
+    }
+  });
+}
+
+bindTooltip(githubBtn, "点个Star 🤩");
+bindTooltip(statusBtn, "服务管理");
+bindTooltip(pluginBottomBtn, "面板");
+bindTooltip(pluginSideBtn, "侧栏");
