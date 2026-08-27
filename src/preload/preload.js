@@ -72,6 +72,12 @@ contextBridge.exposeInMainWorld("dsh", {
   /** 错误态重试(顶栏「重试」):检查失败→重新检查;下载失败→重新下载 */
   retryAppUpdate: () => ipcRenderer.invoke("dsh:app-update-retry"),
 
+  /** 顶栏 tooltip:显示气泡(主进程定位在按钮正下方);rect = DOMRect 的
+   *  plain 形态 {left,width}(相对顶栏视图,主进程套用窗口坐标) */
+  tooltipShow: (text, rect) => ipcRenderer.send("dsh:tooltip-show", { text, rect }),
+  /** 顶栏 tooltip:隐藏气泡 */
+  tooltipHide: () => ipcRenderer.send("dsh:tooltip-hide"),
+
   /** 停止 dsh 服务(状态页「停止」按钮) */
   stopServer: () => ipcRenderer.invoke("dsh:stop"),
 

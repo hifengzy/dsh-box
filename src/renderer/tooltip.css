@@ -1,0 +1,54 @@
+/* tooltip.css — 顶栏 tooltip 气泡层样式。
+ * 深色气泡(dsh tooltip 语义:neutral-bluish-850 底 + 白字),底部三角指向
+ * 上方的按钮;视图顶部留 4px 透明区给三角,气泡本体不贴顶。 */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  user-select: none;
+}
+
+.tip {
+  position: absolute;
+  left: 50%;
+  bottom: 3px;
+  transform: translate(-50%, 3px);
+  max-width: 220px;
+  white-space: nowrap;
+  padding: 3px 9px;
+  background: rgba(44, 44, 46, 0.96); /* neutral-bluish-850 深色 tooltip 底 */
+  color: rgb(249, 250, 251);
+  font: 11px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
+  border-radius: 6px;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.35),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+  opacity: 0;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  pointer-events: none;
+}
+
+/* 三角指向按钮(气泡正上方) */
+.tip::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  margin-left: -4px;
+  border: 4px solid transparent;
+  border-bottom-color: rgba(44, 44, 46, 0.96);
+  border-top: none;
+}
+
+.tip.tip-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}

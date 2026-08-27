@@ -166,8 +166,37 @@ xcrun stapler validate "$APP"
 # ---------- 5. 产物:上传名 zip + dmg + feed yml ----------
 log "复制为上传名 zip(连字符,与 yml 引用一致)"
 cp "$ZIP_DISK" "$ZIP_UPLOAD"
-log "hdiutil 制作 dmg(手工,规避 electron-builder dmgbuild 兼容问题)"
-hdiutil create -volname "$VOLNAME" -srcfolder "$APP" -ov -format UDZO "$DMG" 2>&1 | tail -2
+
+# ---------- 5.5. dmg(electron-builder 自带 dmgbuild,含 Applications 快捷方式+引导背景) ----------
+# 0.1.7 教训:手工 `hdiutil create -srcfolder "$APP"` 只打包 .app,丢了
+# build.dmg.contents 的 Applications 快捷方式与背景图(用户实报:dmg 打开只有
+# App icon)。改用 electron-builder 同源的 dmgbuild CLI(自包含 python bundle),
+# 输入**已签名** APP + settings.json(两图标槽位 + 背景图 + 窗口尺寸),
+# 产出自带 .DS_Store(图标布局 + 背景)的正确 dmg。
+DMGBUILD_DIR="${DMGBUILD_DIR:-$(ls -d "$HOME/Library/Caches/electron-builder/dmg-builder@1.2.5"/dmgbuild-bundle-* 2>/dev/null | head -1)}"
+if [ -z "$DMGBUILD_DIR" ] || [ ! -x "$DMGBUILD_DIR/dmgbuild" ]; then
+  echo "缺少 dmgbuild bundle(首次使用先跑一次: CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dmg 触发下载)"
+  exit 1
+fi
+DMGBUILD="$DMGBUILD_DIR/dmgbuild"
+DMG_SETTINGS="$DIST/dmg-settings-$VER.json"
+log "dmgbuild 制作 dmg(Applications 快捷方式 + 背景图 + 图标布局)"
+cat > "$DMG_SETTINGS" <<EOF
+{
+  "title": "$VOLNAME",
+  "icon-size": 80,
+  "background": "$ROOT/assets/dmg-background.png",
+  "window": { "position": { "x": 400, "y": 200 }, "size": { "width": 540, "height": 380 } },
+  "contents": [
+    { "path": "$APP", "x": 130, "y": 220, "name": "DSH Box.app", "type": "file" },
+    { "path": "/Applications", "x": 410, "y": 220, "name": "Applications", "type": "link" }
+  ],
+  "format": "UDZO",
+  "compression-level": 9,
+  "filesystem": "HFS+"
+}
+EOF
+"$DMGBUILD" -s "$DMG_SETTINGS" "$VOLNAME" "$DMG"
 
 log "生成 latest-mac.yml"
 SHA512="$(shasum -a 512 "$ZIP_UPLOAD" | awk '{print $1}' | xxd -r -p | base64)"
