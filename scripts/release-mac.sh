@@ -196,8 +196,9 @@ cp "$ZIP_DISK" "$ZIP_UPLOAD"
 # dmgbuild CLI(自包含 python bundle),输入**已签名** APP。
 # 0.1.9 起按用户要求**不再带背景图**:Finder 用系统默认窗口背景,卷内仅
 # DSH Box.app + Applications 快捷方式两个图标(去掉 background 字段即可)。
-# P3-16:dmg-builder 版本不硬编码 —— 通配任意已缓存版本
-DMGBUILD_DIR="${DMGBUILD_DIR:-$(ls -d "$HOME/Library/Caches/electron-builder/dmg-builder@*"/dmgbuild-bundle-* 2>/dev/null | head -1)}"
+# P3-16:dmg-builder 版本不硬编码 —— 通配任意已缓存版本。
+# 注意 `@*` 必须在引号外才能 glob 展开($HOME 单独引号防拆分)
+DMGBUILD_DIR="${DMGBUILD_DIR:-$(ls -d "$HOME"/Library/Caches/electron-builder/dmg-builder@*/dmgbuild-bundle-* 2>/dev/null | head -1)}"
 if [ -z "$DMGBUILD_DIR" ] || [ ! -x "$DMGBUILD_DIR/dmgbuild" ]; then
   echo "缺少 dmgbuild bundle(首次使用先跑一次: CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dmg 触发下载)"
   exit 1
