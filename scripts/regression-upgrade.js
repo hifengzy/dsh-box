@@ -34,7 +34,7 @@ const { spawnSync } = require("node:child_process");
 
 // 在主进程里直接驱动业务模块(不走 IPC,更快更直接)
 const npmCheck = require("../src/main/npm-check");
-const { upgradeDsh, restoreDshBackup, verifyDshBoot, findNewestBackup } = require("../src/main/dsh-upgrade");
+const { upgradeDsh, restoreDshBackup, verifyDshBoot, findNewestBackup, findBackups } = require("../src/main/dsh-upgrade");
 
 app.setPath("userData", path.resolve(__dirname, "..", ".runtime", "regression", "upgrade-user"));
 
@@ -247,6 +247,42 @@ app.whenReady().then(async () => {
     const probeGood = await verifyDshBoot({ pkgDir: pkgDir9, dshHome: healHome });
     if (!probeGood.ok) throw new Error(`自愈后自检应通过: ${probeGood.error}`);
     console.log("[9] 启动自愈部件:坏态自检失败 → findNewestBackup → 恢复 → 自检通过 ✓");
+
+    // ---------- 用例 10:自愈「恢复编排」(P0/P1-3):pkgDir 缺失 + 多备份迭代 ----------
+    // 覆盖 healInterruptedUpgrade 的编排顺序:包目录缺失(双 rename 窗口被
+    // kill -9)→ findBackups(新→旧)→ 逐份 restoreDshBackup + 冒烟,最新
+    // 一份失败则迭代更早备份。main.js 的接线由 check-main-integrity 的
+    // 「调用点」正则守护(曾因只匹配标识符导致死代码漏网)。
+    {
+      const healOrchDir = path.join(work, "heal-orch");
+      const pkgDir10 = path.join(healOrchDir, "node_modules", "@deepseek-ai", "dsh");
+      // 最新备份(bad):恢复后冒烟必败 → 应迭代到更早的好备份
+      const bakNew = path.join(healOrchDir, "node_modules", "@deepseek-ai", ".dsh-0.1.0-rc.6-bak-200");
+      fs.mkdirSync(path.join(bakNew, "lib"), { recursive: true });
+      fs.writeFileSync(path.join(bakNew, "package.json"), JSON.stringify({ name: "@deepseek-ai/dsh", version: "bad" }));
+      fs.writeFileSync(path.join(bakNew, "lib", "bin.js"), "process.exit(1);\n");
+      // 更早备份(good):应最终恢复这个
+      const bakOld = path.join(healOrchDir, "node_modules", "@deepseek-ai", ".dsh-0.1.0-rc.6-bak-100");
+      fs.mkdirSync(path.join(bakOld, "lib"), { recursive: true });
+      fs.writeFileSync(path.join(bakOld, "package.json"), JSON.stringify({ name: "@deepseek-ai/dsh", version: "0.1.0-rc.6" }));
+      fs.writeFileSync(path.join(bakOld, "lib", "bin.js"), "process.exit(0);\n");
+      // pkgDir 缺失(模拟 kill -9 落在双 rename 窗口)
+      const healHome10 = path.join(work, "heal-orch-home");
+      const restored = { ok: false };
+      for (const backup of findBackups(pkgDir10)) {
+        const rb = restoreDshBackup(pkgDir10, backup);
+        if (!rb.ok) continue;
+        const probe = await verifyDshBoot({ pkgDir: pkgDir10, dshHome: healHome10 });
+        if (probe.ok) {
+          restored.ok = true;
+          restored.version = JSON.parse(fs.readFileSync(path.join(pkgDir10, "package.json"), "utf8")).version;
+          break;
+        }
+      }
+      if (!restored.ok) throw new Error("pkgDir 缺失 + 最新备份坏 → 应迭代到更早备份恢复成功");
+      if (restored.version !== "0.1.0-rc.6") throw new Error(`应恢复为 0.1.0-rc.6,实际 ${restored.version}`);
+      console.log("[10] 自愈编排:pkgDir 缺失 → findBackups 迭代(最新坏→更早好)→ 恢复成功 ✓");
+    }
 
     server.close();
     console.log("\nPASS ✓ 升级链路回归通过");

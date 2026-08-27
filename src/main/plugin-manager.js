@@ -220,7 +220,14 @@ function ensureOpenByDefault(dshHome) {
   let lines;
   try {
     lines = fs.readFileSync(file, "utf8").split("\n");
-  } catch {
+  } catch (error) {
+    // P1-4(补全):读失败必须中止写入 —— 非 ENOENT(EIO/权限等)继续写入
+    // 会把整个文件覆盖成只剩 dsh-better-sidebar 域的空壳,用户设置全丢;
+    // ENOENT = 首次写入,允许从空建。
+    if (error && error.code !== "ENOENT") {
+      console.warn(`[plugin-manager] 读取 ${file} 失败,中止本轮写入: ${error.message}`);
+      return false;
+    }
     lines = [];
   }
   const out = [];
@@ -263,9 +270,24 @@ function ensureOpenByDefault(dshHome) {
   }
   try {
     fs.mkdirSync(dshHome, { recursive: true });
-    fs.writeFileSync(file, out.join("\n") + "\n");
-    return true;
-  } catch {
+    // P1-4(补全):tmp+rename 原子写 —— 与 box-settings 同款,崩溃/断电
+    // 不留下截断 YAML,也不与其它写者(rename 原子写)竞争覆盖
+    const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+    try {
+      fs.writeFileSync(tmp, out.join("\n") + "\n");
+      fs.renameSync(tmp, file);
+      return true;
+    } catch (error) {
+      try {
+        fs.rmSync(tmp, { force: true });
+      } catch {
+        /* 临时文件清理失败无碍 */
+      }
+      console.warn(`[plugin-manager] 写入 ${file} 失败: ${error.message}`);
+      return false;
+    }
+  } catch (error) {
+    console.warn(`[plugin-manager] 写入 ${file} 失败: ${error.message}`);
     return false;
   }
 }

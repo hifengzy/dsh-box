@@ -207,6 +207,11 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
       stallTimer = null;
       if (state !== "downloading") return;
       logFn("[app-update] 下载长时间无进展,自动转到错误态");
+      // P0(交互缺口):停滞转 error 必须与 au.on("error") 一样递增
+      // downloadFailures —— 否则黑洞网络下 retry 永远走重下(90s 一轮),
+      // 「连续 N 次失败降级重查」对停滞型失败永不生效
+      if (version !== null) downloadFailures += 1;
+      else downloadFailures = 0;
       setState("error", { error: "下载长时间无进展(可能网络受限),请重试" });
     }, stallMs);
     try {

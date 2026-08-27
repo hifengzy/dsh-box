@@ -607,14 +607,14 @@ function main() {
   const RESTORE_TRIES = 3;
   async function healInterruptedUpgrade() {
     try {
-      // 定位 App 内置 dsh 包根(bundledDshPath = 内置入口;向上找 package.json),
-      // 不依赖 resolveDsh —— 内置目录缺失时 resolveDsh 会落到用户全局 PATH,
-      // 拿到的 packageDir 不是内置包,自愈会扑空。
+      // 定位 App 内置 dsh 包根(bundledDshPath = 内置入口**数组**;向上找
+      // package.json),不依赖 resolveDsh —— 内置目录缺失时 resolveDsh 会
+      // 落到用户全局 PATH,拿到的 packageDir 不是内置包,自愈会扑空。
       const bundled = bundledDshPath();
-      if (!bundled) return;
+      if (!bundled || !bundled.length) return;
       let pkgDir = null;
-      {
-        let dir = path.dirname(bundled);
+      for (const candidate of bundled) {
+        let dir = path.dirname(candidate);
         for (let i = 0; i < 8; i++) {
           if (fs.existsSync(path.join(dir, "package.json"))) {
             pkgDir = dir;
@@ -624,6 +624,7 @@ function main() {
           if (parent === dir) break;
           dir = parent;
         }
+        if (pkgDir) break;
       }
       if (!pkgDir) return;
       const probeHome = path.join(app.getPath("userData"), "boot-probe");
@@ -1883,6 +1884,10 @@ function main() {
         console.warn("[app] 创建菜单栏图标失败:", error.message);
       }
     }
+    // 升级中断自愈:在启动 dsh 之前执行 —— kill -9 双 rename 窗口/半截包
+    // 留下的坏态要先从备份恢复,再正常拉起服务(P0 修复:此前从未接线,
+    // 自愈是死代码;见 review P1-3)。内部自带 try/catch,失败不影响启动。
+    await healInterruptedUpgrade();
     await startServer();
 
     // 启动时自动查一次 npm(非阻塞,失败静默):有新版 → 顶栏入口红点
