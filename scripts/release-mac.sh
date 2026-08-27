@@ -69,7 +69,28 @@ command -v gh >/dev/null || { echo "缺少 gh CLI"; exit 1; }
 # public:匿名 GitHubProvider(github.com atom feed + releases/download),**绝不写 token**
 # —— 包里一旦内嵌 PAT,仓库公开后任何下载 release 资产的人都能拿到。
 # DSH_REPO_VISIBILITY 可覆盖(测试用),默认真实查询。
-REPO_VISIBILITY="${DSH_REPO_VISIBILITY:-$(gh repo view --json visibility -q .visibility 2>/dev/null || echo private)}"
+# 0.1.8 事故:此前 `gh repo view` 失败会静默回退 private → 把 token 烤进公开
+# 仓库的包。这里显式 -R 指定仓库、重试 3 次、仍失败则中止 —— 宁可失败不烤 token。
+REPO_VISIBILITY=""
+if [ -z "${DSH_REPO_VISIBILITY:-}" ]; then
+  for _try in 1 2 3; do
+    REPO_VISIBILITY="$(gh repo view hifengzy/dsh-box --json visibility -q .visibility 2>&1 || true)"
+    # gh 输出大写 PUBLIC/PRIVATE —— 归一化小写后再比较(0.1.8 事故根因:
+    # 大写 PUBLIC 与小写 "public" 不匹配 → 误走 private 分支烤 token)
+    REPO_VISIBILITY="$(printf '%s' "$REPO_VISIBILITY" | tr '[:upper:]' '[:lower:]')"
+    case "$REPO_VISIBILITY" in
+      public | private) break ;;
+      *) REPO_VISIBILITY=""; log "⚠ gh repo view 失败(第 ${_try} 次),重试…"; sleep 2 ;;
+    esac
+  done
+else
+  REPO_VISIBILITY="$DSH_REPO_VISIBILITY"
+fi
+if [ "$REPO_VISIBILITY" != "public" ] && [ "$REPO_VISIBILITY" != "private" ]; then
+  echo "无法确定仓库可见性(gh repo view 失败): ${REPO_VISIBILITY:-空}"
+  echo "可设置 DSH_REPO_VISIBILITY=public|private 强制覆盖后重跑"
+  exit 1
+fi
 FEED_AUTH=""
 if [ "$REPO_VISIBILITY" = "public" ]; then
   log "仓库可见性: public(公开) → feed 匿名访问,不写 token"
