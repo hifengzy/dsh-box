@@ -2,7 +2,7 @@
 "use strict";
 
 /**
- * check-dsh-narrow.js — 实测 dsh WebUI 在窄宽度下的可用性(校准 CONTENT_MIN)。
+ * check-dsh-narrow.js — 实测 dsh WebUI 在窄宽度下的可用性(校准 CONTENT_OPEN_MIN)。
  *
  * 启动真实 dsh 服务 → 用裸 BrowserWindow 逐档缩窄窗口 → 测每个宽度下
  * dsh 页面是否出现横向滚动(horizontal overflow)与视口几何。
@@ -65,6 +65,6 @@ app.whenReady().then(async () => {
 
   win.destroy();
   await server.stop();
-  console.log("[narrow] 完成。无横向滚动的最大实用宽度附近的数值用于校准 CONTENT_MIN。");
+  console.log("[narrow] 完成。无横向滚动的最大实用宽度附近的数值用于校准 CONTENT_OPEN_MIN。");
   app.quit();
 });

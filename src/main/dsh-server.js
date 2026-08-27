@@ -48,13 +48,25 @@ const DSH_BIN_JS = path.join("lib", "bin.js");
  * @returns {string|null}
  */
 function extractCrashReason(logFile) {
-  let raw;
+  // 只读文件尾部(最近 200KB):防日志无限累积(单次运行无限追加 + 跨重启
+  // 文件永不轮转)时整文件同步读阻塞主进程(对抗审查 P3-01)。
+  let tail;
   try {
-    raw = fs.readFileSync(logFile, "utf8");
+    const stat = fs.statSync(logFile);
+    const START = 200 * 1024;
+    let fd;
+    try {
+      fd = fs.openSync(logFile, "r");
+      const buf = Buffer.alloc(Math.min(stat.size, START));
+      fs.readSync(fd, buf, 0, buf.length, Math.max(0, stat.size - buf.length));
+      tail = buf.toString("utf8");
+    } finally {
+      if (fd !== undefined) fs.closeSync(fd);
+    }
   } catch {
     return null;
   }
-  const lines = raw.split("\n");
+  const lines = tail.split("\n");
   const prefer = lines.find((l) =>
     /^Error:\s*(?:duplicate|EADDR|Cannot find module|listen|failed|plugin tree|Unexpected|Syntax)/i.test(l)
   );
@@ -321,6 +333,13 @@ class DshServer extends EventEmitter {
       // → 平稳退出:不包装成启动超时、不广播错误(否则与 stopped 终态竞态,
       // 状态页可能定格在错误的失败文案并污染 lastError)。
       if (error && error.message === "服务已停止") return;
+      // 子进程提前退出:_waitReady 已读日志给出可读原因,原样上报即可,
+      // 不要再包装成「N 秒内未就绪」掩盖真实原因(对抗审查 P3-06)
+      if (error && /立即退出/.test(error.message)) {
+        error.code = "DSH_CRASHED";
+        this.emit("error", error);
+        throw error;
+      }
       error.code = "DSH_START_TIMEOUT";
       error.message = `dsh 服务在 ${START_TIMEOUT_MS / 1000}s 内未就绪(端口 ${this.port})。` +
         `请查看日志: ${this.logFile}\n原因: ${error.message}`;
@@ -481,7 +500,21 @@ class DshServer extends EventEmitter {
       return true;
     } catch (error) {
       const code = error?.cause?.code ?? error?.code ?? "";
-      return !(code === "ECONNREFUSED" || code === "ENOTFOUND");
+      // 明确「无服务」(连接拒绝/域名解析失败)→ 可用。
+      if (code === "ECONNREFUSED" || code === "ENOTFOUND") return false;
+      // 超时(防火墙 drop / 服务吞包等, AbortError 无 code)或其它错误:先
+      // 重探一次排除瞬时抖动(对抗审查 P3-05,避免 10 个候选全被假占用而
+      // 误报「端口均被占用」);仍无法确认 → 保守视为占用(未知比误用安全)。
+      if (!code) {
+        try {
+          await fetch(`http://127.0.0.1:${port}`, { signal: AbortSignal.timeout(800) });
+          return true;
+        } catch (retryError) {
+          const retryCode = retryError?.cause?.code ?? retryError?.code ?? "";
+          return !(retryCode === "ECONNREFUSED" || retryCode === "ENOTFOUND");
+        }
+      }
+      return true; // 其它明确错误(如权限/畸形响应)保守视为占用
     }
   }
 }

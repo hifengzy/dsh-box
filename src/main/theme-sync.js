@@ -37,6 +37,12 @@ function readThemePreference(settingsPath) {
     const raw = fs.readFileSync(settingsPath, "utf8");
     const match = raw.match(/^ui-theme:\s*\n\s*preference:\s*["']?(light|dark|system)["']?/m)
       ?? raw.match(/^settings\.theme:\s*\n\s*preference:\s*["']?(light|dark|system)["']?/m);
+    if (!match && /^ui-theme:/m.test(raw)) {
+      // P3-17②:解析依赖 block-style YAML 契约(ui-theme:\n  preference: …)。
+      // dsh 若改 flow 风格写在同一行会匹配不到 → 打一次警告留痕,避免
+      // 「跟随系统」静默失效时无处排查
+      console.warn("[theme-sync] settings.yaml 存在 ui-theme 但未按 block-style 解析到 preference");
+    }
     return match ? match[1] : null;
   } catch {
     return null;

@@ -18,6 +18,11 @@ const path = require("node:path");
 
 const BOX_SETTINGS_KEY = "dsh-box";
 
+/** 正则转义(P3-17⑥:key 拼进 RegExp 前必须转义,防构造注入/误匹配) */
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
  * 读取自定义域键的原始文本值(未找到返回 null)。
  * @param {string} dshHome DSH_HOME 目录
@@ -27,10 +32,10 @@ const BOX_SETTINGS_KEY = "dsh-box";
 function readSettingValue(dshHome, key) {
   try {
     const raw = fs.readFileSync(path.join(dshHome, "settings.yaml"), "utf8");
-    const dom = raw.match(new RegExp(`^${BOX_SETTINGS_KEY}:\\s*$`, "m"));
+    const dom = raw.match(new RegExp(`^${escapeRegExp(BOX_SETTINGS_KEY)}:\\s*$`, "m"));
     if (!dom) return null;
     const after = raw.slice(dom.index + dom[0].length);
-    const line = after.split("\n").find((l) => new RegExp(`^\\s+${key}:`).test(l));
+    const line = after.split("\n").find((l) => new RegExp(`^\\s+${escapeRegExp(key)}:`).test(l));
     if (!line) return null;
     const m = line.match(/:\s*(.*?)\s*$/);
     return m ? m[1].trim() : "";
@@ -98,7 +103,7 @@ function writeSettingValue(dshHome, key, value) {
       out.push(line);
       continue;
     }
-    if (new RegExp(`^[ \t]+${key}:`).test(line)) {
+    if (new RegExp(`^[ \t]+${escapeRegExp(key)}:`).test(line)) {
       out.push(`  ${key}: ${text}`);
       wrote = true;
       continue;

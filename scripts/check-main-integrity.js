@@ -52,7 +52,9 @@ const REQUIRED_MAIN_SNIPPETS = [
   ["通知设置 IPC", /ipcMain\.handle\(["']dsh:notify-settings["']/],
   ["通知事件流 watcher 启动", /createNotifyWatcher\s*\(/],
   ["升级回滚工具接入", /restoreDshBackup/],
-  ["升级启动自愈接入", /healInterruptedUpgrade/],
+  // 升级启动自愈接入:必须匹配「调用点」而非「标识符出现」——函数定义本身
+  // 也会命中旧正则,导致从未接线的死代码(修复 P1-3 时的漏网原因)通过检查
+  ["升级启动自愈接入", /^\s*await\s+healInterruptedUpgrade\(\)\s*;/m],
   ["升级自检(verifyDshBoot)接入", /verifyDshBoot/],
 ];
 

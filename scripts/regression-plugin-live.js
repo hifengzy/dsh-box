@@ -134,32 +134,42 @@ app.whenReady().then(async () => {
     if (!bridge) throw new Error("桥未注入(window.__dshBoxPluginBridge 缺失)");
     console.log("[1] 插件真实挂载 + 桥注入 ✓");
 
-    // ---------- 4a2. 无会话场景:插件 toggle 按钮 disabled,桥报告 active=false ----------
+    // ---------- 4a2. 桥状态与按钮 disabled 的一致性 ----------
     // dsh 侧栏 per-session:无活跃会话时插件禁用自身的 toggle 按钮(侧栏
-    // 无可挂载的会话)。首页会话是消息驱动的,自动化环境无法创建活跃会话
-    // (会真实调用模型)→ 真实页面上按钮 disabled + 桥 active=false +
-    // toggle 点击无效且不报错,DSH Box 顶栏按钮据此禁用。双向翻转需活跃
-    // 会话,列为实机验收项(见 README)。
-    const noSession = await win.webContents.executeJavaScript(`(() => {
+    // 无可挂载的会话),桥报告 active=false。注意:dsh 全新 home 首启会
+    // 自动创建活跃会话(0.1.1-rc.2 实测 active=true),「无会话」状态在
+    // 自动化环境不可控 —— 因此退化为一致性断言:
+    //   active=false ⇔ 按钮全 disabled(双向)
+    //   toggle 在 active=false 时不改变状态且不报错
+    // 「无会话 → disabled」的完整场景列为实机验收项(见 README)。
+    const sess = await win.webContents.executeJavaScript(`(() => {
       const btns = document.querySelectorAll('[data-dsh-toggle-cluster] button');
       const state = window.__dshBoxPluginBridge.state();
       return {
+        btnCount: btns.length,
         allDisabled: btns.length > 0 && [...btns].every((b) => b.disabled),
         active: state.active,
       };
     })()`);
-    if (!noSession.allDisabled) throw new Error("无会话时插件按钮应全部 disabled");
-    if (noSession.active !== false) throw new Error(`无会话时桥应报告 active=false,实际 ${noSession.active}`);
+    if (sess.btnCount === 0) throw new Error("cluster 按钮缺失(插件未渲染 toggle)");
+    // 一致性:active=false 时按钮必须 disabled;active=true 时按钮必须可用
+    if (!sess.active && !sess.allDisabled)
+      throw new Error(`active=false 时按钮应全部 disabled,实际 active=${sess.active} disabled=${sess.allDisabled}`);
+    if (sess.active && sess.allDisabled)
+      throw new Error(`active=true 时按钮不应 disabled,实际 active=${sess.active} disabled=${sess.allDisabled}`);
     const tNoop = await win.webContents.executeJavaScript(
       `window.__dshBoxPluginBridge.toggle('side')`
     );
-    if (!tNoop.ok) throw new Error(`无会话时 toggle 不应报错: ${JSON.stringify(tNoop)}`);
+    if (!tNoop.ok) throw new Error(`toggle 不应报错: ${JSON.stringify(tNoop)}`);
     const stNoop = await win.webContents.executeJavaScript(
       `window.__dshBoxPluginBridge.state()`
     );
-    if (stNoop.side !== false || stNoop.bottom !== false)
-      throw new Error(`无会话时状态不应变化: ${JSON.stringify(stNoop)}`);
-    console.log("[1b] 无会话:按钮 disabled + active=false + toggle 无效不报错 ✓");
+    // active=false 时 toggle 应无效果(状态不翻转);active=true 时允许翻转
+    if (!sess.active) {
+      if (stNoop.side !== false || stNoop.bottom !== false)
+        throw new Error(`active=false 时状态不应变化: ${JSON.stringify(stNoop)}`);
+    }
+    console.log(`[1b] 桥状态与按钮 disabled 一致(active=${sess.active}, allDisabled=${sess.allDisabled}, toggle 无报错) ✓`);
 
     // ---------- 4b. 隐藏 CSS 生效 ----------
     const hideState = await win.webContents.executeJavaScript(`(() => {
@@ -245,17 +255,23 @@ app.whenReady().then(async () => {
     console.log("[2b] 面板 tab strip 72px 预留回收:特征定位(哈希类无关)→ 内联归零 ✓");
 
     // ---------- 4c. 状态信号与上报 ----------
+    // active 随 dsh 会话状态(全新 home 首启为 true),只校验字段类型与
+    // 「上报与桥当前状态一致」,不硬编码 false(见 4a2 注释)。
     const st0 = await win.webContents.executeJavaScript(
       `window.__dshBoxPluginBridge.state()`
     );
     if (st0.installed !== true) throw new Error(`installed 应为 true,实际 ${st0.installed}`);
-    if (st0.active !== false) throw new Error(`无会话时 active 应为 false,实际 ${st0.active}`);
+    if (typeof st0.active !== "boolean") throw new Error(`active 应为布尔,实际 ${st0.active}`);
     await wait(WAIT_MS);
     if (panelReports.length === 0) throw new Error("桥未上报初始面板状态");
     const lastReport = panelReports[panelReports.length - 1];
-    if (lastReport.active !== false || lastReport.installed !== true)
-      throw new Error(`上报状态字段缺失: ${JSON.stringify(lastReport)}`);
-    console.log(`[3] 桥状态与上报正确(installed=true, active=false, side=${st0.side}, bottom=${st0.bottom}) ✓`);
+    if (lastReport.installed !== true || typeof lastReport.active !== "boolean")
+      throw new Error(`上报状态字段缺失/类型错: ${JSON.stringify(lastReport)}`);
+    if (lastReport.active !== st0.active)
+      throw new Error(`上报 active 与桥状态不一致: 上报 ${lastReport.active} vs 桥 ${st0.active}`);
+    if (typeof st0.side !== "boolean" || typeof st0.bottom !== "boolean")
+      throw new Error(`side/bottom 应为布尔: ${JSON.stringify(st0)}`);
+    console.log(`[3] 桥状态与上报正确(installed=true, active=${st0.active}, side=${st0.side}, bottom=${st0.bottom}) ✓`);
 
     // ---------- 4d. 未挂载防呆 ----------
     const unmounted = await win.webContents.executeJavaScript(`(() => {
