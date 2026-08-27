@@ -1242,6 +1242,8 @@ function STATUS_BRIDGE_JS_FN(width) {
         const onUp = () => {
           resizer.removeEventListener('pointermove', onMove);
           resizer.removeEventListener('pointerup', onUp);
+          resizer.removeEventListener('pointercancel', onUp);
+          resizer.removeEventListener('lostpointercapture', onUp);
           div.removeAttribute('data-dragging');
           document.body.removeAttribute('data-dshbox-status-dragging');
           try {
@@ -1252,6 +1254,11 @@ function STATUS_BRIDGE_JS_FN(width) {
         };
         resizer.addEventListener('pointermove', onMove);
         resizer.addEventListener('pointerup', onUp);
+        // 系统手势打断(触控板三指/Mission Control 等)会发 pointercancel /
+        // 丢失指针捕获而不发 pointerup —— 不复用 onUp 清理会让 data-dragging
+        // 残留、transition:none 永久生效(对抗审查 P2-B4)。
+        resizer.addEventListener('pointercancel', onUp);
+        resizer.addEventListener('lostpointercapture', onUp);
       });
       return div;
     };

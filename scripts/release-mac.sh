@@ -115,8 +115,10 @@ rm -rf "$APP_DIR" "$ZIP_DISK" "$ZIP_UPLOAD" "$DMG" "$YML"
 log "electron-builder --mac dir(不签名,CSC_IDENTITY_AUTO_DISCOVERY=false)"
 PUBLISH_ARGS=()
 [ -n "$FEED_AUTH" ] && PUBLISH_ARGS=(-c.publish.token="$FEED_AUTH")
-CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dir --arm64 "${PUBLISH_ARGS[@]}" \
-  2>&1 | grep -Ev "^\s*$" | tail -8
+# ${arr[@]+"${arr[@]}"} 兼容 macOS 自带 bash 3.2(set -u 下空数组直展报
+# unbound variable,对抗审查 P2-F1;bash ≥4.4 才有专门修复)
+CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dir --arm64 \
+  ${PUBLISH_ARGS[@]+"${PUBLISH_ARGS[@]}"} 2>&1 | grep -Ev "^\s*$" | tail -8
 [ -d "$APP" ] || { echo "打包失败:未生成 $APP"; exit 1; }
 
 # ---------- 1.5. 手动写入 app-update.yml(签名前!) ----------
@@ -188,12 +190,12 @@ xcrun stapler validate "$APP"
 log "复制为上传名 zip(连字符,与 yml 引用一致)"
 cp "$ZIP_DISK" "$ZIP_UPLOAD"
 
-# ---------- 5.5. dmg(electron-builder 自带 dmgbuild,含 Applications 快捷方式+引导背景) ----------
+# ---------- 5.5. dmg(electron-builder 自带 dmgbuild,Applications 快捷方式) ----------
 # 0.1.7 教训:手工 `hdiutil create -srcfolder "$APP"` 只打包 .app,丢了
-# build.dmg.contents 的 Applications 快捷方式与背景图(用户实报:dmg 打开只有
-# App icon)。改用 electron-builder 同源的 dmgbuild CLI(自包含 python bundle),
-# 输入**已签名** APP + settings.json(两图标槽位 + 背景图 + 窗口尺寸),
-# 产出自带 .DS_Store(图标布局 + 背景)的正确 dmg。
+# build.dmg.contents 的 Applications 快捷方式。改用 electron-builder 同源的
+# dmgbuild CLI(自包含 python bundle),输入**已签名** APP。
+# 0.1.9 起按用户要求**不再带背景图**:Finder 用系统默认窗口背景,卷内仅
+# DSH Box.app + Applications 快捷方式两个图标(去掉 background 字段即可)。
 DMGBUILD_DIR="${DMGBUILD_DIR:-$(ls -d "$HOME/Library/Caches/electron-builder/dmg-builder@1.2.5"/dmgbuild-bundle-* 2>/dev/null | head -1)}"
 if [ -z "$DMGBUILD_DIR" ] || [ ! -x "$DMGBUILD_DIR/dmgbuild" ]; then
   echo "缺少 dmgbuild bundle(首次使用先跑一次: CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dmg 触发下载)"
@@ -201,12 +203,11 @@ if [ -z "$DMGBUILD_DIR" ] || [ ! -x "$DMGBUILD_DIR/dmgbuild" ]; then
 fi
 DMGBUILD="$DMGBUILD_DIR/dmgbuild"
 DMG_SETTINGS="$DIST/dmg-settings-$VER.json"
-log "dmgbuild 制作 dmg(Applications 快捷方式 + 背景图 + 图标布局)"
+log "dmgbuild 制作 dmg(Applications 快捷方式,无背景图)"
 cat > "$DMG_SETTINGS" <<EOF
 {
   "title": "$VOLNAME",
   "icon-size": 80,
-  "background": "$ROOT/assets/dmg-background.png",
   "window": { "position": { "x": 400, "y": 200 }, "size": { "width": 540, "height": 380 } },
   "contents": [
     { "path": "$APP", "x": 130, "y": 220, "name": "DSH Box.app", "type": "file" },

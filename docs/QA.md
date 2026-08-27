@@ -18,13 +18,13 @@ DSH Box 是 DeepSeek Harness 的 macOS 桌面壳(Electron + WebContentsView 架�
 - **数据隔离**:用户数据在 `~/Library/Application Support/DSH Box/dsh-home`,与用户 CLI
   `~/.dsh` 完全隔离。
 - **发布链路**:release-mac.sh(打包→签名→公证→stapler→zip/dmg→feed),仓库公开后
-  自动无 token 模式,dmg 走 dmgbuild(Applications 快捷方式 + 引导背景)。
+  自动无 token 模式,dmg 走 dmgbuild(Applications 快捷方式,无背景图)。
 
 ### 1.3 质量基线
 - 每次改动 `src/main/*.js` 或 `plugin-manager.js` 后必须跑 `node scripts/check-main-integrity.js`。
 - 功能改动必须跑全量 `npm run test:regression`,全部 PASS(0 项失败)才可进入发布。
 - 发布产物(0.1.8+):包内 `app-update.yml` **不得含 token**;dmg 必须含
-  `Applications -> /Applications` 链接与背景图。
+  `Applications -> /Applications` 链接(无背景图)。
 
 ## 2. 测试环境准备
 
@@ -58,7 +58,7 @@ DSH Box 是 DeepSeek Harness 的 macOS 桌面壳(Electron + WebContentsView 架�
 |---|---|---|---|---|---|
 | B-01 | 启动/就绪 | 启动应用,观察状态页 | 状态机 starting→ready;状态页显示当前端口/版本 | regression-restart | P1 |
 | B-02 | 手动停止/启动 | 状态页「停止」→「启动」 | 停止后显示「未运行」,加载页/状态页同步;再次启动恢复 | regression-restart | P1 |
-| B-03 | 崩溃自愈 | kill dsh 子进程 | 自动重启服务,内容区重载,不白屏 | regression-crash-reason/feedback | P1 |
+| B-03 | 崩溃自愈 | kill dsh 子进程 | **错误反馈 + 提供「重试」入口**(无自动重启):内容区切回加载页错误态,点击重试恢复;不白屏 | regression-crash-reason/feedback | P1 |
 | B-04 | 崩溃反馈 | 制造崩溃(可注入) | 出现错误态 + 「重试」入口,重试可恢复 | regression-crash-feedback | P1 |
 | B-05 | 启动失败根因 | 端口被假服务占用等 | 错误态显示可读的失败原因(非裸报错) | regression-crash-reason | P1 |
 
@@ -112,7 +112,7 @@ DSH Box 是 DeepSeek Harness 的 macOS 桌面壳(Electron + WebContentsView 架�
 
 | 编号 | 用例 | 步骤 | 预期 | 自动回归 | 优先级 |
 |---|---|---|---|---|---|
-| G-01 | 启动静默检查 | 启动 App(有新版时) | 静默查出最新版,顶栏出现「新版本」按钮;查询失败**按钮保持隐藏**(无幽灵按钮) | regression-topbar[7]/app-updater | P1 |
+| G-01 | 启动静默检查 | 启动 App(有新版时) | 静默查出最新版 → 顶栏出现「新版本」按钮;**查无新版本 → 按钮隐藏**(无幽灵按钮);**检查失败 → error 态显示「重试」入口**(与 G-04 一致,可重查) | regression-topbar[7]/app-updater | P1 |
 | G-02 | 点击下载即时反馈(0.1.6) | 点「新版本」 | **立即**显示「下载中 0%」+ 扫光动画;真实进度到达后变「下载中 n%」 | regression-topbar[7] | P1 |
 | G-03 | 下载完成/安装 | 等下载完成 → 点「安装」 | 「安装」反白涂满 → 退出+替换+自动重启到新版 | regression-app-update-live | P1 |
 | G-04 | 失败重试 | 断网/feed 异常时检查或下载 | error 态「重试」:检查失败→重新检查;下载失败→重新下载 | regression-app-updater[3d-3f] | P1 |
@@ -147,7 +147,7 @@ DSH Box 是 DeepSeek Harness 的 macOS 桌面壳(Electron + WebContentsView 架�
 
 | 编号 | 用例 | 步骤 | 预期 | 自动回归 | 优先级 |
 |---|---|---|---|---|---|
-| K-01 | DMG 引导布局(0.1.8) | 挂载 0.1.8 dmg | 窗口 540×380:背景深色渐变 + 顶部「DSH Box」+ **引导箭头**(App 图标 → Applications)+ 底部「拖入 Applications 完成安装」;**Applications 快捷方式可见可拖** | 发布验证脚本(手工,见 §6) | P1 |
+| K-01 | DMG 布局(0.1.9,无背景) | 挂载新版 dmg | 窗口 540×380(系统默认背景):仅 **DSH Box.app + Applications 快捷方式**两个图标(80px,左 130/右 410);无背景图/无引导箭头;**Applications 快捷方式可见可拖** | 发布验证脚本(手工,见 §6) | P1 |
 | K-02 | 包内无 token(0.1.7+) | 解压 zip 读 `Contents/Resources/app-update.yml` | 仅 owner/repo/provider/updaterCacheDirName,**无 token 行** | 发布验证 | P1 |
 | K-03 | feed 完整性 | 比对 latest-mac.yml sha512 与 zip 实际值 | 一致;url 为纯文件名 | 发布验证 | P1 |
 | K-04 | 签名公证 | 全新下载安装首启 | Gatekeeper 无拦截(spctl accepted,Notarized Developer ID) | 发布验证 | P1 |
@@ -204,8 +204,9 @@ DSH Box 是 DeepSeek Harness 的 macOS 桌面壳(Electron + WebContentsView 架�
    (曾有解析镜像锁死历史,已修复,勿回归)。
 5. **插件更新编排**:成功时服务自动重启一次、面板注入保持;失败**不动服务**直接报错
    (0.1.5 修复)。「更新中…」短暂显示后页面刷新 = 旧缺陷,回归时留意。
-6. **DMG 内容**:发布版 dmg 必须含 Applications 链接与背景;若手工测试 `hdiutil
-   create -srcfolder` 之类自制 dmg,不含引导(仅用于临时验证,勿误当发布产物)。
+6. **DMG 内容**:发布版 dmg 必须含 Applications 快捷方式;**无背景图**(用户指定,0.1.9 起);
+   若手工测试 `hdiutil` create -srcfolder 之类自制 dmg,不含 Applications 快捷方式
+   (仅用于临时验证,勿误当发布产物)。
 7. **检查更新弹窗**:公开仓库下无新版 → 「当前没有可用的更新」;若在私有仓库未公开前
    的旧包上点检查会报「检查更新失败」(过渡态,非缺陷)。
 
@@ -215,7 +216,7 @@ DSH Box 是 DeepSeek Harness 的 macOS 桌面壳(Electron + WebContentsView 架�
 - [ ] `npm run test:regression` 全部 PASS(0 失败)
 - [ ] 已用打包产物(非 dev)走通 G-03 应用内更新闭环(0.1.7→新版)
 - [ ] 全新 dmg 安装首启:Gatekeeper 无拦截;首次自动展开状态面板
-- [ ] 挂载 dmg:Applications 快捷方式 + 引导箭头 + 背景图存在
+- [ ] 挂载 dmg:Applications 快捷方式存在、无背景图(仅两个图标)
 - [ ] 解压 zip 校验:app-update.yml **无 token**;latest-mac.yml sha512 与 zip 一致
 - [ ] releases/latest 指向新版本;资产 zip/dmg/yml 齐全、大小与本地一致
 - [ ] 公开仓库匿名验证:无 token 拉 get feed 200

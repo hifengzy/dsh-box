@@ -22,7 +22,6 @@
     "test:regression": "node scripts/check-main-integrity.js && node scripts/regression-theme-sync.js && node scripts/regression-notify-watch.js && node scripts/regression-app-updater.js && node scripts/regression-restart.js && node scripts/regression-sidebar-layout.js && node scripts/regression-url-guard.js && node scripts/regression-crash-reason.js && node scripts/regression-toolchain.js && electron scripts/regression-loading-visibility.js --no-sandbox && electron scripts/regression-reopen.js --no-sandbox && electron scripts/regression-port-conflict.js --no-sandbox && electron scripts/regression-crash-feedback.js --no-sandbox && electron scripts/regression-tray.js --no-sandbox && electron scripts/regression-menu.js --no-sandbox && electron scripts/regression-topbar.js --no-sandbox && electron scripts/regression-status.js --no-sandbox && electron scripts/regression-status-inline.js --no-sandbox && electron scripts/regression-status-refresh.js --no-sandbox && electron scripts/regression-first-launch.js --no-sandbox && DSH_FIRST_LAUNCH_SEED=1 electron scripts/regression-first-launch.js --no-sandbox && electron scripts/regression-upgrade.js --no-sandbox && electron scripts/regression-plugin-live.js --no-sandbox && electron scripts/regression-market-live.js --no-sandbox",
     "make-icon": "node scripts/make-app-icon.mjs",
     "make-tray-icon": "node scripts/make-tray-icon.mjs",
-    "make-dmg-bg": "swift scripts/make-dmg-background.swift",
     "dist": "electron-builder --mac",
     "dist:dmg": "electron-builder --mac dmg",
     "dist:dir": "electron-builder --mac dir"
@@ -75,7 +74,6 @@
     },
     "dmg": {
       "iconSize": 80,
-      "background": "dmg-background.png",
       "contents": [
         {
           "x": 130,

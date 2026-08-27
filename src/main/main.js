@@ -325,6 +325,18 @@ function main() {
         }
       }
     });
+    // did-navigate 兜底(对抗审查 P2-D3):服务端 30x 重定向不触发 will-navigate,
+    // 重定向目标可能把内容视图导出同源 —— 主框架每次导航完成都校验一次,
+    // 异源直接强制回跳 WebUI。file://(加载页/错误页)是预期内容,放行。
+    wc.on("did-navigate", (_event, url) => {
+      const serverUrl = server ? server.url : "";
+      if (!serverUrl) return;
+      if (url.startsWith("file://")) return;
+      if (!isServerOrigin(url, serverUrl)) {
+        console.warn(`[app] did-navigate 非服务同源(${url}),强制回跳 WebUI`);
+        wc.loadURL(serverUrl);
+      }
+    });
 
     mainWindow.on("closed", () => {
       mainWindow = null;
@@ -1375,7 +1387,7 @@ function main() {
   // 应用内升级捆绑的 dsh 到指定版本(单飞:同时只允许一个升级任务)
   ipcMain.handle("dsh:upgrade", async (_event, version) => {
     if (upgrading) return { ok: false, error: "已有升级任务进行中,请稍候" };
-    if (typeof version !== "string" || !/^\d+\.\d+\.\d+(?:[-+].*)?$/.test(version)) {
+    if (typeof version !== "string" || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) {
       return { ok: false, error: "版本号格式不正确" };
     }
     upgrading = true;
@@ -1398,7 +1410,7 @@ function main() {
   // 安装(version=null) / 更新(version=最新版):单飞,成功后自动重启服务
   ipcMain.handle("dsh:plugin-install", async (_event, version) => {
     if (pluginInstalling) return { ok: false, error: "已有插件安装/更新任务进行中,请稍候" };
-    if (version != null && (typeof version !== "string" || !/^\d+\.\d+\.\d+(?:[-+].*)?$/.test(version))) {
+    if (version != null && (typeof version !== "string" || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version))) {
       return { ok: false, error: "版本号格式不正确" };
     }
     pluginInstalling = true;
@@ -1457,7 +1469,7 @@ function main() {
   // 安装(version=null) / 更新(version=最新版):单飞,成功后自动重启服务
   ipcMain.handle("dsh:market-install", async (_event, version) => {
     if (marketInstalling) return { ok: false, error: "已有插件市场安装/更新任务进行中,请稍候" };
-    if (version != null && (typeof version !== "string" || !/^\d+\.\d+\.\d+(?:[-+].*)?$/.test(version))) {
+    if (version != null && (typeof version !== "string" || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version))) {
       return { ok: false, error: "版本号格式不正确" };
     }
     marketInstalling = true;
