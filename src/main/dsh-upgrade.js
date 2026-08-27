@@ -59,18 +59,33 @@ async function downloadTarball(url) {
   return Buffer.from(await res.arrayBuffer());
 }
 
-/** 清理旧备份,保留最近一份(手动回滚用) */
-function pruneBackups(parentDir) {
+/** 清理备份与坏目录,保留最近 keep 份(P2-C3:broken 目录不再永久累积) */
+function pruneBackups(parentDir, keep = 1) {
   try {
-    const backups = fs
+    const names = fs
       .readdirSync(parentDir)
-      .filter((name) => /^\.dsh-.*-bak-\d+$/.test(name))
+      .filter((name) => /^\.dsh-(?:.*-bak-|broken-)\d+$/.test(name))
       .sort();
-    for (const name of backups.slice(0, Math.max(0, backups.length - 1))) {
+    for (const name of names.slice(0, Math.max(0, names.length - keep))) {
       fs.rmSync(path.join(parentDir, name), { recursive: true, force: true });
     }
   } catch {
     /* 清理失败不影响主流程 */
+  }
+}
+
+/** 列出全部升级备份,新→旧(自愈可迭代多份;findNewestBackup 只取最新) */
+function findBackups(pkgDir) {
+  try {
+    const parentDir = path.dirname(pkgDir);
+    return fs
+      .readdirSync(parentDir)
+      .filter((name) => /^\.dsh-.*-bak-\d+$/.test(name))
+      .sort()
+      .reverse()
+      .map((name) => path.join(parentDir, name));
+  } catch {
+    return [];
   }
 }
 
@@ -367,6 +382,7 @@ async function upgradeDsh(
       }
       if (!fs.existsSync(path.join(pkgDir, "package.json"))) {
         fs.renameSync(backup, pkgDir);
+        pruneBackups(parentDir); // 回滚成功:顺带节流清理旧备份/坏目录
       }
     } catch {
       /* 回滚失败时保留 .bak 目录,不丢数据 */
@@ -382,6 +398,7 @@ async function upgradeDsh(
   const probe = await verifyImpl({ pkgDir, dshHome: path.join(base, "boot-probe"), log });
   if (!probe.ok) {
     const rollback = restoreDshBackup(pkgDir, backup);
+    if (rollback.ok) pruneBackups(parentDir); // 回滚成功即节流清理(P2-C3)
     fs.rmSync(staging, { recursive: true, force: true });
     return {
       ok: false,
@@ -403,4 +420,6 @@ module.exports = {
   restoreDshBackup,
   verifyDshBoot: defaultVerifyBoot,
   findNewestBackup,
+  findBackups,
+  pruneBackups,
 };

@@ -28,14 +28,14 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
-const { DshServer, DEFAULT_PORT } = require("./dsh-server");
+const { DshServer, DEFAULT_PORT, bundledDshPath } = require("./dsh-server");
 const { isServerOrigin, isTrustedOrigin } = require("./url-guard");
 const { createTray } = require("./tray");
 const { createAppMenu } = require("./menu");
 const { showAboutWindow } = require("./about");
 const { getRuntimeDshInfo } = require("./dsh-version");
 const npmCheck = require("./npm-check");
-const { upgradeDsh, restoreDshBackup, verifyDshBoot, findNewestBackup } = require("./dsh-upgrade");
+const { upgradeDsh, restoreDshBackup, verifyDshBoot, findNewestBackup, findBackups, pruneBackups } = require("./dsh-upgrade");
 const { computeSidebar, SIDEBAR_GAP } = require("./sidebar-layout");
 const { SIDEBAR_ANIM_MS, easeSidebar } = require("./sidebar-anim");
 const pluginManager = require("./plugin-manager");
@@ -345,6 +345,13 @@ function main() {
       statusView = null;
       tooltipView = null;
       sidebarOpen = false;
+      // 新窗口语义初值:注入面板开合/桥故障标记/插件面板缓存/错误/端口迁移
+      // 全部复位,否则关窗重开(activate)后首击按旧状态处理(对抗审查 P2-A4)
+      statusPanelOpen = false;
+      statusInjectBroken = false;
+      lastPluginPanels = null;
+      lastError = null;
+      portMovedFrom = null;
     });
   }
 
@@ -571,29 +578,80 @@ function main() {
   // 升级的「下载+闭包安装」阶段不触碰线上 dsh,「原子替换」窗口毫秒级;但历史
   // 版本(根树整树 install)可能留下「换上新版但闭包缺失」的坏态。启动时冒烟
   // 检查当前 dsh 能否运行(与真实启动同运行时跑 dsh --version),失败则自动从
-  // 最新备份恢复,保证 App 永远能回到上次可用的版本。
+  // 备份恢复,保证 App 永远能回到上次可用的版本。
+  // 自愈只针对 App 内置包(用户 DSH_BIN/全局 dsh 是显式意图,不干预);
+  // 备份可迭代多份(新旧→),`pkgDir` 被 kill -9 卡在双 rename 窗口而缺失时
+  // 同样直接恢复(对抗审查 P1-3 / P2-C3)。
+  const RESTORE_TRIES = 3;
   async function healInterruptedUpgrade() {
     try {
-      const info = getRuntimeDshInfo();
-      if (!info || !info.packageDir) return;
-      const probeHome = path.join(app.getPath("userData"), "boot-probe");
-      const smoker = async (pkgDir) =>
-        verifyDshBoot({ pkgDir, dshHome: probeHome, log: console }).catch(() => ({ ok: false, error: "自检进程异常" }));
-      const first = await smoker(info.packageDir);
-      if (first.ok) return; // 冒烟通过,无需自愈
-      if (!fs.existsSync(path.join(info.packageDir, "lib", "bin.js"))) {
-        console.warn("[app] 自愈: dsh 入口缺失(升级中断残留坏态)");
+      // 定位 App 内置 dsh 包根(bundledDshPath = 内置入口;向上找 package.json),
+      // 不依赖 resolveDsh —— 内置目录缺失时 resolveDsh 会落到用户全局 PATH,
+      // 拿到的 packageDir 不是内置包,自愈会扑空。
+      const bundled = bundledDshPath();
+      if (!bundled) return;
+      let pkgDir = null;
+      {
+        let dir = path.dirname(bundled);
+        for (let i = 0; i < 8; i++) {
+          if (fs.existsSync(path.join(dir, "package.json"))) {
+            pkgDir = dir;
+            break;
+          }
+          const parent = path.dirname(dir);
+          if (parent === dir) break;
+          dir = parent;
+        }
       }
-      const backup = findNewestBackup(info.packageDir);
-      if (!backup) {
-        console.warn("[app] 自愈: dsh 无法启动且无备份可恢复(继续,由加载页展示错误)");
+      if (!pkgDir) return;
+      const probeHome = path.join(app.getPath("userData"), "boot-probe");
+      const smoker = async (dir) =>
+        verifyDshBoot({ pkgDir: dir, dshHome: probeHome, log: console }).catch(() => ({ ok: false, error: "自检进程异常" }));
+
+      // 1) 包目录缺失(双 rename 窗口被 kill -9)→ 直接从最新备份恢复
+      if (!fs.existsSync(path.join(pkgDir, "lib", "bin.js"))) {
+        const backups = findBackups(pkgDir);
+        if (!backups.length) {
+          console.warn("[app] 自愈: 内置 dsh 包缺失且无备份可恢复(由启动流程报错)");
+          return;
+        }
+        for (const backup of backups.slice(0, RESTORE_TRIES)) {
+          const rb = restoreDshBackup(pkgDir, backup);
+          if (!rb.ok) {
+            console.warn(`[app] 自愈: 恢复备份失败(${rb.error}),尝试更早备份…`);
+            continue;
+          }
+          const probe = await smoker(pkgDir);
+          if (probe.ok) {
+            console.log(`[app] 自愈: 内置 dsh 包缺失,已从备份恢复 → ${backup}`);
+            pruneBackups(path.dirname(pkgDir)); // 恢复成功即节流清理(P2-C3)
+            return;
+          }
+        }
+        console.error("[app] 自愈: 内置 dsh 包缺失,所有备份恢复后仍无法启动");
         return;
       }
-      const rb = restoreDshBackup(info.packageDir, backup);
-      console.log(`[app] 自愈: dsh 自检失败(${first.error}),已从备份恢复 → ${rb.ok ? backup : rb.error || "失败"}`);
-      if (!rb.ok) return;
-      const second = await smoker(info.packageDir);
-      if (!second.ok) console.error("[app] 自愈后 dsh 仍无法启动:", second.error);
+
+      // 2) 包在位但冒烟失败(半截包)→ 逐份备份恢复 + 冒烟
+      const first = await smoker(pkgDir);
+      if (first.ok) return; // 冒烟通过,无需自愈
+      const backups = findBackups(pkgDir);
+      if (!backups.length) {
+        console.warn("[app] 自愈: dsh 自检失败且无备份可恢复(继续,由加载页展示错误)");
+        return;
+      }
+      for (const backup of backups.slice(0, RESTORE_TRIES)) {
+        const rb = restoreDshBackup(pkgDir, backup);
+        if (!rb.ok) continue;
+        const second = await smoker(pkgDir);
+        if (second.ok) {
+          console.log(`[app] 自愈: dsh 自检失败(${first.error}),已从备份恢复 → ${backup}`);
+          pruneBackups(path.dirname(pkgDir)); // 恢复成功即节流清理(P2-C3)
+          return;
+        }
+        console.warn(`[app] 自愈: 备份 ${backup} 恢复后仍冒烟失败,尝试更早备份…`);
+      }
+      console.error("[app] 自愈: 所有备份恢复后 dsh 仍无法启动");
     } catch (error) {
       console.warn("[app] 启动自愈检查跳过:", error.message);
     }
@@ -609,68 +667,97 @@ function main() {
     return /EADDRINUSE|address already in use/i.test(msg);
   }
 
-  async function startServer() {
-    if (!server) {
-      server = new DshServer({ port });
-      wireServerEvents();
-    }
-    if (server.ready || server.child) return;
-    lastError = null;
-    serviceState = "starting";
-    portMovedFrom = null;
-    broadcastStatus({ state: "starting", message: "正在启动 dsh 服务…" });
+  // 启动中防抖(对抗审查 P2-A2):startServer/restartServer/retry 并发调用时,
+  // 只允许一个启动流程,后续调用复用同一 promise —— 不再并发双重 spawn、
+  // 不再因竞态无谓进入候选端口循环触发「端口均被占用」误报。
+  let serverStartPromise = null;
 
-    const logDir = path.join(app.getPath("userData"), "logs");
-    fs.mkdirSync(logDir, { recursive: true });
-    // DSH_HOME 默认用 App 自己的目录,与浏览器 WebUI 的 ~/.dsh 隔离:
-    // 两个 dsh 服务共享同一会话会互相刷新状态,导致命令面板等
-    // 会话级弹层"打开即消失"。设 DSH_HOME 可覆盖(共享时勿双开同会话)。
-    const dshHome = process.env.DSH_HOME || path.join(app.getPath("userData"), "dsh-home");
-
-    for (let attempt = 0; attempt < MAX_PORT_SKIP; attempt++) {
-      const cand = port + attempt;
-      try {
-        // 先清本 App 的孤儿残留(只认 PPID=1 + 带 --no-open 的签名),再探活
-        await server.reapStaleServers(cand);
-        if (await server.probePort(cand)) {
-          console.log(`[app] 端口 ${cand} 已被其他服务占用,DSH Box 自动改用端口 ${cand + 1}`);
-          broadcastStatus({
-            state: "starting",
-            message: `端口 ${cand} 已被其他服务占用,DSH Box 将改用端口 ${cand + 1}`,
-          });
-          continue;
-        }
-        await server.start({ port: cand, dshHome, logDir }); // dshBin 由 DshServer 自动解析
-        if (attempt > 0) {
-          portMovedFrom = port; // 端口迁移过:状态页如实展示(原始端口 → 现端口)
-          console.log(`[app] dsh 服务端口已从 ${port} 迁移到 ${cand}(原端口被占用)`);
-        }
-        return;
-      } catch (error) {
-        // 竞态占用(spawn 后才发现被占):换下一候选;先探活确认,避免把
-        // 真实启动失败(EADDRINUSE 之外的原因)误判为端口冲突
-        const nowBusy = await server.probePort(cand).catch(() => false);
-        if (nowBusy || isPortConflict(error, cand)) {
-          console.log(`[app] 端口 ${cand} 启动 dsh 失败(端口被其他服务占用),自动改用端口 ${cand + 1}`);
-          continue;
-        }
-        // 真实启动失败:错误事件已由 server 广播;这里吞掉,避免 unhandled rejection
-        if (error.code !== "DSH_NOT_FOUND" && error.code !== "DSH_START_TIMEOUT") {
-          console.error("[app] startServer 异常:", error);
-        }
-        return;
+  /** 启动 dsh 服务(并发安全:已在运行或启动中时直接复用) */
+  function startServer() {
+    if (server && (server.ready || server.child)) return Promise.resolve(server.url);
+    if (serverStartPromise) return serverStartPromise; // 启动中 → 复用同一 promise
+    serverStartPromise = (async () => {
+      if (!server) {
+        server = new DshServer({ port });
+        wireServerEvents();
       }
-    }
-    // 候选全部被占:进入错误态(与既有错误展示同一路径)
-    const allBusy = `端口 ${port} ~ ${port + MAX_PORT_SKIP - 1} 均被其他服务占用,DSH Box 无法启动 dsh 服务。请先关闭占用这些端口的程序后重试。`;
-    lastError = allBusy;
-    serviceState = "error";
-    broadcastStatus({ state: "error", message: allBusy });
+      lastError = null;
+      serviceState = "starting";
+      portMovedFrom = null;
+      broadcastStatus({ state: "starting", message: "正在启动 dsh 服务…" });
+
+      const logDir = path.join(app.getPath("userData"), "logs");
+      fs.mkdirSync(logDir, { recursive: true });
+      // DSH_HOME 默认用 App 自己的目录,与浏览器 WebUI 的 ~/.dsh 隔离:
+      // 两个 dsh 服务共享同一会话会互相刷新状态,导致命令面板等
+      // 会话级弹层"打开即消失"。设 DSH_HOME 可覆盖(共享时勿双开同会话)。
+      const dshHome = process.env.DSH_HOME || path.join(app.getPath("userData"), "dsh-home");
+
+      for (let attempt = 0; attempt < MAX_PORT_SKIP; attempt++) {
+        const cand = port + attempt;
+        try {
+          // 先清本 App 的孤儿残留(只认 PPID=1 + 带 --no-open 的签名),再探活
+          await server.reapStaleServers(cand);
+          if (await server.probePort(cand)) {
+            console.log(`[app] 端口 ${cand} 已被其他服务占用,DSH Box 自动改用端口 ${cand + 1}`);
+            broadcastStatus({
+              state: "starting",
+              message: `端口 ${cand} 已被其他服务占用,DSH Box 将改用端口 ${cand + 1}`,
+            });
+            continue;
+          }
+          await server.start({ port: cand, dshHome, logDir }); // dshBin 由 DshServer 自动解析
+          if (attempt > 0) {
+            portMovedFrom = port; // 端口迁移过:状态页如实展示(原始端口 → 现端口)
+            console.log(`[app] dsh 服务端口已从 ${port} 迁移到 ${cand}(原端口被占用)`);
+          }
+          return server.url; // serviceState=ready 由 server.on("ready") 设置
+        } catch (error) {
+          // 竞态占用(spawn 后才发现被占):换下一候选;先探活确认,避免把
+          // 真实启动失败(EADDRINUSE 之外的原因)误判为端口冲突
+          const nowBusy = await server.probePort(cand).catch(() => false);
+          if (nowBusy || isPortConflict(error, cand)) {
+            console.log(`[app] 端口 ${cand} 启动 dsh 失败(端口被其他服务占用),自动改用端口 ${cand + 1}`);
+            continue;
+          }
+          // 真实启动失败:错误事件已由 server 广播;这里吞掉,避免 unhandled rejection
+          if (error.code !== "DSH_NOT_FOUND" && error.code !== "DSH_START_TIMEOUT") {
+            console.error("[app] startServer 异常:", error);
+          }
+          return undefined;
+        }
+      }
+      // 候选全部被占:进入错误态(与既有错误展示同一路径)
+      const allBusy = `端口 ${port} ~ ${port + MAX_PORT_SKIP - 1} 均被其他服务占用,DSH Box 无法启动 dsh 服务。请先关闭占用这些端口的程序后重试。`;
+      lastError = allBusy;
+      serviceState = "error";
+      broadcastStatus({ state: "error", message: allBusy });
+    })().finally(() => {
+      serverStartPromise = null;
+    });
+    return serverStartPromise;
   }
 
   async function restartServer() {
     if (server) await server.stop();
     await startServer();
+  }
+
+  /** 等待内容视图加载完成(重启后 WebUI 重载完毕);超时兜底不阻塞。
+   *  插件/市场安装后 restartServer 只等 dsh 进程就绪,ready 事件的 loadURL
+   *  是 fire-and-forget —— 结果回填若写在旧 document 上会被新页面冲掉
+   *  (对抗审查 P2-B1),这里等新页面 did-finish-load 后再返回结果。 */
+  async function waitContentReload(timeoutMs = 10_000) {
+    if (!contentView || contentView.webContents.isDestroyed()) return;
+    const wc = contentView.webContents;
+    if (!wc.isLoading()) return;
+    await new Promise((resolve) => {
+      const timer = setTimeout(resolve, timeoutMs);
+      wc.once("did-finish-load", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
   }
 
   // ---------- 右侧「dsh 服务与版本」面板(顶栏按钮/菜单控制开关) ----------
@@ -1096,6 +1183,7 @@ function main() {
       if (wasReady) {
         try {
           await restartServer();
+          await waitContentReload(); // 结果回填等新页面就绪,不再写旧 document(P2-B1)
         } catch (error) {
           console.error("[app] 侧边栏插件安装后重启服务失败:", error);
           return {
@@ -1143,6 +1231,7 @@ function main() {
       if (wasReady) {
         try {
           await restartServer();
+          await waitContentReload(); // 结果回填等新页面就绪(P2-B1)
         } catch (error) {
           console.error("[app] 插件市场安装后重启服务失败:", error);
           return {
@@ -1773,9 +1862,21 @@ function main() {
     if (!isMac) app.quit();
   });
 
-  app.on("will-quit", () => {
-    // 尽力清理:停掉通知事件流 watcher 与 dsh 子进程(SIGTERM);进程退出后由 OS 兜底
+  // 退出清理标记:防止 preventDefault→stop→quit 的循环重入
+  let quitCleanupDone = false;
+  app.on("will-quit", (event) => {
+    // 尽力清理:停掉通知事件流 watcher;dsh 子进程必须等真正退出(stop 内部
+    // SIGTERM→5s 宽限→SIGKILL),否则 Squirrel 替换 .app 时旧 dsh 变孤儿占
+    // 端口(对抗审查 P2-C4)。preventDefault + 清理完成后置位再 quit。
     stopNotifyWatcher();
-    if (server) server.stop().catch(() => {});
+    if (quitCleanupDone || !server || !server.child) return; // 无 dsh 或已清理 → 放行
+    event.preventDefault();
+    server
+      .stop()
+      .catch(() => {})
+      .finally(() => {
+        quitCleanupDone = true;
+        app.quit();
+      });
   });
 }
