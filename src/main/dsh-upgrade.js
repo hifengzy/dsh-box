@@ -382,6 +382,7 @@ async function upgradeDsh(
       }
       if (!fs.existsSync(path.join(pkgDir, "package.json"))) {
         fs.renameSync(backup, pkgDir);
+        pruneBackups(parentDir); // 回滚成功:顺带节流清理旧备份/坏目录
       }
     } catch {
       /* 回滚失败时保留 .bak 目录,不丢数据 */
@@ -397,6 +398,7 @@ async function upgradeDsh(
   const probe = await verifyImpl({ pkgDir, dshHome: path.join(base, "boot-probe"), log });
   if (!probe.ok) {
     const rollback = restoreDshBackup(pkgDir, backup);
+    if (rollback.ok) pruneBackups(parentDir); // 回滚成功即节流清理(P2-C3)
     fs.rmSync(staging, { recursive: true, force: true });
     return {
       ok: false,
@@ -419,4 +421,5 @@ module.exports = {
   verifyDshBoot: defaultVerifyBoot,
   findNewestBackup,
   findBackups,
+  pruneBackups,
 };

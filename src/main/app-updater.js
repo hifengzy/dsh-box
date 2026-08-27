@@ -38,6 +38,9 @@ const UPDATE_STATES = [
   "error",       // 检查/下载失败——「重试」
 ];
 
+/** 下载停滞阈值(0% 停留超过该时长自动转 error,对抗审查 P2-C5) */
+const DOWNLOAD_STALL_MS = 90_000;
+
 /**
  * 创建更新状态机。
  * @param {object} opts
@@ -47,7 +50,7 @@ const UPDATE_STATES = [
  * @param {(msg: string) => void} [opts.log=console.log] 日志
  * @returns {object} 状态机实例(init/checkForUpdates/startDownload/installUpdate/getState/resetError)
  */
-function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = console.log }) {
+function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = console.log, stallMs: stallMsOpt }) {
   // log 入参兼容函数(默认 console.log)与对象(main.js 传 log: console)
   const logFn = typeof log === "function" ? log : (...args) => { if (log && typeof log.log === "function") log.log(...args); };
   let state = "idle";
@@ -60,6 +63,10 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
   /** 下载连续失败次数:≥ DOWNLOAD_FAIL_LIMIT 后「重试」降级为重新检查,
    *  防止 feed 版本被撤回后 forever 撞 404(对抗审查 P2-C2) */
   let downloadFailures = 0;
+  /** 下载停滞定时器(0% 超阈值自动转 error);null = 未在计 */
+  let stallTimer = null;
+  /** 下载停滞阈值(0% 停留时长);可注入(回归用小值) */
+  const stallMs = stallMsOpt ?? DOWNLOAD_STALL_MS;
 
   const takeNotify = () => {
     const n = pendingNotify;
@@ -97,6 +104,8 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
     au.on("download-progress", (p) => {
       // percent 可能为字符串/小数,统一为 0~100 数字;按钮涂色直接消费
       const pct = Math.max(0, Math.min(100, Math.round(Number(p && p.percent) || 0)));
+      // 首个真实进度(>0)到达 → 解除停滞守卫(黑洞场景不会再误转)
+      if (pct > 0) clearStallTimer();
       setState("downloading", { percent: pct });
     });
     au.on("update-downloaded", (info) => {
@@ -173,6 +182,15 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
     }
   };
 
+  /** 下载停滞守卫(对抗审查 P2-C5):0% 停留超过阈值自动转 error —— 黑洞型
+   * 网络(连接建立后吞吐归零)下不再无限扫光。收到首个真实进度即解除。 */
+  const clearStallTimer = () => {
+    if (stallTimer) {
+      clearTimeout(stallTimer);
+      stallTimer = null;
+    }
+  };
+
   /** 开始下载(顶栏「新版本」→ 下载中,后台进行) */
   const startDownload = async () => {
     if (!initialized || !isPackaged) return;
@@ -180,11 +198,20 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
     // 数秒,尤其私有仓库 token 重定向链),先置「下载中 0%」,顶栏立即响应;
     // 0% 静默期间 fill 扫光 loading 动画,首个真实进度到达后接管(见 topbar.css)。
     setState("downloading", { percent: 0 });
+    clearStallTimer();
+    stallTimer = setTimeout(() => {
+      stallTimer = null;
+      if (state !== "downloading") return;
+      logFn("[app-update] 下载长时间无进展,自动转到错误态");
+      setState("error", { error: "下载长时间无进展(可能网络受限),请重试" });
+    }, stallMs);
     try {
       await autoUpdater.downloadUpdate();
     } catch (err) {
+      clearStallTimer();
       setState("error", { error: (err && err.message) || String(err) });
     }
+    clearStallTimer();
   };
 
   /** 手动安装(顶栏「安装」→ Squirrel 退出+替换+重启;不自动触发) */

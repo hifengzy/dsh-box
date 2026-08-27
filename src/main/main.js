@@ -35,7 +35,7 @@ const { createAppMenu } = require("./menu");
 const { showAboutWindow } = require("./about");
 const { getRuntimeDshInfo } = require("./dsh-version");
 const npmCheck = require("./npm-check");
-const { upgradeDsh, restoreDshBackup, verifyDshBoot, findNewestBackup, findBackups } = require("./dsh-upgrade");
+const { upgradeDsh, restoreDshBackup, verifyDshBoot, findNewestBackup, findBackups, pruneBackups } = require("./dsh-upgrade");
 const { computeSidebar, SIDEBAR_GAP } = require("./sidebar-layout");
 const { SIDEBAR_ANIM_MS, easeSidebar } = require("./sidebar-anim");
 const pluginManager = require("./plugin-manager");
@@ -624,6 +624,7 @@ function main() {
           const probe = await smoker(pkgDir);
           if (probe.ok) {
             console.log(`[app] 自愈: 内置 dsh 包缺失,已从备份恢复 → ${backup}`);
+            pruneBackups(path.dirname(pkgDir)); // 恢复成功即节流清理(P2-C3)
             return;
           }
         }
@@ -645,6 +646,7 @@ function main() {
         const second = await smoker(pkgDir);
         if (second.ok) {
           console.log(`[app] 自愈: dsh 自检失败(${first.error}),已从备份恢复 → ${backup}`);
+          pruneBackups(path.dirname(pkgDir)); // 恢复成功即节流清理(P2-C3)
           return;
         }
         console.warn(`[app] 自愈: 备份 ${backup} 恢复后仍冒烟失败,尝试更早备份…`);
@@ -739,6 +741,23 @@ function main() {
   async function restartServer() {
     if (server) await server.stop();
     await startServer();
+  }
+
+  /** 等待内容视图加载完成(重启后 WebUI 重载完毕);超时兜底不阻塞。
+   *  插件/市场安装后 restartServer 只等 dsh 进程就绪,ready 事件的 loadURL
+   *  是 fire-and-forget —— 结果回填若写在旧 document 上会被新页面冲掉
+   *  (对抗审查 P2-B1),这里等新页面 did-finish-load 后再返回结果。 */
+  async function waitContentReload(timeoutMs = 10_000) {
+    if (!contentView || contentView.webContents.isDestroyed()) return;
+    const wc = contentView.webContents;
+    if (!wc.isLoading()) return;
+    await new Promise((resolve) => {
+      const timer = setTimeout(resolve, timeoutMs);
+      wc.once("did-finish-load", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
   }
 
   // ---------- 右侧「dsh 服务与版本」面板(顶栏按钮/菜单控制开关) ----------
@@ -1164,6 +1183,7 @@ function main() {
       if (wasReady) {
         try {
           await restartServer();
+          await waitContentReload(); // 结果回填等新页面就绪,不再写旧 document(P2-B1)
         } catch (error) {
           console.error("[app] 侧边栏插件安装后重启服务失败:", error);
           return {
@@ -1211,6 +1231,7 @@ function main() {
       if (wasReady) {
         try {
           await restartServer();
+          await waitContentReload(); // 结果回填等新页面就绪(P2-B1)
         } catch (error) {
           console.error("[app] 插件市场安装后重启服务失败:", error);
           return {

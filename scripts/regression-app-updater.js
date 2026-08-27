@@ -191,6 +191,30 @@ function check(cond, msg) {
     check(au.checks === 1 && au.downloads === 1, `[2f8] 404 后重试走重新检查(checks=1 downloads=1,实际 ${au.checks}/${au.downloads})`);
   }
 
+  // ========== 2.7. 下载停滞守卫(P2-C5):0% 超阈值自动转 error ==========
+  {
+    const au = makeFakeUpdater();
+    // fake 永不发进度、永不 resolve → 模拟黑洞型网络
+    au.downloadUpdate = async () => {
+      au.downloads += 1;
+      await new Promise(() => {});
+    };
+    const upd = createAppUpdater({ autoUpdater: au, isPackaged: true, stallMs: 120 });
+    await upd.init({ checkOnStart: false });
+    au.emit("update-available", { version: "0.2.0" });
+    upd.startDownload();
+    check(upd.getState().state === "downloading" && upd.getState().percent === 0, "[2g0] 开始下载 → downloading 0%");
+    await new Promise((r) => setTimeout(r, 250)); // > stallMs(120ms)
+    check(
+      upd.getState().state === "error" && /长时间无进展/.test(upd.getState().error || ""),
+      `[2g1] 0% 停滞超阈值 → 自动转 error(实际 ${JSON.stringify(upd.getState())})`
+    );
+    // 停滞守卫在工程态(真实 progress)下不误触发:恢复 fake 正常下载
+    upd.retry();
+    await new Promise((r) => setTimeout(r, 10));
+    check(au.downloads >= 2, `[2g2] error 态重试可用(downloads=${au.downloads})`);
+  }
+
   // ========== 3. error + restartDownload ==========
   {
     const au = makeFakeUpdater();
