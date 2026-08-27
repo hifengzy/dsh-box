@@ -31,6 +31,9 @@ logs/
 # demo
 demo/
 
+# key
+id/
+
 # 个人 Claude 配置（gitignored，不共享）
 CLAUDE.local.md
 .claude/settings.local.json

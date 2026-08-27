@@ -284,7 +284,17 @@ class DshServer extends EventEmitter {
     child.on("exit", (code, signal) => {
       logStream.end();
       this.childExitCode = code;
-      if (this.stopping) return;
+      // 停止流程的迟到 exit(SIGKILL 后事件在下一轮事件循环才投递)必须按
+      // 「正常停止」处理,绝不落入「意外退出」——否则 stop() 已返回后迟到的
+      // exit 会把"服务意外退出"广播到 UI(服务实际在跑、界面显示崩溃)。
+      // stopping 在这里消化并复位(不在 stop() 尾部复位)。
+      if (this.stopping) {
+        this.stopping = false;
+        return;
+      }
+      // 代际防线:stop 后已重新 start(新 child)时,旧 child 的迟到 exit
+      // 一律按正常停止流程处理(不影响新服务状态)。
+      if (this.child !== null && this.child !== child) return;
       this.ready = false;
       this.child = null;
       console.log(`[dsh] 进程意外退出 code=${code} signal=${signal}`);
@@ -292,7 +302,10 @@ class DshServer extends EventEmitter {
     });
     child.on("error", (error) => {
       logStream.end();
-      if (this.stopping) return;
+      if (this.stopping) {
+        this.stopping = false;
+        return;
+      }
       this.ready = false;
       this.child = null;
       console.error("[dsh] 子进程错误:", error);
@@ -304,6 +317,10 @@ class DshServer extends EventEmitter {
       await this._waitReady();
     } catch (error) {
       await this.stop();
+      // 用户在就绪窗口内主动点「停止」(stopping 使 _waitReady 抛"服务已停止")
+      // → 平稳退出:不包装成启动超时、不广播错误(否则与 stopped 终态竞态,
+      // 状态页可能定格在错误的失败文案并污染 lastError)。
+      if (error && error.message === "服务已停止") return;
       error.code = "DSH_START_TIMEOUT";
       error.message = `dsh 服务在 ${START_TIMEOUT_MS / 1000}s 内未就绪(端口 ${this.port})。` +
         `请查看日志: ${this.logFile}\n原因: ${error.message}`;
@@ -346,7 +363,10 @@ class DshServer extends EventEmitter {
     // 不复位,安装/更新插件后、升级 dsh 后的「自动重启」会被该短路直接
     // 跳过(服务停着但不再拉起)。
     this.ready = false;
-    this.stopping = false;
+    // 注意:stopping 不在 stop() 尾部复位 —— SIGKILL 宽限路径下子进程的
+    // exit 事件在 stop() 返回后才投递,若这里复位会把迟到 exit 误判为
+    // 「意外退出」。stopping 由 exit/error 处理器消化并复位(见上),start()
+    // 也会复位,不存在卡死路径。
     console.log("[dsh] 已停止");
   }
 
@@ -405,7 +425,11 @@ class DshServer extends EventEmitter {
   async reapStaleServers(port) {
     let reaped = 0;
     try {
-      const probe = spawnSync("pgrep", ["-f", `dsh/lib/bin.js web --port ${port} --no-open`], {
+      // pgrep -f 按扩展正则匹配整条命令行;`bin.js` 的 "." 必须转义成 `\.`,
+      // 否则会误配 mydsh/lib/binXjs 之类模仿进程(对抗审查 P2-A6)。保持子串
+      // 匹配(不加 ^ 锚):实际命令行形如 `node /path/dsh/lib/bin.js web ...`。
+      const pattern = `dsh/lib/bin\\.js web --port ${port} --no-open`;
+      const probe = spawnSync("pgrep", ["-f", pattern], {
         encoding: "utf8",
       });
       const pids = (probe.stdout || "").trim().split("\n").filter((p) => /^\d+$/.test(p));

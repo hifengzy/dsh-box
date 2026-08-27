@@ -131,19 +131,20 @@
 - **覆盖回归**:regression-app-updater.js `[2e1]`~`[2e5]`(已是最新 / 失败 / 有新版不回调 /
   无终态不悬空)。
 
-### 8.4 DMG 引导(Applications 快捷方式 + 指向箭头)
+### 8.4 DMG 引导(Applications 快捷方式)
 
-- **要求**:打开 dmg 在窗口内展示 Applications 文件夹快捷方式,方便直接拖入;并在
-  DSH Box.app 图标与 Applications 之间放一个指向箭头。
+- **要求**:打开 dmg 在窗口内展示 Applications 文件夹快捷方式,方便直接拖入。
 - **实现**:
   - `build.dmg.contents` 显式两块:DSH Box.app(默认第一项)+ `/Applications` link
     (electron-builder 本就默认创建 Applications 快照,现显式声明 + 槽位对齐);
-  - 背景图 `assets/dmg-background.png`(540×380,深色渐变 + 品牌蓝柔光 + 顶部标题 +
-    图标间虚线引导箭头 + 底部「拖入 Applications 完成安装」文案);
-  - 生成器 `scripts/make-dmg-background.swift`(AppKit 渲染,已提交;重跑可再生成,
-    槽位参数与 iconSize 80 对齐)。
-- **验收**:本地 `CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg` 构建后
-  挂载 dmg,窗口尺寸 = 背景图 540×380,两个图标 + 箭头可见。
+  - dmg 制作用 electron-builder 同源 dmgbuild CLI(输入已签名 APP;settings.json
+    含两图标槽位与窗口尺寸)—— 修复 0.1.7 手工 hdiutil 丢 Applications 的缺陷。
+- **变更(0.1.9)**:按用户要求**移除背景图**(assets/dmg-background.png 及生成器
+  make-dmg-background.swift 已删除,`build.dmg.background` 不再配置)—— 卷内仅
+  DSH Box.app + Applications 快捷方式两个图标,窗口用系统默认背景;图标槽位
+  与引导箭头不再需要对齐。
+- **验收**:本地构建后挂载 dmg,窗口 540×380 内两个图标(DSH Box.app +
+  Applications 链接),无背景图。
 
 ### 8.5 仓库转公开前自查(2026 新增)
 

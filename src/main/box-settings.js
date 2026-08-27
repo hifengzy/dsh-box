@@ -63,7 +63,14 @@ function writeSettingValue(dshHome, key, value) {
   let lines;
   try {
     lines = fs.readFileSync(file, "utf8").split("\n");
-  } catch {
+  } catch (error) {
+    // 读失败必须中止写入(对抗审查 P1-4):若非文件不存在(EIO/EMFILE 权限等),
+    // 继续写入会把整个文件覆盖成只剩 dsh-box 域的空壳,用户全部设置
+    // (dsh 侧配置)一次性丢失。ENOENT = 首次写入,允许从空建。
+    if (error && error.code !== "ENOENT") {
+      console.warn(`[box-settings] 读取 ${file} 失败,中止本轮写入: ${error.message}`);
+      return false;
+    }
     lines = [];
   }
   const out = [];
@@ -105,9 +112,24 @@ function writeSettingValue(dshHome, key, value) {
   }
   try {
     fs.mkdirSync(dshHome, { recursive: true });
-    fs.writeFileSync(file, out.join("\n") + "\n");
-    return true;
-  } catch {
+    // 原子写:先写临时文件再 rename 同目录替换 —— 崩溃/断电不会留下
+    // 截断的 YAML(否则此后所有读取退默认值),也不被并发读读写到半截内容
+    const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+    try {
+      fs.writeFileSync(tmp, out.join("\n") + "\n");
+      fs.renameSync(tmp, file);
+      return true;
+    } catch (error) {
+      try {
+        fs.rmSync(tmp, { force: true });
+      } catch {
+        /* 临时文件清理失败无碍 */
+      }
+      console.warn(`[box-settings] 写入 ${file} 失败: ${error.message}`);
+      return false;
+    }
+  } catch (error) {
+    console.warn(`[box-settings] 写入 ${file} 失败: ${error.message}`);
     return false;
   }
 }
