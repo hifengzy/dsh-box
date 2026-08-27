@@ -100,7 +100,20 @@ function writeCache(data) {
   if (!p) return;
   try {
     fs.mkdirSync(path.dirname(p), { recursive: true });
-    fs.writeFileSync(p, JSON.stringify(data));
+    // P3-17③:tmp+rename 原子写 —— 崩溃/断电不留下截断的 JSON 缓存
+    // (截断缓存会让 readCache 永久失败,每次都重新打 registry)
+    const tmp = `${p}.${process.pid}.${Date.now()}.tmp`;
+    try {
+      fs.writeFileSync(tmp, JSON.stringify(data));
+      fs.renameSync(tmp, p);
+    } catch (error) {
+      try {
+        fs.rmSync(tmp, { force: true });
+      } catch {
+        /* 忽略 */
+      }
+      throw error;
+    }
   } catch {
     /* 缓存写失败不致命 */
   }

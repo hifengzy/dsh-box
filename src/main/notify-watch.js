@@ -191,12 +191,15 @@ function createNotifyWatcher({
     else handleHostFrame(msg.payload);
   }
 
-  /** 关闭一代的所有 socket(幂等;关闭事件可能异步到达,由重连守卫去重) */
+  /** 关闭一代的所有 socket(幂等;关闭事件可能异步到达,由重连守卫去重)。
+   *  注意 CONNECTING(0) 也必须 close —— 否则连接建立后成为无主 socket,
+   *  回调照常触发(旧代污染新代),P3-17④ */
   function closeSockets(cur) {
     if (!cur) return;
     for (const key of ["mux", "host"]) {
       const sock = cur[key];
-      if (sock && sock.readyState === 1 /* OPEN */) {
+      // 仅跳过已 CLOSED(3);CONNECTING(0)/OPEN(1)/CLOSING(2) 一律关闭
+      if (sock && sock.readyState !== 3) {
         try {
           sock.close();
         } catch {

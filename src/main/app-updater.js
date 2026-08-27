@@ -58,8 +58,9 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
   let version = null;
   let error = null;
   let initialized = false;
-  /** 手动检查的结束回调(仅一次;取走即清空,自动检查/发现新版本时无值) */
-  let pendingNotify = null;
+  /** 手动检查的结束回调**队列**(P3-14:单槽位会被第二次调用覆盖,改为队列
+   *  让每次手动检查的结果都送达对应调用方;终态取走即清空) */
+  let pendingNotifies = [];
   /** 下载连续失败次数:≥ DOWNLOAD_FAIL_LIMIT 后「重试」降级为重新检查,
    *  防止 feed 版本被撤回后 forever 撞 404(对抗审查 P2-C2) */
   let downloadFailures = 0;
@@ -68,10 +69,10 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
   /** 下载停滞阈值(0% 停留时长);可注入(回归用小值) */
   const stallMs = stallMsOpt ?? DOWNLOAD_STALL_MS;
 
-  const takeNotify = () => {
-    const n = pendingNotify;
-    pendingNotify = null;
-    return n;
+  const takeNotifies = () => {
+    const arr = pendingNotifies;
+    pendingNotifies = [];
+    return arr;
   };
 
   const setState = (next, extra = {}) => {
@@ -87,7 +88,7 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
     const au = autoUpdater;
     au.on("checking-for-update", () => setState("checking"));
     au.on("update-available", (info) => {
-      takeNotify(); // 有新版:顶栏按钮即反馈,无弹窗
+      takeNotifies(); // 有新版:顶栏按钮即反馈,无弹窗
       downloadFailures = 0; // 新一轮检查重新开始计数
       setState("available", { version: info && info.version });
       logFn(`[app-update] 发现新版本: ${(info && info.version) || "?"}`);
@@ -98,8 +99,8 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
       setState("up-to-date", { version: null, error: null });
       downloadFailures = 0;
       logFn("[app-update] 已是最新");
-      const n = takeNotify();
-      if (n) n("up-to-date"); // 手动检查 → 「当前没有可用的更新」弹窗
+      const notifies = takeNotifies();
+      for (const n of notifies) n("up-to-date"); // 手动检查 → 「当前没有可用的更新」弹窗
     });
     au.on("download-progress", (p) => {
       // percent 可能为字符串/小数,统一为 0~100 数字;按钮涂色直接消费
@@ -126,8 +127,8 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
         setState("error", { error: message });
       }
       logFn(`[app-update] 更新错误: ${message}`);
-      const n = takeNotify();
-      if (n) n({ error: message }); // 手动检查失败 → 错误弹窗
+      const notifies = takeNotifies();
+      for (const n of notifies) n({ error: message }); // 手动检查失败 → 错误弹窗
     });
   };
 
@@ -149,6 +150,9 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
       // 下载就已开始(用户看到的「没点就下载」bug)。fake 无此属性也无妨
       // (普通赋值)。
       autoUpdater.autoDownload = false;
+      // autoInstallOnAppQuit 默认 true:下载完成后正常退出(Cmd+Q)也会自动
+      // 安装 —— 同样违背「手动安装」语义(P3-14),显式关闭。
+      autoUpdater.autoInstallOnAppQuit = false;
       wire();
     } catch (err) {
       setState("disabled", { error: String(err && err.message || err) });
@@ -168,17 +172,17 @@ function createAppUpdater({ autoUpdater, isPackaged = false, onChange, log = con
    */
   const checkForUpdates = async ({ notify = null } = {}) => {
     if (!initialized || !isPackaged) return;
-    if (notify) pendingNotify = notify;
+    if (notify) pendingNotifies.push(notify);
     setState("checking");
     try {
       await autoUpdater.checkForUpdates();
     } catch (err) {
       // electron-updater 多数错误经 error 事件到达;同步抛错兜底(事件路径
       // 已 takeNotify 则这里不再重复回调)
-      const n = takeNotify();
+      const notifies = takeNotifies();
       const message = (err && err.message) || String(err);
       setState("error", { error: message });
-      if (n) n({ error: message });
+      for (const n of notifies) n({ error: message });
     }
   };
 

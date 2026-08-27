@@ -16,8 +16,6 @@
 
 /** 内容区与面板之间的间隙(与窗口左右内缩一致,视觉统一) */
 const SIDEBAR_GAP = 4;
-/** dsh 硬性安全地板(实测 dsh 至 720px 无横向滚动,900 留余量;展开时实际由 CONTENT_OPEN_MIN 保证) */
-const CONTENT_MIN = 900;
 /** 面板展开时 dsh 内容区保底宽度(低于此视为「内容区被挤爆」→ 收起) */
 const CONTENT_OPEN_MIN = 960;
 /** 面板宽度上限(避免超宽窗口下面板过大) */
@@ -57,7 +55,6 @@ function computeSidebar(innerWidth, { open = false } = {}) {
 module.exports = {
   computeSidebar,
   SIDEBAR_GAP,
-  CONTENT_MIN,
   CONTENT_OPEN_MIN,
   SIDEBAR_MAX,
   SIDEBAR_MIN,

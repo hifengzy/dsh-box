@@ -228,6 +228,23 @@ function main() {
   };
 
   // ---------- 窗口与视图 ----------
+  // 本地 file 视图导航守卫(P3-17⑦):顶栏/状态面板只应显示本地文件,
+  // 任何导航离开 file:// 一律拦下(外链走系统浏览器)。
+  // 注意:定义在 main() 顶层 —— createWindow 与 openStatusSidebar 都要用,
+  // 若定义在 createWindow 内部,openStatusSidebar 里调用会 ReferenceError,
+  // 进而 uncaughtException 弹模态框卡死主线程(曾致崩溃回归卡死)。
+  function guardLocalViewNavigation(wc, label) {
+    wc.on("will-navigate", (event, url) => {
+      if (url.startsWith("file://")) return;
+      event.preventDefault();
+      if (url.startsWith("http://") || url.startsWith("https://")) {
+        shell.openExternal(url);
+      } else {
+        console.warn(`[app] ${label} 拦截非本地导航: ${url}`);
+      }
+    });
+  }
+
   function createWindow() {
     mainWindow = new BrowserWindow({
       title: APP_NAME,
@@ -252,6 +269,7 @@ function main() {
     topBarView = new WebContentsView({ webPreferences: VIEW_PRELOAD });
     // 顶栏背景透明 → 透出窗口的毛玻璃材质
     topBarView.setBackgroundColor("#00000000");
+    guardLocalViewNavigation(topBarView.webContents, "顶栏");
     // 内容视图:加载页 → dsh UI;内缩 + 圆角(内容本身不透明)
     contentView = new WebContentsView({ webPreferences: VIEW_PRELOAD });
     contentView.setBorderRadius(CONTENT_RADIUS);
@@ -284,6 +302,10 @@ function main() {
     mainWindow.on("resize", () => {
       layoutViews();
       broadcastSidebarState();
+      // P3-11:悬停中的 tooltip 不随窗口尺寸校正,缩放时直接隐藏
+      if (tooltipView && !tooltipView.webContents.isDestroyed()) {
+        tooltipView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+      }
     });
     mainWindow.on("enter-full-screen", () => setTimeout(() => {
       layoutViews();
@@ -686,8 +708,15 @@ function main() {
       portMovedFrom = null;
       broadcastStatus({ state: "starting", message: "正在启动 dsh 服务…" });
 
-      const logDir = path.join(app.getPath("userData"), "logs");
-      fs.mkdirSync(logDir, { recursive: true });
+      let logDir = path.join(app.getPath("userData"), "logs");
+      try {
+        fs.mkdirSync(logDir, { recursive: true });
+      } catch (error) {
+        // P3-04:日志目录创建失败(只读磁盘/权限)不应拖垮启动 —— 回退系统
+        // 临时目录,dsh 日志仍可落盘
+        console.warn(`[app] 创建日志目录失败,回退系统临时目录: ${error.message}`);
+        logDir = os.tmpdir();
+      }
       // DSH_HOME 默认用 App 自己的目录,与浏览器 WebUI 的 ~/.dsh 隔离:
       // 两个 dsh 服务共享同一会话会互相刷新状态,导致命令面板等
       // 会话级弹层"打开即消失"。设 DSH_HOME 可覆盖(共享时勿双开同会话)。
@@ -702,7 +731,7 @@ function main() {
             console.log(`[app] 端口 ${cand} 已被其他服务占用,DSH Box 自动改用端口 ${cand + 1}`);
             broadcastStatus({
               state: "starting",
-              message: `端口 ${cand} 已被其他服务占用,DSH Box 将改用端口 ${cand + 1}`,
+              message: `端口 ${cand} 已被其他服务占用,正在尝试改用端口 ${cand + 1}…`,
             });
             continue;
           }
@@ -716,7 +745,7 @@ function main() {
           // 竞态占用(spawn 后才发现被占):换下一候选;先探活确认,避免把
           // 真实启动失败(EADDRINUSE 之外的原因)误判为端口冲突
           const nowBusy = await server.probePort(cand).catch(() => false);
-          if (nowBusy || isPortConflict(error, cand)) {
+          if (nowBusy || isPortConflict(error)) {
             console.log(`[app] 端口 ${cand} 启动 dsh 失败(端口被其他服务占用),自动改用端口 ${cand + 1}`);
             continue;
           }
@@ -885,6 +914,8 @@ function main() {
       }
       return { action: "deny" };
     });
+    // P3-17⑦:本地面板视图拒绝任何导航离开 file://(外链已走系统浏览器)
+    guardLocalViewNavigation(statusView.webContents, "状态面板");
     mainWindow.contentView.addChildView(statusView);
     // 先按 0 宽摆位,再从 0 动画展开到目标宽度
     applySidebarWidth(0);
@@ -1174,8 +1205,13 @@ function main() {
       // 装包成功后的任何异常(如写入偏好抛错)都不得让服务停着不恢复:
       // wasReady 时无论成败都尝试拉回服务;写偏好失败只记录 warning,不判安装失败。
       let warning = null;
+      // P3-17①:ensureOpenByDefault 返回布尔(写失败不抛)—— 检查返回值
+      // 而非靠 try/catch(死代码,失败会静默)
       try {
-        pluginManager.ensureOpenByDefault(dshHome);
+        if (!pluginManager.ensureOpenByDefault(dshHome)) {
+          warning = "写入开屏偏好失败,插件下次需要手动展开侧边栏";
+          console.warn("[app] 侧边栏插件写入开屏偏好失败(ensureOpenByDefault=false)");
+        }
       } catch (error) {
         warning = `写入开屏偏好失败: ${error.message || error}`;
         console.error("[app] 侧边栏插件写入开屏偏好失败:", error);
@@ -1299,9 +1335,14 @@ function main() {
     }
   }
 
+  /** 提示音节流时间戳(连续事件 800ms 内只播一次,防叠响,P3-17⑤) */
+  let lastSoundAt = 0;
   /** 播放提示音(macOS 自带 afplay,播放打包的 message.m4a;失败静默) */
   function playNotifySound() {
     if (!isMac) return;
+    const now = Date.now();
+    if (now - lastSoundAt < 800) return; // 节流
+    lastSoundAt = now;
     try {
       if (!fs.existsSync(NOTIFY_SOUND_PATH)) return;
       const child = spawn("afplay", [NOTIFY_SOUND_PATH]);
@@ -1423,7 +1464,8 @@ function main() {
         break;
       case "error":
         console.error(`${tag} APP_UPDATE_ERROR ${s.error}`);
-        app.exit(1);
+        // P3-16c:测试钩子也走完整退出(停 dsh + watcher),不绕过 will-quit
+        app.quit();
         break;
       default:
         break;
@@ -1688,24 +1730,47 @@ function main() {
 
   function runTooltipJs(js) {
     const wc = tooltipView && tooltipView.webContents;
-    if (!wc || wc.isDestroyed()) return;
-    const exec = () => wc.executeJavaScript(js, true).catch(() => {});
-    if (wc.isLoading()) wc.once("did-finish-load", exec);
-    else exec();
+    if (!wc || wc.isDestroyed()) return Promise.resolve(null);
+    const exec = () => wc.executeJavaScript(js, true).catch(() => null);
+    if (wc.isLoading()) {
+      return new Promise((resolve) => {
+        wc.once("did-finish-load", () => exec().then(resolve));
+      });
+    }
+    return exec();
   }
 
-  /** 显示气泡:按顶栏视图内按钮中心定位(屏幕内钳制),宽度按文本长度估算 */
+  /** 显示气泡:按顶栏视图内按钮中心定位(屏幕内钳制);宽度用页面实测
+   *   scrollWidth(P3-09:按字数估算会低估,长文案/字体回退时溢出被裁)。 */
   ipcMain.on("dsh:tooltip-show", (_event, payload) => {
     if (!payload || typeof payload.text !== "string" || !payload.text) return;
     if (!ensureTooltipView()) return;
+    // P3-10:重新 addChildView 把气泡层提升到最上(状态面板 statusView 后建
+    // 时会盖住右上角悬停中的 tooltip)
+    try {
+      mainWindow.contentView.addChildView(tooltipView);
+    } catch {
+      /* 视图可能已被窗口清理 */
+    }
     const rect = payload.rect || {};
     const centerX = Math.round((Number(rect.left) || 0) + (Number(rect.width) || 28) / 2);
-    // 中文 ≈13px/字 + 两端 padding;夹在 [40, 220]
-    const w = Math.max(40, Math.min(220, Math.round(payload.text.length * 13 + 20)));
     const winW = mainWindow.getContentBounds().width;
-    const x = Math.max(0, Math.min(winW - w, centerX - w / 2));
-    tooltipView.setBounds({ x, y: BAR_HEIGHT + 1, width: w, height: 30 });
-    runTooltipJs(`window.showTooltip && window.showTooltip(${JSON.stringify(payload.text)})`);
+    // 先按粗估宽摆位,注入文本后读 scrollWidth 回校(P3-09)
+    const approxW = Math.max(40, Math.min(220, Math.round(payload.text.length * 14 + 24)));
+    const place = (w) => {
+      const width = Math.max(40, Math.min(260, Math.round(w)));
+      const x = Math.max(0, Math.min(winW - width, centerX - width / 2));
+      tooltipView.setBounds({ x, y: BAR_HEIGHT + 1, width, height: 30 });
+    };
+    place(approxW);
+    runTooltipJs(
+      `window.showTooltip && window.showTooltip(${JSON.stringify(payload.text)})` +
+        `;(window.showTooltip && document.getElementById("tooltipTip").scrollWidth + 20) || null`
+    ).then((measured) => {
+      if (typeof measured === "number" && measured > 0 && tooltipView && !tooltipView.webContents.isDestroyed()) {
+        place(measured);
+      }
+    });
   });
 
   ipcMain.on("dsh:tooltip-hide", () => {
@@ -1856,6 +1921,10 @@ function main() {
 
     // macOS 惯例:关窗不退出,点击 Dock 图标重新开窗/聚焦
     app.on("activate", focusOrCreateWindow);
+  }).catch((error) => {
+    // P3-04:whenReady 主链任何一步抛错(同步 IO/资源)都要兜底,不能静默
+    // 变成 unhandled rejection 让进程半启动
+    console.error("[app] 启动流程异常:", error);
   });
 
   app.on("window-all-closed", () => {

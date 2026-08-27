@@ -46,7 +46,12 @@ const VERIFY_TIMEOUT_MS = 60_000;
 
 /** 校验 npm 的 sha512-<base64> integrity */
 function verifyIntegrity(buffer, integrity) {
-  if (!integrity) return true; // registry 未提供 integrity 时不强制
+  if (!integrity) {
+    // P3-15:registry 未提供 integrity 时不再静默放行 —— 打警告留痕
+    // (供应链校验形同虚设的路径至少可见;实际 npm registry 总会带 integrity)
+    console.warn(`[upgrade] 警告: registry 未提供 integrity,跳过 sha512 校验(${buffer.length} 字节)`);
+    return true;
+  }
   const m = /^sha512-([A-Za-z0-9+/=]+)$/.exec(integrity);
   if (!m) return false;
   const actual = crypto.createHash("sha512").update(buffer).digest("base64");
@@ -255,6 +260,20 @@ function restoreDshBackup(pkgDir, backupDir) {
   }
 }
 
+/** 目录移动(优先 rename;跨设备 EXDEV 时降级 copy+rm,P3-16)。
+   * 包目录与 staging 可能分处不同卷(staging 常在系统临时目录),rename 必败
+   * 于 EXDEV —— 降级复制保证升级在定制 Home 卷等场景可用(原子窗口变秒级,
+   * 中断由既有回滚逻辑兜底:半截目录无 package.json 会被清掉)。 */
+function moveDir(from, to) {
+  try {
+    fs.renameSync(from, to);
+  } catch (error) {
+    if (!error || error.code !== "EXDEV") throw error;
+    fs.cpSync(from, to, { recursive: true });
+    fs.rmSync(from, { recursive: true, force: true });
+  }
+}
+
 /**
  * 升级捆绑的 dsh 到指定版本。
  * @param {string} version 目标版本号
@@ -372,8 +391,8 @@ async function upgradeDsh(
   const parentDir = path.dirname(pkgDir);
   const backup = path.join(parentDir, `.dsh-${prevVersion}-bak-${Date.now()}`);
   try {
-    fs.renameSync(pkgDir, backup);
-    fs.renameSync(extractedPkg, pkgDir);
+    moveDir(pkgDir, backup);
+    moveDir(extractedPkg, pkgDir);
   } catch (error) {
     // 回滚:目标位置若有半截目录先清掉,再把备份改回
     try {

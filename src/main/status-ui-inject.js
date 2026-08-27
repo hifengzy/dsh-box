@@ -536,7 +536,8 @@ body[data-dsh-sidebar-dragging] #root#root :has(> [data-slot="conversation"]) {
 #dshbox-status-panel .dshbox-st-cache-note {
   font-size: 11px;
   line-height: 16px;
-  color: orange;
+  /* P3-12:amber 强调色随亮暗主题自适应(原硬编码 orange 在深色下刺眼) */
+  color: light-dark(rgb(180, 122, 18), rgb(247, 173, 49));
   text-align: center;
 }
 `;

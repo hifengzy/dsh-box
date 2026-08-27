@@ -110,7 +110,8 @@ process.exit(1);
     caught = err;
   }
   check(caught !== null, "假崩溃 bin 应导致 start() 抛错");
-  check(caught.code === "DSH_START_TIMEOUT", `错误码应为 DSH_START_TIMEOUT,实际 ${caught.code}`);
+  // P3-06:子进程提前退出 = 崩溃(DSH_CRASHED),不再被误包装成"未就绪超时"
+  check(caught.code === "DSH_CRASHED", `错误码应为 DSH_CRASHED(提前退出),实际 ${caught.code}`);
   check(
     caught.message.includes("原因:") && caught.message.includes("duplicate prefix route"),
     `错误消息应含可读原因(而非误导的"端口可能被占用"),实际: ${caught.message}`
@@ -119,7 +120,7 @@ process.exit(1);
   check(caught.message.includes("dsh.profile.bundles"), "集成错误应带修复建议");
   check(errorEvent !== null, "应发出 error 事件");
   await server.stop().catch(() => {});
-  console.log("[3] 集成:崩溃子进程 → DSH_START_TIMEOUT 含「原因: duplicate + 修复建议」✓");
+  console.log("[3] 集成:崩溃子进程 → DSH_CRASHED 含「原因: duplicate + 修复建议」✓");
 
   console.log("\nPASS ✓ 崩溃原因提取回归通过");
 }
