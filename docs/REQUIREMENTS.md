@@ -144,3 +144,34 @@
     槽位参数与 iconSize 80 对齐)。
 - **验收**:本地 `CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg` 构建后
   挂载 dmg,窗口尺寸 = 背景图 540×380,两个图标 + 箭头可见。
+
+### 8.5 仓库转公开前自查(2026 新增)
+
+> 触发:用户计划把 dsh-box 从私有仓库改为公开。全量排查结论 + 需要的改动。
+
+**⚠ 最高危:已发布包内嵌 GitHub PAT**
+- 0.1.4 起每个发布包(zip/dmg)的 `Contents/Resources/app-update.yml` 都烤入了
+  `gh auth token`(私有仓库 feed 认证必需,electron-updater 有 token → PrivateGitHubProvider
+  走 api.github.com)。仓库转公开的瞬间,这些 release 资产对外可见 → **PAT 立即泄露**。
+- 修复已合入 release-mac.sh:按仓库可见性自动切换 —— public 模式**不写 token**(无 token →
+  electron-updater 匿名 GitHubProvider:`github.com` 的 atom feed + `releases/download`,
+  公开仓库无需认证),private 模式保持现状并在写 yml 时打印轮换警告。
+- **操作清单(转公开日)**:
+  1. 用新脚本发布一版**无 token** 的版本(0.1.7+),并让用户更新到该版本;
+  2. **吊销旧 PAT**(`gh auth status` 确认 → GitHub Settings → Developer settings →
+     Personal access tokens → 删除;或换 fine-grained token 并最小化权限);
+  3. 再点「Make public」。
+
+**其余排查结论(均无阻塞)**
+- 源码/文档/git 历史:无 token、无私钥、无凭据文件(e.g. `grep ghp_` 零命中);
+- git 跟踪文件:无 `.env/.p12/.pem/keychain/私钥`;`id/`(公证私钥 AuthKey_*.p8 +
+  密码文件)已被 .gitignore 覆盖且未跟踪 —— 本机敏感资产,勿提交;
+- README/LICENSE(MIT)/docs:内容可公开,无敏感路径与凭证;
+- electron-updater 链路:yml 去 token 后走向匿名公开路径,无需改 app-updater.js;
+- 发布脚本:keychain 解锁密码支持 `DSH_KEYCHAIN_PW` env 覆盖(默认 verify,
+  本地资产;脚本公开后密码不再是秘密,凭据隔离靠「keychain 文件不进仓库」)。
+
+**持续注意**
+- 若以后启用 GitHub Actions:公开仓库的 secrets 不暴露给 fork PR,警惕
+  `pull_request_target` 类触发;
+- 转公开后第一次应用内更新(0.1.7 无 token)即验证匿名 feed 全链路。
