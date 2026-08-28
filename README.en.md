@@ -25,9 +25,7 @@ A native macOS desktop app that wraps [DeepSeek Harness](https://github.com/deep
 
 ## How It Works
 
-The Electron main process spawns `dsh web` as a **child process** and loads the Harness WebUI in a `WebContentsView` with a custom top bar. dsh runs via `ELECTRON_RUN_AS_NODE` on the Electron runtime shipped inside the app, so users don't need Node.js. Since dsh runs as a local user process, its shell commands and file operations directly inherit macOS permissions (TCC) — something a browser-based setup cannot do, and the core value of this project.
-
-See [docs/PERMISSIONS.md](docs/PERMISSIONS.md) for granting macOS permissions.
+The Electron main process spawns `dsh web` as a **child process** and loads the Harness WebUI in a `WebContentsView` with a custom top bar. dsh runs via `ELECTRON_RUN_AS_NODE` on the Electron runtime shipped inside the app, so users don't need Node.js. Since dsh runs as a local user process, its shell commands and file operations directly inherit macOS permissions (TCC) — something a browser-based setup cannot do, and the core value of this project. On first launch, grant the app file access in "System Settings → Privacy & Security".
 
 ## Architecture
 

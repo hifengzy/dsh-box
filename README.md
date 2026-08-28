@@ -25,9 +25,7 @@
 
 ## 工作原理
 
-Electron 主进程把 `dsh web` 作为**子进程**拉起，窗口内以 `WebContentsView` 加载 Harness WebUI 并叠加自定义顶栏。dsh 通过 `ELECTRON_RUN_AS_NODE` 使用 App 自带的 Electron 运行时执行，因此用户机器上不需要 Node.js。由于 dsh 是本机用户进程，它执行的 shell 命令与文件操作直接继承 macOS 权限（TCC）——这是浏览器方案无法做到的，也是本项目的核心价值。
-
-macOS 权限授予方法见 [docs/PERMISSIONS.md](docs/PERMISSIONS.md)。
+Electron 主进程把 `dsh web` 作为**子进程**拉起，窗口内以 `WebContentsView` 加载 Harness WebUI 并叠加自定义顶栏。dsh 通过 `ELECTRON_RUN_AS_NODE` 使用 App 自带的 Electron 运行时执行，因此用户机器上不需要 Node.js。由于 dsh 是本机用户进程，它执行的 shell 命令与文件操作直接继承 macOS 权限（TCC）——这是浏览器方案无法做到的，也是本项目的核心价值。首次使用需在「系统设置 → 隐私与安全性」中为 App 授予文件访问权限。
 
 ## 架构
 
