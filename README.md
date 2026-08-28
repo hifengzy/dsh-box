@@ -1,208 +1,95 @@
-# DSH Box for macOS (dsh-box)
+# DSH Box
 
-把 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 封装成**原生 macOS 桌面 App**(基于 Electron)。
+[English](README.en.md) | 简体中文
 
-> 目标:相比在浏览器里用 Harness 的 WebUI,桌面 App 能让 Harness 以**原生应用的身份**运行,从而获得更完整的**本地文件系统权限与操作能力**——这是浏览器做不到的。原理见 [docs/PERMISSIONS.md](docs/PERMISSIONS.md)。
+把 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness/) 封装成原生 macOS 桌面应用。
 
-## 快速开始
+## 简介
 
-环境要求:macOS 14+(Apple Silicon,本项目按 M4 Pro 开发)、Node.js ≥ 20、npm。
+- **完全使用 DeepSeek Harness 开发**：本项目的全部代码均在 DeepSeek Harness 中驱动完成。
+- **基于 Electron 的 dsh 壳**：将 DeepSeek Harness 的 WebUI 封装为原生 macOS App，让 Harness 以原生应用的身份运行，获得浏览器做不到的本地文件系统访问能力（子进程直接继承 macOS TCC 权限）。
+- **版本检测与一键升级**：主动检测 DeepSeek Harness 的版本更新，支持在应用内一键升级（下载 → sha512 校验 → 原子替换 → 失败自动回滚）。
+- **内置 [dsh-market](https://github.com/dsh-market/dsh-market) 插件**：浏览、搜索、安装、更新、卸载社区插件。
+- **内置 [DSH-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar) 插件**：为 Harness 增强侧边栏（右侧栏 / 底部面板 / 边卡）。
+- **dsh 打进 App，开箱即用**：用户无需安装 Node.js，也无需安装 dsh。
 
-```bash
-# 1. 安装本项目依赖(会把 dsh 一起装进来)
-npm install
+## 截图
 
-# 2. 环境体检(可选但推荐)
-npm run doctor
+| 主界面 | 服务状态面板 |
+|:---:|:---:|
+| ![主界面](screenshot/1.png) | ![服务状态面板](screenshot/2.png) |
+| **插件市场** | **侧边卡片与底部面板** |
+| ![插件市场](screenshot/3.png) | ![侧边卡片](screenshot/4.png) |
+| **底部面板** | |
+| ![底部面板](screenshot/5.png) | |
 
-# 3. 启动 App
-npm start
-```
+## 工作原理
 
-> 开发模式下不再需要全局安装 dsh:项目把 `@deepseek-ai/dsh` 作为**正式依赖**,
-> 运行时用 App 自带的 Electron(经 `ELECTRON_RUN_AS_NODE`)直接跑打进来的 dsh,
-> 连系统 Node 都不依赖。
+Electron 主进程把 `dsh web` 作为**子进程**拉起，窗口内以 `WebContentsView` 加载 Harness WebUI 并叠加自定义顶栏。dsh 通过 `ELECTRON_RUN_AS_NODE` 使用 App 自带的 Electron 运行时执行，因此用户机器上不需要 Node.js。由于 dsh 是本机用户进程，它执行的 shell 命令与文件操作直接继承 macOS 权限（TCC）——这是浏览器方案无法做到的，也是本项目的核心价值。
 
-> `npm start` 会用**品牌化副本**启动(见 `scripts/dev-launch.mjs`):克隆一份
-> `Electron.app` 到 `.runtime/dev/DSH Box.app` 并改名为「DSH Box」,让 dev 模式
-> 菜单栏左上角也显示「DSH Box」而不是 Electron(首次拷贝约 1-2 秒,按 Electron
-> 版本缓存,之后无感;失败自动回退原生 Electron)。需要原始 Electron 环境调试时用
-> `npm run start:electron`。
-
-启动后,窗口先显示加载页,等 dsh 服务就绪后自动切换到 Harness WebUI(默认端口 `3260`,可用环境变量 `DSH_APP_PORT` 覆盖)。
+macOS 权限授予方法见 [docs/PERMISSIONS.md](docs/PERMISSIONS.md)。
 
 ## 架构
 
 ```
-┌────────────────────────────────────────────────────┐
-│  DSH Box.app (Electron)                          │
-│                                                    │
-│  主进程 src/main/main.js                           │
-│    ├─ spawn ──→ dsh web 子进程 (Node)              │  ← 同一原生进程树
-│    │               └─ spawn ─→ bash / shell        │     → 继承 App 的
-│    ├─ WebContentsView 顶栏 (topbar.html)           │        macOS 权限(TCC)
-│    ├─ WebContentsView 内容 (加载页 → WebUI)        │  自定义标题栏 / 内缩+圆角
-│    └─ WebContentsView 右侧面板 (dsh-status.html)   │  异常态兜底(服务未起/崩溃)
-│            ▲ contextBridge                         │
-│            │                                       │
-│        preload.js (最小 IPC 桥,不暴露 Node)         │
-└────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────┐
+│  DSH Box.app (Electron)                        │
+│                                                │
+│  主进程 src/main/main.js                       │
+│    ├─ spawn ──→ dsh web 子进程 (Node)          │
+│    │               └─ spawn ─→ bash / shell    │
+│    ├─ WebContentsView 顶栏 (topbar)            │
+│    ├─ WebContentsView 内容 (加载页 → WebUI)    │
+│    └─ WebContentsView 状态面板 (兜底)          │
+│            ▲ contextBridge                     │
+│            │                                   │
+│        preload.js (最小 IPC 桥，不暴露 Node)   │
+└────────────────────────────────────────────────┘
 ```
 
-- **主进程** (`src/main/`) 负责启动/停止 dsh 服务、管理窗口与权限。
-- **dsh-server.js** 把 `dsh web` 作为子进程拉起。dsh 的查找优先级:
-  1. 环境变量 `DSH_BIN`(测试/调试用);
-  2. **打进 App 的 dsh**(打包后是 `app.asar.unpacked/node_modules/@deepseek-ai/dsh`,开发时是项目 `node_modules`)——默认走这个;
-  3. PATH 里的 `dsh`(兜底)。
-  用 `ELECTRON_RUN_AS_NODE=1` + 当前可执行文件运行,所以**用户机器上不需要装 Node,也不需要装 dsh**。`DSH_HOME` 默认用 App 自己的数据目录(`~/Library/Application Support/DSH Box/dsh-home`),与浏览器 WebUI 的 `~/.dsh` 隔离,避免两个 dsh 服务并发读写同一会话导致弹层闪烁(见「常见问题」)。
-- **顶栏视图** (`src/renderer/topbar.*`) 是独立的自定义标题栏:整条可拖动、双击最大化,左侧留红绿灯空间且**不显示应用名**;右侧 `.actions` 是功能入口区,当前放 **dsh 状态入口**、**侧栏插件两个面板开关**和 **GitHub 仓库按钮**(28×28 无背景,悬停显示背景,图标 20×20 随 light/dark 变色,点击在系统浏览器打开 `https://github.com/hifengzy/dsh-box`)。
-  - **侧栏插件两个面板开关**(右侧栏 / 底部面板,在状态入口与 GitHub 之间):控制 dsh-better-sidebar 插件的侧栏/底栏开合。链路:顶栏按钮 → preload IPC → 主进程 → `executeJavaScript` 注入桥(`src/main/plugin-ui-inject.js` 的 `PLUGIN_BRIDGE_JS`)→ 桥模拟点击插件自己的 toggle 按钮(React store 全同步);开合状态经插件公开的布局钩子(`body[data-dsh-sidebar-collapsed]` 与 `--dsh-sidebar-height`)实时回显到顶栏按钮(展开 = 品牌蓝高亮);**插件未安装或当前没有活跃会话时按钮禁用**。插件自带的右上角两个入口被注入的 `PLUGIN_HIDE_CSS` 隐藏(visibility 保留空位,零布局扰动)。
-- **「服务状态」面板(双轨:内容区注入共享面板 + 异常态兜底)**:由顶栏状态按钮(或菜单)开关。
-  - **常态 = 内容区内的注入共享面板**(`src/main/status-ui-inject.js` 的 `STATUS_BRIDGE_JS_FN`,与侧边栏/市场桥同一注入层):dsh 服务就绪时,顶栏按钮经主进程 `executeJavaScript` 调桥展开一个**从右侧滑入的面板**(`position: fixed`,相对视口定位、**不扩展文档滚动区域**——滑出动画不会让窗口底部闪现横向滚动条,与插件侧栏装在 fixed host 内同效)——与 dsh-better-sidebar 侧栏同款动画(transform translate(102%)↔0,时长/缓动读 dsh 主题变量 `--ds-transition-duration-slow` / `--ds-ease-in-out`,缺失回退 300ms + 同款缓动),展开时**挤压「对话区」列**(与插件底栏同手法:只压缩中心列 `[data-pane="conversation"]` 的 `margin-right: var(--dshbox-status-panel-width)`,**不改变 `#root` 整宽 → dsh 左侧边栏/右侧详情栏完全不受右侧面板影响**)。对话区挤压与面板滑入**同速过渡(300ms,同一主题缓动)**:选择器 `#root#root` 双 id 特异性稳压 better-sidebar 后注入的同锚样式(否则其 `transition: margin-bottom` 会整条覆盖本注入的过渡,对话区瞬跳、与面板滑入割裂),过渡同时声明 `margin-right + margin-bottom`(代言插件底栏过渡,不破坏插件的底栏挤压动画)。**宽度可拖拽面板左缘调整(240~640px),拖拽结束持久化到 `settings.yaml` 的 `dsh-box.statusPanelWidth`**;页面重载(服务重启)后面板默认关闭。**动态数据骨架屏**:五个动态板块(服务状态 `getInfo` / DSH `checkUpdates` / 插件市场 `getMarketInfo` / 侧边栏 `getPluginInfo` / 通知 `getNotificationSettings`)各带灰色占位骨架(扫光动画),查询进行中显示、数据到达(渲染函数被调)即替换——各板块按各自查询速度**独立替换**,互不影响;查询失败同样收起骨架交给错误态(取代旧「正在检查…」文字)。**滚动条 = dsh 会话区同款**(实测 `@deepseek-ai/dsh-client-ui-theme` scrollbar.css:8px 宽高/透明 track 与 corner/4px 圆角 thumb/thumb 色取主题中性色 亮 `rgb(229,229,229)`·hover `rgb(212,212,212)`、暗 `rgb(60,60,61)`·hover `rgb(84,85,87)`)。**默认隐藏**(thumb 透明,内容超出也不可见);**触发 = 鼠标位于面板区域内任意位置**(Chromium 的 scrollbar 伪元素不认祖先限定选择器——含 `:hover`/类,实测无效,故走 dsh 同款「变量 rebind」:面板滚动容器默认把 `--dsh-scrollbar-thumb` 置透明,`#dshbox-status-panel:hover`/`body:hover` 时置色);**鼠标离开面板区域立刻隐藏**(hover 解除即回透明,无过渡延迟)。
-  - **与 dsh-better-sidebar 侧栏互斥展开 + 并行换边**(`src/main/status-panel-router.js` 的 `runMutualOpen`,主进程编排):两者不能同时展开——展开 A 时若 B 已展开,采用**并行换边**:收起 B 与展开 A **同帧发起、动画重叠进行**(`Promise.all`),总时长 = 单侧动画(≈300ms,串行时 ≈700ms),且不产生「内容区先回全宽再收窄」的中间态——配合对话区挤压,**切换时 dsh 左侧边栏稳定不动**(不再「展开→折叠」晃动)。收起方向不触发互斥;自动展开/折叠时两侧顶栏按钮高亮随桥上报实时同步(现有 `report` 机制,零额外 IPC)。数据/操作全部复用内容视图既有的 `window.dsh.*` preload 桥,主进程仅新增「开合上报 + 宽度持久化」两个小通道;主题跟随 `body[data-ds-dark-theme]`,每次打开都重新查 npm / 插件。
-  - **异常态兜底 = 独立 statusView**(`src/renderer/dsh-status.*` + `src/main/sidebar-layout.js`):dsh 未启动/崩溃/重启中时内容视图在加载页,注入面板不存在,主进程自动回退到独立 WebContentsView 面板(**宽度由 `computeSidebar`「内容优先」计算,展开 300ms 动画,窗口过窄自动收起**)。两种形态以「内容视图是否为 dsh origin」自动切换,互不干扰;注入桥异常(executeJavaScript 失败)时也会整会话回退兜底。
-  - 内容板块(两种形态共用同一套状态机):
-  - 上卡 = 服务状态:只展示 DSH 版本号、端口、PID;**状态只有「运行中(绿)/ 停止(灰)」两态**,仅停止时显示「启动服务」按钮;版本号过长自动截断为 …,完整值悬停可见;**启动失败时按钮自动重置为「启动服务」并展示「服务启动失败:原因」,不卡在「启动中…」**;
-  - 中卡 = 侧边栏(dsh-better-sidebar):插件名(链接,悬停下划线)+ 最新版本徽标 + 说明文案;**状态机:未安装 →「安装」;已装且版本 == 最新 →「已安装」绿色文案;已装但低于最新 →「更新」;查询失败 →「网络服务异常」+「重试」(已装时徽标回退本地版本并警示);安装/更新失败时按钮自动重置为「安装/更新」并展示「安装失败:原因」,不卡在「××中…」**。安装/更新由主进程执行 `dsh plugin --profile web add dsh-better-sidebar@<版本>`(`src/main/plugin-manager.js`),成功后**自动重启 dsh 服务**让新 bundle 生效,并写入 `openByDefault: true`(与浏览器 WebUI 对齐,可在插件设置页改回)。安装/更新失败不阻塞,可重试。
-  - 下卡 = 插件市场(dshmarket):名称 `dsh-market` + 最新版本徽标 + 说明文案「浏览、搜索、安装、更新、卸载社区插件。」;**状态机:未安装 →「安装」;已装且版本 == 最新 →「已安装」绿色文案;已装但低于最新 →「更新」;查询失败 →「网络服务异常」+「重试」**。已安装后显示**「在 DSH 侧边栏显示插件市场入口」开关**(默认关),开关状态持久化到 `settings.yaml` 的 `dsh-box.marketSidebarEntry` 自定义域,即时控制左侧边栏「插件」入口的显隐。安装/更新与侧边栏插件同链路(`dsh plugin --profile web add dshmarket@<版本>`)
-  - 下卡 = DSH:只展示**最新一条版本**(版本号链接 `deepseek-harness` 仓库,悬停下划线)+「最新」徽标 + 发布日期;**当前运行版本 < 最新 →「更新」按钮;一致 →「当前」绿色文案**;查询失败显示「网络服务异常」+「重试」(有缓存回退展示并提示)。每次打开面板(视图重建)自动查一次 npm registry(`https://registry.npmjs.org/@deepseek-ai/dsh` JSON API,非网页);
-  - 每次启动应用也会静默查一次 npm 和插件 registry,有新版 → 顶栏入口红点(本体或插件任一有更新即亮);面板展开时顶栏按钮呈激活态(品牌蓝),再点一次收起。共享面板叠加在内容区上,不改变 dsh 内容区宽度;兜底模式收起后内容区恢复整宽;
-  - 升级链路(`src/main/dsh-upgrade.js`):下载 tarball → **sha512 校验**(registry 的 `dist.integrity`)→ 系统 tar 解压 → 停服 → **原子替换**(旧包留 `.bak` 备份)→ 启服;任何一步失败自动回滚,不留下半截状态。升级会短暂停止服务,完成后自动恢复。
-  - 离线/查询失败回退到上次缓存结果(userData/cache)并提示;中国网络可用 `DSH_NPM_REGISTRY` 切换镜像(如 `https://registry.npmmirror.com`)。
-  - **实机验收指引(侧栏插件)**:1) 首次进入「服务状态」面板 → 侧边栏插件卡 → 点「安装」(联网,约 30-60s)→ 自动重启 dsh;2) 在 dsh 里打开/新建一个**活跃会话**(插件侧栏 per-session,无会话时顶栏按钮禁用):3) 点顶栏两个面板开关(在状态入口与 GitHub 之间)→ dsh 页面内右侧栏/底部面板展开收起,按钮随面板开合高亮;4) 插件自带的页面右上角两个小按钮已被隐藏;5) 插件有新版时「服务状态」面板显示「更新」按钮,顶栏红点也会亮起(本体或插件任一有更新)。
-- **插件市场外壳定制**(`src/main/plugin-ui-inject.js` 的 `MARKET_BRIDGE_JS_FN`,与侧边栏桥同一注入层):1) **设置弹窗导航图标替换**——dsh 设置弹窗左侧导航里「插件市场」标签页按钮的默认齿轮图标替换为 `demo/0.3.0/chajian.svg`(方块网格,currentColor);2) **左侧边栏「插件」入口**——**完全克隆「设置」按钮**(同渲染 class + 同内部结构,只换 chajian 图标与「插件」文本)→ dsh 对侧栏按钮的样式(宽/窄两态、hover、label 隐藏)全部继承,与「设置」零差异;点击打开设置并直接激活插件市场页。3) **折叠(rail)适配**——dsh 的 rail 收缩规则绑定「设置」槽位,克隆按钮同 class 也不命中,注入脚本按「设置」按钮宽度感知折叠,折叠时把「插件」按钮收敛为 36×36 icon-only、与「设置」上下排列(抬高 foot 区高度容纳两枚按钮),展开时还原。定位锚点为文本/data-slot/克隆类名,**不修改 dsh 与 dshmarket 任何源码**——dsh 或插件迭代只会让注入项降级失效,不影响本体。
-- **内容视图** 显示加载页,就绪后加载 dsh WebUI;窗口层内缩 4px + 圆角 10px,**不碰页面布局**,不会产生滚动条。
+- `src/main/` — 主进程：dsh 服务托管、窗口管理、插件管理、版本检测与升级、系统托盘。
+- `src/preload/` — contextBridge 最小 IPC 桥。
+- `src/renderer/` — 加载页、自定义顶栏、状态面板兜底页、关于页。
+- `custom.css` — 注入 WebUI 的用户自定义样式模板（取消注释即生效）。
 
-### 窗口外观
+## 功能特性
 
-隐藏系统标题栏(`titleBarStyle: hiddenInset`),用**自定义顶栏视图**替代:macOS 红绿灯浮在顶栏左侧(不随侧边栏收起而横跨区域);顶栏整条可拖动,双击最大化。内容区相对窗口边缘**内缩 4px、四角圆角 10px**(纤细边框)。
+- **dsh 服务托管**：启动、健康检查、崩溃原因反馈、优雅停止；独立 `DSH_HOME` 与浏览器 WebUI 数据隔离；全局单实例锁。
+- **原生外观**：隐藏系统标题栏，自定义可拖动顶栏；内容区内缩圆角 + 毛玻璃材质；主题跟随 Harness 浅色/深色设置。
+- **服务状态面板**：服务信息、DSH 与插件版本检查（红点提醒）、通知设置、应用内一键升级 dsh。
+- **插件管理**：dsh-market / DSH-better-sidebar 一键安装、更新，版本落后自动提示。
+- **系统集成**：菜单栏 Tray、系统通知、关于页。
 
-**玻璃拟态(参考新版微信 macOS)**:内容区以外的区域(顶栏 + 边框)用 macOS 原生毛玻璃材质(`vibrancy: under-window`,`visualEffectState: active` 失焦也保持模糊),背景透出桌面/其它窗口;顶栏文字用 `light-dark()` 跟随外观。想换材质改 `src/main/main.js` 顶部的 `VIBRANCY_MATERIAL`(`under-window` / `sidebar` / `hud` / `header`)。
+## 快速开始
 
-**主题联动**:dsh UI 设置 → 通用设置 → 外观 里切换浅色/深色/跟随系统时,外壳(毛玻璃材质、红绿灯、顶栏文字)会一起跟随(通过监听 dsh 前端 `data-ds-dark-theme` 属性同步到 `nativeTheme.themeSource`)。**启动加载页也主题自适应**:深色 = 黑底 + `logo-dark.svg`,浅色 = 白底 + `logo-light.svg`,文案/动画/按钮颜色同步;主进程启动时读取 `settings.yaml` 里已持久化的 `settings.theme.preference`,让启动页从第一帧就跟随用户设置(不是先闪系统主题)。已知边界:显式选深/浅色后切回「跟随系统」且与系统相反时,需要重启一次才完全跟随系统。
-
-### 自定义 UI(不用写插件)
-
-编辑项目根目录的 `custom.css`(打包后为 `Resources/app/custom.css`),保存后重启 App(或 ⌘R)生效。支持改颜色(DSH 的 `--dsw-*` 设计变量)、三栏比例、隐藏侧边栏等,文件里有注释示例。结构级改动(新增组件/面板)需要写 DSH client 插件,见下文「常见问题」。
-
-## 目录结构
-
-```
-src/
-  main/
-    main.js          Electron 入口:窗口、菜单、权限、生命周期
-    menu.js          应用菜单(全中文:关于 DSH Box / dsh 服务与版本… / 退出 DSH Box / 编辑 / 视图 / 窗口)
-    about.js         「关于 DSH Box」品牌弹窗(logo / 版本 / 依赖版本)
-    dsh-server.js    dsh 子进程管理:启动、健康检查、优雅停止
-    dsh-version.js   运行时 dsh 版本单一事实来源(从实际入口反查 package.json)
-    npm-check.js     npm registry 版本查询:缓存 / 离线降级 / semver 比较
-    dsh-upgrade.js   应用内升级:下载 → sha512 → 解压 → 原子替换 → 回滚
-    sidebar-layout.js 右侧面板宽度策略纯函数(内容优先 + 面板拿剩余;现为异常态兜底布局)
-    plugin-manager.js 第三方插件生命周期(参数化:侧边栏插件 / 插件市场):本地版本 / registry 查询 / dsh plugin add / openByDefault 写入
-    plugin-ui-inject.js 注入桥(PLUGIN_BRIDGE_JS 侧栏 toggle / MARKET_BRIDGE_JS_FN 市场图标+侧边栏入口)与样式(PLUGIN_HIDE_CSS)
-    status-ui-inject.js 「服务状态」共享面板注入体(STATUS_BRIDGE_JS_FN:右侧滑入面板 + 四板块 + 拖拽调宽 + 互斥编排原语 requestOpen/requestClose + 主题)与样式(STATUS_PANEL_CSS:滑入动画 + 对话区挤压过渡 300ms,双 id 特异性稳压插件后注入 + 各板块骨架屏) — 兜底页 src/renderer/dsh-status.* 同款骨架屏
-    status-panel-router.js 互斥展开编排纯函数(服务状态 ↔ 插件侧栏,不能同时展开)
-    box-settings.js    DSH Box 自定义设置持久化(settings.yaml 的 dsh-box 域,文本级读写:布尔 + 数值)
-  preload/
-    preload.js       contextBridge 最小桥(getInfo / onStatus / retry / checkUpdates / upgrade / toggleSidebar / getPluginInfo / installPlugin / togglePluginPanel / …)
-  renderer/
-    index.html       启动页(等待 dsh 就绪)
-    renderer.js      启动页逻辑(状态渲染、重试)
-    style.css
-    about.html       关于弹窗页面(about.css / about.js 配套)
-    dsh-status.html  「dsh 服务与版本」面板页(异常态兜底用;常态为内容区注入共享面板)
-    dsh-status.js
-    dsh-status.css
-    topbar.html      自定义顶栏(GitHub / dsh 状态入口 + 红点 / 侧栏插件两个面板开关)
-scripts/
-  doctor.js          环境诊断:npm run doctor
-  smoke.js           核心链路冒烟测试(纯 Node):npm run smoke
-  dev-launch.mjs     品牌化开发启动:npm start(菜单栏显示 DSH Box)
-  make-app-icon.mjs 把任意源图加安全边距后生成 assets/icon.png:npm run make-icon
-  check-dsh-narrow.js dsh 窄宽度可用性扫描(校准 CONTENT_MIN):npm run test:narrow
-assets/
-  icon.png           应用图标源图(1024×1024,内容居中安全区;打包时由 electron-builder 自动转成 icns)
-  github.svg         GitHub 按钮图标(mask 镂空,随 light/dark 变色)
-  dsh-status.svg     dsh 状态入口图标(同上)
-docs/
-  PERMISSIONS.md     macOS 权限原理与配置(重点读这篇)
-```
-
-## 自检 / 测试
+环境要求：macOS 14+（Apple Silicon）、Node.js ≥ 20。
 
 ```bash
-npm run doctor    # 环境体检:Node / dsh / Electron / 端口
-npm run smoke     # 核心链路冒烟测试(纯 Node,不弹窗口)
-npm run smoke:e2e # 完整 E2E:启动真实 App → 拉起 dsh → 加载 WebUI → 退出
-npm run test:regression # 回归套件:dsh 服务 stop→start 语义 / 面板宽度策略 / URL 信任边界 / 重开窗口 / 加载页可见性 / 端口冲突 / 崩溃反馈 / 菜单栏 Tray / 应用菜单与关于弹窗 / 顶栏 / 服务与版本面板(独立页 + 注入共享面板:滑入/挤压/互斥) / 升级链路 / 侧边栏插件真实环境 e2e / 插件市场真实环境 e2e
+# 安装依赖(会把 dsh 一起装进来)
+npm install
+
+# 环境体检(可选)
+npm run doctor
+
+# 启动
+npm start
 ```
 
-> `smoke:e2e` 会短暂弹出应用窗口,并把临时数据放到 `.runtime/`(已 gitignore)。`--no-sandbox` 只用于测试环境(沙箱受限的 CI/容器)。
-
-## 打包成 .app / .dmg
+打包发布：
 
 ```bash
-npm run dist        # 打包当前架构的 .app + .dmg (输出到 dist/)
-npm run dist:dir    # 只生成解包后的 .app,最快
-npm run dist:dmg    # 只生成 .dmg
+npm run dist        # 打包 .app + .dmg，输出到 dist/
 ```
 
-打包产物在 `dist/`。**dsh 已经打进 App 里了**(`Contents/Resources/app/node_modules/@deepseek-ai/dsh`),用户拿到 `.dmg` 后:
-拖进「应用程序」→ 打开,就能直接用——**不需要装 Node,也不需要装 dsh**。
+## 配置
 
-> **签名说明**:如果本机钥匙串里有 electron-builder 能自动发现、但无法用于签名的证书(比如只装了证书没装私钥),打包会报 `this identity cannot be used for signing code`。这时用
-> `CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist` 跳过自动签名(用 ad-hoc 签名,本机可运行)。正式分发需要真正的 Developer ID 证书 + notarization,见路线图。
-
-注意:
-- 打包后首次打开,需要在系统设置里给 App 授予文件权限(系统设置 → 隐私与安全性),具体见 [docs/PERMISSIONS.md](docs/PERMISSIONS.md)。
-- 目前 `hardenedRuntime` 为 `false`(未开启公证/签名)。发布到其他机器需要 Apple Developer 证书 + notarization,见文末路线图。
-- 原生模块(node-pty / koffi)走 N-API 预编译,`npmRebuild: false` 不重新编译;换架构打包(如 arm64 → x64)前先确认对应平台的 prebuild 存在。
-- **为什么 `asar: false`**:App 用 `ELECTRON_RUN_AS_NODE` 把 dsh 当纯 Node 脚本跑,而该模式读不了 asar 归档;且 dsh 的解包目录需要能解析到整个依赖树。所以代码以真实文件形式放在 `Contents/Resources/app/`(对 MIT 开源项目无影响)。
-
-## 常用配置(环境变量)
-
-| 变量 | 默认 | 说明 |
+| 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `DSH_APP_PORT` | `3260` | dsh WebUI 监听端口(避开开发常用的 3080) |
+| `DSH_APP_PORT` | `3260` | WebUI 监听端口 |
 | `DSH_BIN` | 自动查找 | 显式指定 dsh 可执行文件路径 |
-| `DSH_HOME` | App 数据目录 | Harness 数据目录(profile/会话);默认与浏览器 WebUI 隔离 |
-| `DSH_NPM_REGISTRY` | `https://registry.npmjs.org` | 版本检查/升级用的 npm registry 镜像(如 npmmirror) |
-
-## 常见问题
-
-**`找不到 dsh 命令`**
-运行 `npm run doctor` 看提示。打包后的 App 自带 dsh;开发模式下先确认 `npm install` 装过 `@deepseek-ai/dsh`。也可用 `DSH_BIN` 强制指定。
-
-**启动后一直停在加载页**
-看日志:主进程终端会打印 `[dsh:err] ...`,完整日志在 `~/Library/Application Support/DSH Box/logs/`。最常见的两类原因:
-1. **端口被占用**(换 `DSH_APP_PORT`);
-2. **插件加载失败导致 dsh 启动即退出**——「服务状态」页/加载页会直接展示日志里提取的可读原因(如 `duplicate prefix route "/sidebar/api"`)与修复提示,不再是笼统的「端口可能被占用」。
-
-> 已知案例:**聚合插件与已装插件重复加载**。从插件市场安装聚合包(如 `@linxin666/dsh-web-ui-all`,它内部聚合了 `dsh-better-sidebar` 等多个插件)时,若 `dsh-better-sidebar` 已单独装过,二者会被同时记入 profile 的 `dsh.profile.bundles`,同一插件的路由重复注册 → dsh 启动崩溃(`duplicate prefix route`)。修复:编辑 `<DSH_HOME>/profiles/web/package.json`,在 `dsh.profile.bundles` 里移除重复的 `dsh-better-sidebar` 条目(聚合包仍会把它加载一次,功能保留),或卸载其中一个插件。
-
-**启动页总是闪一下红色「服务启动失败」但服务其实正常**
-最常见原因:**同时跑了两个实例**(比如 `npm start` 的 dev 版和已安装的打包版同时打开)。两个实例的 userData 不同,Electron 自带单实例锁管不住,会争抢同一个端口,后启动者的 dsh 绑定失败(EADDRINUSE)却从先启动者的服务加载 UI → 误报。App 现已用**全局单实例锁**(所有实例共享,与 userData 无关),后启动的实例会直接退出。若仍出现,检查是否有残留进程:`pkill -f "bin.js web"` 后重开。
-
-**命令面板/触发菜单打开即消失(闪烁)**
-通常是**两个 dsh 服务共享同一会话**导致的:浏览器 WebUI 和桌面 App 各跑一个 dsh 服务,同时打开同一个会话时,一方写入会让另一方的会话状态刷新,把会话级弹层顶掉。App 默认已用独立 DSH_HOME 隔离;如果手动设了 `DSH_HOME=~/.dsh` 共享,请**不要同时在两个客户端打开同一个会话**。
-
-**WebUI 里执行 shell 命令没有权限(比如访问桌面/文档/下载)**
-这是 macOS 的 TCC 限制,与 Harness 无关。按 [docs/PERMISSIONS.md](docs/PERMISSIONS.md) 给 App 授予「完全磁盘访问权限」即可——这是本方案相对浏览器的核心优势。
-
-**关掉窗口后 App 还在后台?**
-macOS 惯例:关窗不退出,点 Dock 图标重新开窗,dsh 服务保持运行(再次打开秒开)。要彻底退出:菜单栏「DSH Box」→「退出 DSH Box」,或 ⌘Q。
-
-## 路线图
-
-- [x] Electron 壳:dsh 子进程托管 + WebUI 加载
-- [x] 权限继承方案(进程树继承 TCC)
-- [x] dsh 打进 App,用户免安装(内置 Node 运行)
-- [x] 正式图标、关于页(品牌化菜单栏 + 「关于 DSH Box」弹窗)
-- [x] 「dsh 服务与版本」页:运行状态 / 端口 / 版本列表 / 应用内一键升级(dsh)
-- [ ] 打包签名 + notarization(hardened runtime)
-- [ ] 自动更新(应用本体)
-- [ ] 会话/Profile 管理界面(切换 DSH_HOME)
+| `DSH_HOME` | App 数据目录 | Harness 数据目录，默认与浏览器 WebUI 隔离 |
+| `DSH_NPM_REGISTRY` | `https://registry.npmjs.org` | 版本检查/升级用的 npm 镜像（如 npmmirror） |
 
 ## 许可
 
-MIT。DeepSeek Harness 本身是 MIT(见其[仓库](https://github.com/deepseek-ai/deepseek-harness))。
+[MIT](LICENSE)。DeepSeek Harness 本身同为 MIT（见其[仓库](https://github.com/deepseek-ai/deepseek-harness/)）。
