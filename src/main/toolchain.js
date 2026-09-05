@@ -199,7 +199,11 @@ function resolveNpm({ env = process.env, bundledDir = null, log } = {}) {
     log?.log?.(
       `[toolchain] npm: 优先用户本地(${user.cmd} node=${user.nodeVersion} npm=${user.npmVersion})`
     );
-    return { ok: true, ...user };
+    // argsPrefix 是 ok 返回的契约字段(见 JSDoc ↑);probeUserNpm 不带,必须
+    // 补空数组 —— 用户 npm 是直接可执行命令,无前缀(与 env 分支一致)。曾漏
+    // 掉导致 dsh-upgrade 的 [...argsPrefix] 展开 undefined → TypeError:
+    // argsPrefix is not iterable,升级依赖闭包安装必崩(0.1.9 实报)。
+    return { ok: true, ...user, argsPrefix: [] };
   }
 
   // 3. 内置运行时兜底(干净机器开箱即用)
