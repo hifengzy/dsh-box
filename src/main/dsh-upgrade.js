@@ -117,12 +117,30 @@ function findBackups(pkgDir) {
 async function defaultRunReconcile(version, { packageDir, log, bundledDir = null } = {}) {
   const bin = path.join(packageDir, "lib", "bin.js");
   if (!fs.existsSync(bin)) return { ok: false, error: `缺少 ${bin}(依赖闭包安装前提)` };
+  // 0.1.12 实报:剥离 devDependencies 后再装 —— dsh 发布包的 devDependencies 可能
+  // 引用未发布的内部包(deepseek-harness packages/experimental/*,private:true,
+  // 0.1.2-rc.1 即因此升级必失败)。npm 11.x 存在 --omit=dev 失效回归(实测 11.16.0
+  // 仍会解析根项目 devDependencies 并 404),故从源头删除而非仅依赖 omit 标志;
+  // 运行时闭包本就不需要 devDependencies,剥离同时更快更稳。
+  const manifestPath = path.join(packageDir, "package.json");
+  try {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    if (manifest.devDependencies && Object.keys(manifest.devDependencies).length > 0) {
+      const stripped = Object.keys(manifest.devDependencies).length;
+      delete manifest.devDependencies;
+      fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+      log?.log?.(`[upgrade] 剥离 ${stripped} 项 devDependencies(仅保留运行时依赖闭包)`);
+    }
+  } catch (error) {
+    // package.json 读不到/写失败:留给 npm 自行报错(不掩盖原始问题)
+    log?.warn?.(`[upgrade] 剥离 devDependencies 失败(继续): ${error.message}`);
+  }
   const toolchain = resolveNpm({ env: process.env, bundledDir, log });
   if (!toolchain.ok) return { ok: false, error: toolchain.error };
   const { cmd, argsPrefix, envPath } = toolchain;
   const env = { ...process.env, PATH: envPath };
   log?.log?.(
-    `[upgrade] 依赖闭包安装: ${cmd} install --prefix ${packageDir}(仅 dsh 自身依赖;npm 来源=${toolchain.source})`
+    `[upgrade] 依赖闭包安装: ${cmd} install --prefix ${packageDir}(仅 dsh 运行时依赖;npm 来源=${toolchain.source})`
   );
   const result = await spawnCapture(
     cmd,
@@ -133,6 +151,11 @@ async function defaultRunReconcile(version, { packageDir, log, bundledDir = null
       "--no-package-lock",
       "--no-audit",
       "--no-fund",
+      // 只装运行时依赖(0.1.11 实报):dsh 发布包的 devDependencies 可能引用
+      // 未发布的内部包(deepseek-harness 的 packages/experimental/*,private:true,
+      // 0.1.2-rc.1 即因此升级必失败:npm 404 → 闭包装不上 → 版本卡旧版)。
+      // 运行时闭包本就不需要 devDependencies,省略后同时更快更稳。
+      "--omit=dev",
       "--prefer-offline",
       "--loglevel=error",
     ],
