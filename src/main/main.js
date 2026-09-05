@@ -1091,11 +1091,22 @@ function main() {
     broadcastStatus({ state: "starting", message: `正在升级 dsh 至 ${version}…` });
     if (server) await server.stop();
     serviceState = "stopped";
-    const result = await upgradeDsh(version, {
-      cacheDir: path.join(app.getPath("userData"), "cache"),
-      log: console,
-      bundledDir: defaultBundledRuntimeDir(),
-    });
+    // 兜底:upgradeDsh 任何一步失败都应走「恢复服务」分支 —— 裸 throw(如
+    // 依赖闭包安装实现抛 TypeError)会绕过 if (!result.ok) 的服务恢复,把
+    // 服务留在停止态(0.1.9 实报:argsPrefix is not iterable)。这里把异常
+    // 转成与升级失败一致的结果,保证 wasReady 时服务一定被拉回。
+    let result;
+    try {
+      result = await upgradeDsh(version, {
+        cacheDir: path.join(app.getPath("userData"), "cache"),
+        log: console,
+        bundledDir: defaultBundledRuntimeDir(),
+      });
+    } catch (error) {
+      console.error("[app] 升级异常:", error);
+      if (wasReady) await startServer();
+      return { ok: false, error: error.message || String(error) };
+    }
     if (!result.ok) {
       if (wasReady) await startServer();
       return result;

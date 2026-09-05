@@ -373,7 +373,19 @@ async function upgradeDsh(
   //    此时线上 pkgDir 仍是旧版本 —— 任何中断都不会留下「换上新版但闭包缺失」的坏态。
   const reconcileImpl = runReconcile || defaultRunReconcile;
   log.log(`[upgrade] 步骤 5:依赖闭包安装(@deepseek-ai/dsh@${version} → staging)`);
-  const reconcile = await reconcileImpl(version, { packageDir: extractedPkg, log, bundledDir });
+  let reconcile;
+  try {
+    reconcile = await reconcileImpl(version, { packageDir: extractedPkg, log, bundledDir });
+  } catch (error) {
+    // 实现抛异常(如工具链返回对象缺字段被 spread 崩)必须转成可回滚的错误
+    // 结果,不能裸 reject —— 否则上游 performUpgrade 的「失败后恢复服务」分支
+    // 被绕过,升级失败会把服务留在停止态(0.1.9 实报:argsPrefix is not iterable)
+    fs.rmSync(staging, { recursive: true, force: true });
+    return {
+      ok: false,
+      error: `依赖闭包安装异常: ${error.message || String(error)}(目标目录未改动,原版本保持可用)`,
+    };
+  }
   if (!reconcile.ok) {
     fs.rmSync(staging, { recursive: true, force: true });
     return { ok: false, error: `依赖闭包安装失败: ${reconcile.error}(目标目录未改动,原版本保持可用)` };
@@ -414,7 +426,21 @@ async function upgradeDsh(
   //    跑一次 dsh --version,精确覆盖事故崩溃路径;失败 → 回滚
   const verifyImpl = verifyBoot || defaultVerifyBoot;
   log.log("[upgrade] 步骤 7:安装后自检(dsh --version)");
-  const probe = await verifyImpl({ pkgDir, dshHome: path.join(base, "boot-probe"), log });
+  let probe;
+  try {
+    probe = await verifyImpl({ pkgDir, dshHome: path.join(base, "boot-probe"), log });
+  } catch (error) {
+    // 与步骤 5 同理:自检实现抛异常不得裸 reject,走与「自检失败」相同的回滚路径
+    const rollback = restoreDshBackup(pkgDir, backup);
+    if (rollback.ok) pruneBackups(parentDir); // 回滚成功即节流清理(P2-C3)
+    fs.rmSync(staging, { recursive: true, force: true });
+    return {
+      ok: false,
+      error: `安装后自检异常: ${error.message || String(error)}${rollback.ok ? "(已回滚到原版本)" : `,且回滚失败: ${rollback.error}`}`,
+      installed: version,
+      backupDir: backup,
+    };
+  }
   if (!probe.ok) {
     const rollback = restoreDshBackup(pkgDir, backup);
     if (rollback.ok) pruneBackups(parentDir); // 回滚成功即节流清理(P2-C3)
