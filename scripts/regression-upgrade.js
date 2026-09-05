@@ -59,6 +59,22 @@ app.whenReady().then(async () => {
   fs.rmSync(work, { recursive: true, force: true });
   fs.mkdirSync(work, { recursive: true });
 
+  // 0.1.12 回归:依赖闭包安装必须剥离 devDependencies(并带 --omit=dev 双保险)——
+  // dsh 发布包的 devDependencies 可能引用未发布的内部包(deepseek-harness
+  // packages/experimental/*,private:true),npm 11.x 存在 --omit=dev 失效回归,
+  // 不剥离时 npm 404 → 闭包装不上 → 升级中止、版本卡旧版(0.1.2-rc.1 实报)。
+  {
+    const upgradeSrc = fs.readFileSync(
+      path.join(__dirname, "..", "src", "main", "dsh-upgrade.js"),
+      "utf8"
+    );
+    if (!upgradeSrc.includes("delete manifest.devDependencies")) {
+      throw new Error(
+        "依赖闭包安装缺少 devDependencies 剥离逻辑(0.1.12 回归:防未发布 devDep 包导致升级 404)"
+      );
+    }
+  }
+
   try {
     // ---------- 准备 fixture:0.2.0 的真 tarball ----------
     const pkgSrc = path.join(work, "pkg-src", "package");
