@@ -94,8 +94,14 @@ function makeFakeBundled({ nodeMajor = 25, withPnpm = true, broken = false } = {
   check("DSH_NPM_CMD 覆盖(不探测)", envCmd.ok && envCmd.source === "env" && envCmd.cmd === "/my/npm");
   const user = toolchain.resolveNpm({ env: { PATH: good } });
   check("用户 node≥20 → source=user", user.ok && user.source === "user");
+  // 0.1.9 实报回归:ok 返回必须带 argsPrefix(可展开数组)。user 分支曾漏字段,
+  // dsh-upgrade 的 [...argsPrefix] 展开 undefined → TypeError: argsPrefix is
+  // not iterable,点击「DSH 服务更新」依赖闭包安装必崩。
+  check("env 分支 argsPrefix=[] 可展开", envCmd.ok && Array.isArray(envCmd.argsPrefix) && [...envCmd.argsPrefix].length === 0);
+  check("user 分支 argsPrefix=[] 可展开", user.ok && Array.isArray(user.argsPrefix) && [...user.argsPrefix].length === 0);
   const fallback = toolchain.resolveNpm({ env: { PATH: old }, bundledDir: bundle });
   check("用户 node18 → 内置兜底", fallback.ok && fallback.source === "bundled");
+  check("bundled 分支 argsPrefix 可展开", fallback.ok && Array.isArray(fallback.argsPrefix) && fallback.argsPrefix.length === 1);
   const missing = toolchain.resolveNpm({ env: { PATH: noNpm }, bundledDir: null });
   check("都没有 → ok:false + 引导文案", !missing.ok && /Node ≥ 20/.test(missing.error));
   const missingWithBundle = toolchain.resolveNpm({ env: { PATH: noNpm }, bundledDir: bundleBroken });
